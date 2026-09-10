@@ -156,7 +156,7 @@ run, flip `KB_EMBEDDINGS_ENABLED`. No schema rework. Turn it on only if real
 questions show FTS missing relevant sections — measure against the
 representative question set in `ROADMAP.md` Milestone 6.
 
-## 2c. Chat integration: native Livewire, not embedded OpenWebUI
+## 2c. Chat integration: native Livewire
 
 The ask is an OpenWebUI-style chat window. Options weighed:
 
@@ -383,9 +383,9 @@ Recommendations, each reversible:
    `ALTER` + backfill, not a rebuild. Turn embeddings on only when the
    representative question set shows FTS missing sections (§2b).
 
-7. **Chat: native Livewire, not embedded OpenWebUI in Docker.** The
+7. **Chat: native Livewire against the orchestrator stream.** The
    orchestrator already owns the tool loop; `web/` renders and streams. One
-   implementation of each tool, no second app, no Docker (§2c).
+   implementation of each tool, one web app, no Docker (§2c).
 
 8. **Chat routing: the model picks tools, no classifier.** Same reasoning as
    point 3 — a "is this a data question or a law question" classifier guesses

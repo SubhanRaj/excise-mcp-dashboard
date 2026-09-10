@@ -54,7 +54,7 @@ REVOKE ALL ON SCHEMA public, etl FROM excise_ro;
 REVOKE CREATE ON SCHEMA public, kb, analytics FROM PUBLIC;   -- no ad-hoc object creation by anyone
 REVOKE ALL ON DATABASE excise_bank FROM PUBLIC;
 
--- Force read-only at the session level, belt to the transaction's braces
+-- Force read-only at the session level, on top of the per-transaction READ ONLY
 ALTER ROLE excise_ro SET default_transaction_read_only = on;
 ALTER ROLE excise_ro SET statement_timeout = '10s';
 ALTER ROLE excise_ro SET idle_in_transaction_session_timeout = '15s';

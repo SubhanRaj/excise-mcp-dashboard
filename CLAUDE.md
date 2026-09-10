@@ -98,15 +98,15 @@ consumer appears.
 
 ## Decisions (why the build looks like this)
 
-- **Chat window: native Livewire, not embedded OpenWebUI.** OpenWebUI is a
-  separate Svelte app with its own database and needs Docker (absent). What is
-  wanted is its UX — streaming, history, markdown/code rendering, a model
-  picker — which Livewire + Alpine + an SSE stream from the orchestrator
-  cover. All LLM logic (chat loop, tool calls, retrieval, SQL) stays in the
-  Python orchestrator; `web/` renders and streams. If the LLM logic ever needs
-  to live in PHP instead, `prism-php/prism` is the package to use — not a
-  second service. Running OpenWebUI itself in Docker against the orchestrator's
-  OpenAI-compatible endpoint stays a documented backlog option, not the path.
+- **Chat window: native Livewire.** OpenWebUI is a separate Svelte app with
+  its own database and needs Docker (absent). What is wanted is its UX —
+  streaming, history, markdown/code rendering, a model picker — which Livewire
+  + Alpine + an SSE stream from the orchestrator cover. All LLM logic (chat
+  loop, tool calls, retrieval, SQL) stays in the Python orchestrator; `web/`
+  renders and streams. If the LLM logic ever moves to PHP, `prism-php/prism`
+  is the package to use, replacing the Python orchestrator rather than running
+  beside it. Running OpenWebUI itself in Docker against the orchestrator's
+  OpenAI-compatible endpoint stays a documented backlog option.
 - **Retrieval: Postgres full-text search first, `pgvector` as the documented
   upgrade.** The policy/acts corpus is small (a few hundred verified docs).
   Built-in `tsvector` + `websearch_to_tsquery` needs no extension and no

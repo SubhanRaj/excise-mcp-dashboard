@@ -125,7 +125,7 @@ output`. The web app shows the failed stage and still writes a ledger row so
 failures are reviewable. One automatic retry only for a malformed structured
 output from the LLM.
 
-### What is deliberately not in the first build
+### Not in the first build
 
 Octave / MATLAB / Mathematica engines, an MCP server in front of Postgres, a
 complexity-based routing heuristic, `pgvector` semantic retrieval, and an
@@ -137,12 +137,11 @@ Milestone 6 quality check calls for it.
 
 ## Component diagrams
 
-Diagrams 1 and 2 are the two supplied with the brief, embedded unchanged.
-Diagrams 1U and 2U are the corrected versions that match what this repo
-actually specifies (bubblewrap not firejail, direct read-only `asyncpg` not a
-standalone Postgres MCP server, one Python engine, Livewire 4, plus the
-knowledge base, chat window, and Google OAuth added in the second scope pass).
-Diagram 3 covers the chat and ingestion paths.
+Diagrams 1 and 2 are the two from the brief. Diagrams 1U and 2U match what
+this repo specifies: bubblewrap as the sandbox, a direct read-only `asyncpg`
+pool in place of a standalone Postgres MCP server, one Python engine, Livewire
+4, and the knowledge base, chat window, and Google OAuth. Diagram 3 covers the
+chat and ingestion paths.
 
 ### Diagram 1 (as supplied in the brief): comprehensive system flow
 
@@ -379,11 +378,10 @@ flowchart LR
 > no model-authored SQL at all. `SECURITY.md` §1 and §2 have the exact grants
 > and the `bwrap` command line.
 
-### Diagram 3: chat, knowledge, and ingestion (added 2026-09-10)
+### Diagram 3: chat, knowledge, and ingestion
 
-Not one of the two diagrams supplied with the brief — this one covers the
-chat window, the knowledge base, and the Google OAuth ingestion added in the
-second scope pass.
+Covers the chat window, the knowledge base, and the Google OAuth ingestion
+paths.
 
 ```mermaid
 flowchart TD
