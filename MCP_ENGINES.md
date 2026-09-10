@@ -390,6 +390,8 @@ Contract every engine keeps:
 
 ### 2. GNU Octave — `octave_engine.py` — Milestone 4, only if needed
 
+[octave.org](https://octave.org) — open-source, MATLAB-compatible `.m` syntax.
+
 - **Availability**: `octave-cli --version` exits 0. **Not installed on the box
   now** — needs `sudo apt install octave` (root; give the command, do not work
   around). `is_available()` returns false until then, and the router simply
@@ -409,6 +411,11 @@ Contract every engine keeps:
 
 ### 3. MATLAB via `matlab-mcp-server` — Milestone 4, behind a config flag,
      currently blocked
+
+[mathworks.com/products/matlab](https://in.mathworks.com/products/matlab.html) —
+proprietary, per-seat licence. [Open-source alternatives to
+MATLAB](https://opensource.com/alternatives/matlab) (Octave, NumPy/SciPy) cover
+this project's needs.
 
 - **Prerequisites, none of which the box has**: MATLAB R2021a+ installed and
   on `PATH`; a valid MATLAB licence; the Go toolchain (or a downloaded release
@@ -434,6 +441,9 @@ Contract every engine keeps:
 
 ### 4. Wolfram Mathematica (`wolframscript`) — Milestone 4, behind a config
      flag, currently blocked
+
+[wolfram.com/mathematica](https://www.wolfram.com/mathematica/) — proprietary;
+its value here would be symbolic math, not charting.
 
 - **Prerequisites**: Wolfram Engine (free for non-production developer use) or
   a Mathematica licence, providing `wolframscript`. **Not installed.**

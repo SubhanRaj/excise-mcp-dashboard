@@ -7,8 +7,9 @@ Three enforcement layers, each independent of the others:
 2. Every LLM-generated script runs in a `bwrap` namespace as a non-root user
    with no network, a read-only root filesystem, one writable scratch dir, and
    hard time and memory caps.
-3. The web app is reachable only through a Cloudflare Tunnel, behind Cloudflare
-   Access, with the app's own OTP auth on top.
+3. The web app is reachable only through a named Cloudflare Tunnel; the app's
+   own Fortify email-OTP login is the access gate, the same as the sibling
+   apps.
 
 ## 1. PostgreSQL read-only role
 
@@ -265,10 +266,12 @@ Scoped to one command, one target user. Add with `sudo visudo -f
 /etc/sudoers.d/excise-sandbox` — never `tee` a sudoers file
 (`~/Sites/infra-notes/cpu-thermal-and-apache-procfs.md` records why).
 
-## 3. Perimeter — Cloudflare Tunnel and Access
+## 3. Perimeter — Cloudflare Tunnel and app auth
 
-Follows `~/Sites/infra-notes/laravel-apps-deploy.md`. This is the first app on
-the account to add Cloudflare Access.
+Follows `~/Sites/infra-notes/laravel-apps-deploy.md`, the same as the four
+sibling apps: a named Cloudflare Tunnel to a private Apache port, and the
+app's own Fortify email-OTP login as the access gate. No Cloudflare Access /
+Zero Trust layer.
 
 ### Tunnel
 
@@ -311,37 +314,23 @@ Apache vhost on `127.0.0.1:8084` (bind loopback explicitly, do not rely on
 `sudo systemctl daemon-reload && sudo systemctl restart apache2`. Give the
 operator these commands; Claude has no sudo.
 
-### Cloudflare Access (Zero Trust)
+### App auth
 
-In the Cloudflare Zero Trust dashboard for the account:
+The OTP-login + magic-link stack from `~/Sites/upexcise-stats-dashboard` is the
+access gate: email + password, then an emailed 6-digit OTP, then a session.
+Every route except `/health` is behind `auth` middleware; an unauthenticated
+request redirects to `/login`. Magic-link onboarding (signed, single-use, 72 h)
+and password reset (Laravel's broker, single-use hashed token, 60 min) copied
+from the sibling. Rate limiters `login` / `two-factor` / `password-reset`
+ported (`AppServiceProvider`).
 
-1. **Add an application** — Self-hosted, `analytics.exciseup.in`, whole
-   hostname (`*` path).
-2. **Policy — Allow**: match on `Emails ending in @<the department domain>`
-   and/or an explicit email list of the authorized analysts, plus require a
-   login method (One-time PIN to email is enough for an internal tool; add
-   Google as an IdP if the department has Workspace).
-3. **Policy — everything else: Block** (default deny).
-4. **Session duration**: 24 h.
-5. **Service token** for the orchestrator health check is not needed — `/health`
-   is loopback-only and never passes through Cloudflare.
-6. Turn on **"Enable automatic cloudflared authentication"** so the tunnel
-   only accepts requests carrying a valid Access JWT (`Cf-Access-Jwt-Assertion`).
-7. In the Laravel app, verify the `Cf-Access-Jwt-Assertion` header on every
-   request (middleware `VerifyCloudflareAccess`): fetch the account's Access
-   public keys from
-   `https://<team>.cloudflareaccess.com/cdn-cgi/access/certs` (cache 1 h),
-   validate the JWT `aud` against the application's AUD tag. A request without
-   a valid assertion is rejected even if it somehow reached Apache. This makes
-   Access a hard gate, not just an edge redirect.
+Roles: `Admin` (manage users, see all ledgers, manage the ETL source registry)
+and `Analyst` (ask questions, see own ledger, export). RBAC copied and trimmed
+from the sibling.
 
-### App-level auth behind Access
-
-The OTP-login + magic-link stack from `~/Sites/upexcise-stats-dashboard` still
-runs — Access proves "an authorized person", the app login proves "this
-person, with this role". Roles: `Admin` (manage users, see all ledgers,
-manage ETL source registry) and `Analyst` (ask questions, see own ledger,
-export). RBAC copied and trimmed from the sibling.
+The tunnel is the only inbound path — `cloudflared` dials out over loopback, no
+firewall port is opened, and Apache binds `127.0.0.1:8084`. The orchestrator's
+`/health` is loopback-only and never passes through the tunnel.
 
 ### Headers, logging, rate limits
 
@@ -424,13 +413,12 @@ server-owned content.
   "all of Drive", and review connections periodically. The `drive.file`
   fallback above removes the broad-read concern entirely if it becomes one.
 
-### `VerifyCloudflareAccess` and the OAuth routes
+### The OAuth routes
 
-The Socialite redirect and callback routes are behind Cloudflare Access and
-the app login like everything else — a stranger cannot reach
-`/google/connect`. The Google `redirect_uri` is
-`https://analytics.exciseup.in/google/callback`, registered in the Cloud
-project; it only resolves through the tunnel.
+The Socialite redirect and callback routes are behind the app login like every
+other route — a stranger cannot reach `/google/connect`. The Google
+`redirect_uri` is `https://analytics.exciseup.in/google/callback`, registered
+in the Cloud project; it only resolves through the tunnel.
 
 ### Secrets
 

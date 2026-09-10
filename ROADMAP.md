@@ -231,9 +231,8 @@ inert stubs.
       GIGW accessibility baseline); Chart.js colours per §Charts
 - [ ] Port middleware: `SecurityHeaders` (CSP extended for the FastAPI origin,
       Plotly/Chart.js, `marked` + highlighter), `LogMutation`, `HasPrivilege`
-      / `IsAdmin`; add `VerifyCloudflareAccess` (JWT `aud` check). Every
-      Livewire write method re-checks its privilege — `livewire/update` skips
-      route middleware (`SECURITY.md` §3)
+      / `IsAdmin`. Every Livewire write method re-checks its privilege —
+      `livewire/update` skips route middleware (`SECURITY.md` §3)
 - [ ] RBAC trimmed to `Admin` / `Analyst`; `AppServiceProvider` rate limiters
       incl. `ask` and `chat`
 - [ ] Migrations: `conversations` (ULID), `messages`, `message_tool_calls`,
@@ -267,8 +266,9 @@ inert stubs.
       the `kb-uploads` disk path)
 
 ### Tests
-- [ ] Auth suite (ported); `VerifyCloudflareAccess` rejects missing/invalid
-      assertion
+- [ ] Auth suite (ported): login, wrong password, wrong/expired OTP, the auth
+      gate redirecting an unauthenticated request, onboarding link, password
+      reset
 - [ ] `ask` flow: submit -> ledger rows; mocked orchestrator success -> chart
       artifact + ledger row; mocked error -> failed stage shown + ledger row
 - [ ] chat flow: streamed tokens; a tool call persisted and rendered; history
@@ -290,13 +290,13 @@ ledger / history and exportable.
 
 ## Milestone 6 — Perimeter, hardening, end-to-end
 
-- [ ] Owner runs `OPERATOR_SETUP.md` §Tunnel — create the tunnel, route DNS,
-      write the config, enable the systemd `--user` unit
-- [ ] Owner runs `OPERATOR_SETUP.md` §Cloudflare Access — self-hosted app,
-      Allow policy, default Block, automatic `cloudflared` authentication;
-      register the Google `redirect_uri` against the live hostname
-- [ ] Confirm the app rejects any request without a valid
-      `Cf-Access-Jwt-Assertion` even on the loopback port
+- [ ] Owner runs `OPERATOR_SETUP.md` §Tunnel — create the tunnel, route DNS
+      for the chosen `*.exciseup.in` subdomain, write the config, enable the
+      systemd `--user` unit; register the Google `redirect_uri` against that
+      hostname
+- [ ] Confirm every route except `/health` redirects an unauthenticated
+      request to `/login`, and the tunnel is the only inbound path (no open
+      firewall port, Apache bound to `127.0.0.1`)
 - [ ] Sandbox hardening pass: re-verify no network, read-only FS, scratch-only
       writes, all rlimits / cgroup caps; add the scratch sweeper timer;
       finalize `systemd-run` vs scoped sudoers
@@ -331,10 +331,10 @@ ledger / history and exportable.
       shape)
 - [ ] Update `CLAUDE.md` "Build status" and this file
 
-**Done when:** `https://analytics.exciseup.in` is reachable only through
-Cloudflare Access, every enforcement layer is verified by trying to break it,
-the representative question set (numbers + law + hybrid) passes, and the
-deploy runbook is written.
+**Done when:** the site is reachable only through the Cloudflare Tunnel and
+every route is gated by the app's email-OTP login, every enforcement layer is
+verified by trying to break it, the representative question set (numbers + law
++ hybrid) passes, and the deploy runbook is written.
 
 ---
 
@@ -359,3 +359,7 @@ deploy runbook is written.
 - Scheduled / "saved" questions that re-run on a timer and post a chart
 - `drive.file` scope instead of `drive.readonly` if the broad-read grant
   becomes a concern
+- Publish into the public stats dashboard — a reviewed hand-off from this tool
+  to `upexcise-stats-dashboard`: an approved analysis, chart, or derived series
+  becomes a published spotlight or dataset there. Needs an export contract and
+  an admin review step; not started until this tool is in daily use

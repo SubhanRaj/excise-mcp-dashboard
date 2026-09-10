@@ -7,7 +7,7 @@ Cloudflare Tunnel, sharing one PostgreSQL data bank.
 
 | Unit | Runtime | Port | Exposure | Job |
 |---|---|---|---|---|
-| `web/` | Laravel 13 + Livewire 4, PHP 8.5, Apache vhost | 8084 | via Cloudflare Tunnel + Access | Analytical form + OpenWebUI-style chat window + admin (users, connected Google sources, knowledge base); auth; query ledger; exports; background jobs |
+| `web/` | Laravel 13 + Livewire 4, PHP 8.5, Apache vhost | 8084 | via Cloudflare Tunnel; app email-OTP login is the gate | Analytical form + OpenWebUI-style chat window + admin (users, connected Google sources, knowledge base); auth; query ledger; exports; background jobs |
 | `orchestrator/` | Python 3.12 + FastAPI, uvicorn | 8085 | `127.0.0.1` only | MCP client to Ollama; one-shot SQL pipeline; streaming chat with a tool loop (`run_sql_query`, `search_knowledge`, `make_chart`); knowledge retrieval; engine router; sandbox launcher |
 | `etl/` | Python 3.12 CLI, run by cron / systemd timers | — | Google API (ingestion only) | Sheets / Drive / Docs / Excel / CSV -> Postgres data tables; pdf-markdown-pipeline verified docs + admin `.md` uploads + Google Docs -> `kb.*` |
 | PostgreSQL 18 | system service | 5432 | `127.0.0.1` (+ Tailscale later if needed) | The excise data bank (`analytics.*`) and the knowledge base (`kb.*`) — read-only for the AI path |
@@ -16,8 +16,8 @@ Cloudflare Tunnel, sharing one PostgreSQL data bank.
 
 ### Request path for one question
 
-1. Analyst signs in through Cloudflare Access, then the app's OTP login, and
-   types a question in the left pane.
+1. Analyst signs in through the app's email-OTP login and types a question in
+   the left pane.
 2. Livewire dispatches a `RunExciseQuery` job (Laravel queue, `database`
    driver) and opens an SSE stream for stage updates. The web worker is not
    blocked.
@@ -91,7 +91,10 @@ needed" on the admin screen. `SECURITY.md` §Google OAuth.
 
 ### Trust boundaries
 
-- **Internet -> Cloudflare edge**: TLS, Access policy (email domain / group).
+- **Internet -> Cloudflare edge**: TLS termination and the named tunnel on a
+  subdomain of `exciseup.in`. No Cloudflare Access — every route is behind the
+  app's email-OTP login, so an unauthenticated request only ever reaches
+  `/login`.
 - **Tunnel -> Apache (8084)**: the only inbound path; no firewall port opened
   (`cloudflared` dials out over `lo`).
 - **Laravel -> orchestrator (8085)**: loopback only, bearer token, request-id
@@ -231,7 +234,7 @@ flowchart TD
     classDef off fill:#94a3b8,stroke:#64748b,stroke-width:1px,color:#fff,stroke-dasharray:4 3
 
     User(["Analyst"]):::client
-    CF["Cloudflare Tunnel + Access<br/>Zero Trust policy, JWT verified in-app"]:::edge
+    CF["Cloudflare Tunnel<br/>subdomain of exciseup.in; app email-OTP login is the gate"]:::edge
 
     subgraph Host["Office AIO — on-premise, no inbound ports"]
         subgraph WebTier["web/ — Laravel 13 + Livewire 4, Apache 8084"]

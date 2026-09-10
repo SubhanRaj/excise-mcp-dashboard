@@ -146,9 +146,11 @@ the 11/12 + Livewire 3 named in the original brief.
   is separate — PostgreSQL, provisioned by the SQL scripts in `db/`, never by
   `db:provision`.
 - **Auth**: Fortify + emailed-OTP login, magic-link onboarding and reset, copied
-  from `~/Sites/upexcise-stats-dashboard`'s `App\Http\Controllers\Auth\*`. This
-  is an internal tool — every route except the health check is behind auth, and
-  behind Cloudflare Access on top.
+  from `~/Sites/upexcise-stats-dashboard`'s `App\Http\Controllers\Auth\*`. The
+  site is served on a subdomain of `exciseup.in` through a named Cloudflare
+  Tunnel, the same as the sibling apps — no Cloudflare Access. The app's own
+  email-OTP login is the access gate: every route except the health check is
+  behind `auth`, an unauthenticated request lands on `/login`.
 - **Middleware**: port `SecurityHeaders` (CSP/HSTS/`X-Frame-Options`/noindex)
   and `LogMutation` (`activity_logs` row per non-GET) from the siblings. Add
   the FastAPI origin and any chart CDN to the CSP allowlist explicitly.
@@ -308,7 +310,8 @@ End with the co-author trailer the session is configured for.
   stores an encrypted token and a `google_connections` row; disconnect
   deletes it; a token is never written to logs or returned in a response.
 - `SecurityHeaders` present on a sample route; `activity_logs` written on a
-  non-GET; `VerifyCloudflareAccess` rejects a missing/invalid assertion.
+  non-GET; an unauthenticated request to a protected route redirects to
+  `/login`.
 - The SSE/poll stage endpoint returns the stage sequence for a running job.
 
 **`orchestrator/` (pytest, `pytest-asyncio`):**

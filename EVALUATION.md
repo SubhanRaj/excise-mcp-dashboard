@@ -162,7 +162,7 @@ The ask is an OpenWebUI-style chat window. Options weighed:
 
 | Approach | What it costs | Verdict |
 |---|---|---|
-| **Embed OpenWebUI** (Docker) behind a second subdomain, point its OpenAI endpoint at the orchestrator | `apt install docker` (absent), a second web app with its own SQLite/Postgres and its own auth/users to reconcile with Cloudflare Access, a second tunnel, container updates | Rejected — a whole parallel app and Docker for a UI we can build |
+| **Embed OpenWebUI** (Docker) behind a second subdomain, point its OpenAI endpoint at the orchestrator | `apt install docker` (absent), a second web app with its own SQLite/Postgres and its own auth/users to reconcile with the app login, a second tunnel, container updates | Rejected — a whole parallel app and Docker for a UI we can build |
 | **Native Livewire chat** against the orchestrator's `/chat` SSE stream | one more Livewire component + an Alpine SSE reader + `marked`/highlighter from the CDN already on the CSP | **Chosen** — reuses the auth, the layout system, the ledger, the deploy path |
 | **Move LLM logic into PHP** with `prism-php/prism` (Ollama support, streaming, tool calls) | a capable package, but it duplicates the orchestrator's tool loop in a second language and splits the "who talks to Ollama" responsibility | Not now — noted as the path if the orchestrator is ever dropped |
 
@@ -250,8 +250,9 @@ firejail, so no install is required for the core sandbox.
   ingress rule to `http://127.0.0.1:PORT`, `http_status:404` catch-all, a
   systemd `--user` unit to run it. `SECURITY.md` §Perimeter has this project's
   values.
-- Cloudflare Access / Zero Trust is not yet configured for any of the four
-  existing apps — this would be the first. Setup is in `SECURITY.md`.
+- Perimeter matches the four existing apps: a named tunnel to a private Apache
+  port and the app's own Fortify email-OTP login as the gate. No Cloudflare
+  Access / Zero Trust.
 
 ### Google OAuth (for the Drive / Sheets / Docs connect feature)
 
@@ -261,8 +262,9 @@ firejail, so no install is required for the core sandbox.
   assessment; an **External** screen hits that process past 100 users. Decide
   this before Milestone 1 — `OPERATOR_SETUP.md` §Google Cloud. Fallback:
   `drive.file` (user-picked files only) is not restricted.
-- Redirect URI `https://analytics.exciseup.in/google/callback` — only resolves
-  through the tunnel, behind Access.
+- Redirect URI `https://analytics.exciseup.in/google/callback` (hostname not
+  final) — only resolves through the tunnel, and the route is behind the app
+  login.
 - Refresh tokens are `Crypt`-encrypted per user in `web/`'s MariaDB, never
   logged, revoked on disconnect. `SECURITY.md` §Google OAuth.
 
@@ -329,7 +331,6 @@ From `~/Sites/upexcise-stats-dashboard`, `~/Sites/UP-excise-mailer`,
   precedent — `CLAUDE.md` §Python conventions sets the style from zero.
 - No MCP client code, no Ollama integration code, no code-execution sandbox
   anywhere on the box.
-- No Cloudflare Access / Zero Trust configuration on the account yet.
 - **No retrieval / RAG / embedding / vector-search code anywhere.** `pgvector`
   is not confirmed installed (checking needs root). The KB retrieval layer is
   greenfield; `MCP_ENGINES.md` §Chat and retrieval is the spec.
@@ -353,8 +354,12 @@ Recommendations, each reversible:
    binary, a paid license that forbids multi-user use, `wolframscript`, three
    more sandbox profiles, and an adapter layer — for zero capability the Python
    stack lacks here. Keep `IVisualizationEngine` as a thin seam (it is nearly
-   free), implement `PythonEngine` only. Add `OctaveEngine` if and when a real
-   `.m` script needs to run; treat MATLAB/Mathematica as out of scope until
+   free), implement `PythonEngine` only. Add
+   [`OctaveEngine`](https://octave.org) if and when a real `.m` script needs to
+   run ([open-source alternatives to
+   MATLAB](https://opensource.com/alternatives/matlab) is the same argument);
+   treat [MATLAB](https://in.mathworks.com/products/matlab.html) /
+   [Mathematica](https://www.wolfram.com/mathematica/) as out of scope until
    there is a concrete symbolic-math or proprietary-toolbox requirement and a
    license story.
 

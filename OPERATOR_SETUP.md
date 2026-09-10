@@ -1,7 +1,7 @@
 # OPERATOR_SETUP.md — steps only the owner can run
 
 Everything here needs `sudo`, a package install, or a change in an external
-console (Google Cloud, Cloudflare Zero Trust). Claude has no passwordless sudo
+console (Google Cloud, Cloudflare DNS/Tunnel). Claude has no passwordless sudo
 on this box and does not touch `/etc`, `systemctl` beyond `--user`, or service
 restarts — so these are collected for you to run, grouped by the milestone in
 `ROADMAP.md` that needs them. Each block says where to run it and how to check
@@ -365,39 +365,11 @@ Verify:
 
 ```bash
 systemctl --user status excise-mcp-dashboard-tunnel
-curl -s -o /dev/null -w '%{http_code}\n' https://analytics.exciseup.in/    # reaches Apache (then Access, see below)
+curl -s -o /dev/null -w '%{http_code}\n' https://analytics.exciseup.in/    # 302 to /login (the app's own auth)
 ```
 
----
-
-## §Cloudflare Access / Zero Trust (Milestone 6)
-
-In <https://one.dash.cloudflare.com> -> Access:
-
-1. **Applications -> Add an application -> Self-hosted.**
-   - Application domain: `analytics.exciseup.in`, path `*`.
-   - Session duration: 24 h.
-2. **Policies -> Add a policy -> Action: Allow.**
-   - Include: `Emails ending in @<department-domain>` and/or an explicit
-     `Emails` list of the analysts.
-   - Require: a login method — "One-time PIN" is enough for an internal tool;
-     add Google as an identity provider if the department uses Workspace.
-3. **Add a second policy -> Action: Block**, include `Everyone` (default
-   deny; Allow is evaluated first).
-4. In the application's **Settings**, enable options so the tunnel only
-   accepts requests carrying a valid Access JWT
-   (`Cf-Access-Jwt-Assertion`). Note the application **AUD tag**.
-5. Put the AUD tag and your team domain
-   (`https://<team>.cloudflareaccess.com`) into `web/.env` for the
-   `VerifyCloudflareAccess` middleware.
-
-Verify:
-
-```bash
-# from a machine that is NOT logged into Access:
-curl -s -o /dev/null -w '%{http_code}\n' https://analytics.exciseup.in/     # 302 to the Access login
-# after logging in through a browser, the app's own /login should appear
-```
+The site is public on the subdomain; the app's Fortify email-OTP login is the
+only gate, the same as the other four apps. No Cloudflare Access step.
 
 ---
 
@@ -438,4 +410,3 @@ systemctl --user restart excise-orchestrator
 | `apt install postgresql-18-pgvector` | §pgvector | 6 (conditional) |
 | Apache vhost + `ReadWritePaths` | §Apache | 5 |
 | `cloudflared tunnel` + systemd unit | §Tunnel | 6 |
-| Zero Trust Allow/Block policy | §Cloudflare Access | 6 |
