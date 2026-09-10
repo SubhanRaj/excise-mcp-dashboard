@@ -363,7 +363,9 @@ Recommendations, each reversible:
    there is a concrete symbolic-math or proprietary-toolbox requirement and a
    license story.
 
-2. **Drop the MCP server between the orchestrator and Postgres.** It is
+2. **Drop the MCP server between the orchestrator and Postgres.** MCP-server
+   adoption is a per-capability call (`MCP_ENGINES.md` §MCP servers vs
+   visualization engines); for this link the answer is no. It is
    indirection with a single in-process consumer. A direct `asyncpg` pool on
    the read-only role, `default_transaction_read_only = on`, a statement
    timeout, and a "single SELECT / WITH only" parser gives the same safety with

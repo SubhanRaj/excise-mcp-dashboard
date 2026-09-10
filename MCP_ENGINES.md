@@ -8,6 +8,25 @@ the SQL generator, and the engine router. It holds no long-term state beyond
 in-memory conversation windows keyed by the ULID Laravel sends; durable
 history is the Laravel ledger.
 
+### MCP servers vs visualization engines
+
+Two separate axes.
+
+**MCP servers** — whether a capability is reached directly (in-process) or
+through a dedicated MCP server is decided per capability, when that capability
+is built:
+
+| Capability | First build | An MCP server when |
+|---|---|---|
+| SQL over the data bank | direct `asyncpg`, read-only role, the guard | an external client (Claude Desktop, an IDE) needs the same guarded access — then `crystaldba/postgres-mcp` |
+| Knowledge retrieval | direct `SELECT` on `kb.*` (one parametrised query) | not expected |
+| Visualization | in-process adapter running a sandboxed script | the engine ships only as an MCP server — MATLAB (`matlab-mcp-server`), §3 below |
+| Filesystem / other tools | not used | a concrete need appears |
+
+**Visualization engines** (Python, Octave, MATLAB, Mathematica) run the
+generated plot script. They are not MCP servers — only the MATLAB path happens
+to be an MCP integration because that is the only way MathWorks ships it.
+
 ### Module layout
 
 ```
