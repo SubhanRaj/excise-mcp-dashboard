@@ -356,6 +356,13 @@ export). RBAC copied and trimmed from the sibling.
 - Rate limiters in `AppServiceProvider`: `login`, `two-factor`,
   `password-reset` from the sibling; `ask` and `chat` keyed by user id, start
   10/min.
+- Livewire write authorization: route middleware gates a component's mount, but
+  a `wire:click` / `wire:submit` reaching `livewire/update` does not re-run
+  route middleware. Every write method on an admin component (knowledge upload,
+  Google connect/disconnect, user CRUD, source-registry edits) re-checks the
+  privilege itself with `abort_unless(Auth::user()?->hasPrivilege(...), 403)`,
+  the same pattern as `~/Sites/upexcise-stats-dashboard`'s `PublishToggles` and
+  `Milestones` components.
 - The orchestrator refuses any `/query` or `/chat` call whose bearer token
   does not match `ORCH_BEARER_TOKEN` (constant-time compare), logs the
   request-id, and never logs the token or the DB password.

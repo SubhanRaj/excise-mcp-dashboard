@@ -220,14 +220,20 @@ inert stubs.
 - [ ] Port auth from `~/Sites/upexcise-stats-dashboard` (OTP login, magic-link
       onboarding + reset, `tests/Feature/Auth/*`)
 - [ ] Move `assets/brand/*` (state emblem, favicons, app icons) into
-      `web/public/`; port the GIGW/UX4G chrome (identity strip, A-/A/A+ and
-      high-contrast toggles, skip link, footer policy links) from
-      `~/Sites/upexcise-stats-dashboard` into the authed layout; regenerate
-      the icons and OG card with that repo's `scripts/make-brand-assets.php`
-      (`EVALUATION.md` §4)
+      `web/public/`; port the identity strip, the theme + high-contrast toggle
+      and the skip link from `~/Sites/upexcise-stats-dashboard` into the authed
+      layout; regenerate the icons and OG card with that repo's
+      `scripts/make-brand-assets.php` (`EVALUATION.md` §4)
+- [ ] Design system: copy the token block and `@apply` classes from the
+      sibling's `head.blade.php`, the Tabler-icon admin shell
+      (`components/{layout,sidebar}.blade.php`), and `public/vendor/tabler-icons/`;
+      follow `docs/design-guidelines.md` (`govviolet` / `govsaffron`, Inter,
+      GIGW accessibility baseline); Chart.js colours per §Charts
 - [ ] Port middleware: `SecurityHeaders` (CSP extended for the FastAPI origin,
       Plotly/Chart.js, `marked` + highlighter), `LogMutation`, `HasPrivilege`
-      / `IsAdmin`; add `VerifyCloudflareAccess` (JWT `aud` check)
+      / `IsAdmin`; add `VerifyCloudflareAccess` (JWT `aud` check). Every
+      Livewire write method re-checks its privilege — `livewire/update` skips
+      route middleware (`SECURITY.md` §3)
 - [ ] RBAC trimmed to `Admin` / `Analyst`; `AppServiceProvider` rate limiters
       incl. `ask` and `chat`
 - [ ] Migrations: `conversations` (ULID), `messages`, `message_tool_calls`,

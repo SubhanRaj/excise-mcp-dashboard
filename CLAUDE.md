@@ -181,7 +181,24 @@ the 11/12 + Livewire 3 named in the original brief.
   worker must exceed the orchestrator's own request timeout — follow the
   `--timeout=1900` reasoning in `laravel-apps-deploy.md`.
 - **Tailwind + Alpine**: Tailwind Play CDN and Chart.js / Plotly from jsDelivr,
-  same as the siblings. Add every CDN host to the CSP.
+  same as the siblings. Add every CDN host to the CSP. Chart.js line colours
+  follow `design-guidelines.md` §Charts (single series `#4a2bc2`, multi-series
+  `#4a2bc2, #c47d00, #0f766e, #b91c1c, #1d4ed8, #7c3aed`).
+- **Design system**: follow
+  `~/Sites/upexcise-stats-dashboard/docs/design-guidelines.md` — the UX4G
+  `govviolet` (`#4a2bc2`) / `govsaffron` palette, Inter, the `@apply` component
+  classes and anti-flash theme script from its `head.blade.php`, and the
+  Tabler-icon admin shell (`components/layout.blade.php` + `sidebar.blade.php`).
+  This is an internal tool: keep the dark + high-contrast toggles and the GIGW
+  accessibility baseline (skip link, landmarks, one `h1`, `:focus-visible`
+  outline, explicit empty states); leave out the public reader-preferences
+  panel, the sitemap / SEO / JSON-LD surface, and the policy-page footer.
+- **Livewire write authorization**: route middleware gates a component's
+  mount, but a `wire:click` / `wire:submit` that reaches `livewire/update`
+  does not re-run route middleware. Every write method on an admin component
+  (knowledge upload, Google connect/disconnect, user CRUD, source-registry
+  edits) re-checks the privilege with `abort_unless(...)`, matching the sibling
+  dashboard's publish and milestone gates. `SECURITY.md` §3.
 - **Branding and chrome**: the brand kit is in `assets/brand/` — the State
   Emblem of Uttar Pradesh (`up-gov-emblem.svg` + the white PNG), the favicons,
   and the app icons. Move it into `web/public/` at Milestone 5. Port the GIGW
