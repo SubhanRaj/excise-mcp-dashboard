@@ -201,7 +201,7 @@ Go toolchain, Docker / Podman, `nvidia-smi`.
 covers the same need — `SECURITY.md` specifies the sandbox on `bwrap`, not
 firejail, so no install is required for the core sandbox.
 
-### MATLAB MCP server (`github.com/matlab/matlab-mcp-server`)
+### MATLAB MCP server ([`matlab/matlab-mcp-server`](https://github.com/matlab/matlab-mcp-server))
 
 - **Go binary**, prebuilt releases for Linux / macOS / Windows, or build from
   source with the Go toolchain (absent here).
@@ -224,20 +224,21 @@ firejail, so no install is required for the core sandbox.
 - The original `@modelcontextprotocol/server-postgres` reference implementation
   is **archived**. It offered transaction-level read-only enforcement and
   schema introspection over stdio.
-- The maintained option is **`crystaldba/postgres-mcp`** ("Postgres MCP Pro"):
-  `--access-mode=restricted` gives read-only + safety limits, plus `EXPLAIN`
-  / index-advisor tools. Runs over stdio or SSE.
+- The maintained option is
+  **[`crystaldba/postgres-mcp`](https://github.com/crystaldba/postgres-mcp)**
+  ("Postgres MCP Pro"): `--access-mode=restricted` gives read-only + safety
+  limits, plus `EXPLAIN` / index-advisor tools. Runs over stdio or SSE.
 - Standard config in either case: a **dedicated read-only role** as the
   connection identity (`SELECT` only, `default_transaction_read_only = on`),
   connection string in the server's own env, never the app's.
-- **Recommendation (see §Right-sizing below): skip the MCP server between our
-  orchestrator and our own database.** MCP earns its place when an external
-  client (Claude Desktop, an IDE) needs the tool. Here the orchestrator is the
-  only consumer, in-process, in the same repo. Give it a direct `asyncpg` pool
-  bound to the read-only role with a `SET default_transaction_read_only = on`
-  and a statement timeout. Keep the door open to mounting `crystaldba/postgres-mcp`
-  later if a second consumer appears — the query-building code should not care
-  which it is.
+- **Recommendation (see §Right-sizing below): start without the MCP server
+  between our orchestrator and our own database.** An MCP server earns its
+  place when an external client (Claude Desktop, an IDE) needs the tool. For
+  the first build the orchestrator is the only consumer, in-process, in the
+  same repo. Give it a direct `asyncpg` pool bound to the read-only role with a
+  `SET default_transaction_read_only = on` and a statement timeout. Mount
+  `crystaldba/postgres-mcp` when a second consumer appears — the query-building
+  code should not care which it is.
 
 ### Cloudflare
 
@@ -363,15 +364,16 @@ Recommendations, each reversible:
    there is a concrete symbolic-math or proprietary-toolbox requirement and a
    license story.
 
-2. **Drop the MCP server between the orchestrator and Postgres.** MCP-server
-   adoption is a per-capability call (`MCP_ENGINES.md` §MCP servers vs
-   visualization engines); for this link the answer is no. It is
-   indirection with a single in-process consumer. A direct `asyncpg` pool on
+2. **Start without an MCP server between the orchestrator and Postgres.**
+   MCP-server adoption is a per-capability call (`MCP_ENGINES.md` §MCP servers);
+   for the first build of this link the answer is a direct `asyncpg` pool on
    the read-only role, `default_transaction_read_only = on`, a statement
-   timeout, and a "single SELECT / WITH only" parser gives the same safety with
-   less to run and monitor. Mount `crystaldba/postgres-mcp` later only if an
-   external MCP client (Claude Desktop, an IDE) becomes a real second consumer.
-   The word "MCP" in the project name does not require an MCP server here — the
+   timeout, and a "single SELECT / WITH only" parser — the same safety with a
+   single in-process consumer and less to run and monitor. Mount
+   [`crystaldba/postgres-mcp`](https://github.com/crystaldba/postgres-mcp)
+   (`--access-mode=restricted`) when it earns its place — e.g. an external MCP
+   client (Claude Desktop, an IDE) becomes a second consumer of the bank. The
+   word "MCP" in the project name does not require an MCP server here — the
    orchestrator being an MCP *client* to Ollama's tool interface is the part
    that matters.
 

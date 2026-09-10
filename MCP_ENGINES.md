@@ -8,24 +8,29 @@ the SQL generator, and the engine router. It holds no long-term state beyond
 in-memory conversation windows keyed by the ULID Laravel sends; durable
 history is the Laravel ledger.
 
-### MCP servers vs visualization engines
+### MCP servers — used where they earn their place
 
-Two separate axes.
+The orchestrator is an MCP **client** to Ollama's tool interface. For every
+other capability, direct / in-process is the default and an MCP server goes in
+only where it earns its place, decided per capability:
 
-**MCP servers** — whether a capability is reached directly (in-process) or
-through a dedicated MCP server is decided per capability, when that capability
-is built:
+- **SQL over the data bank** — direct `asyncpg` on the read-only role with the
+  guard. [`crystaldba/postgres-mcp`](https://github.com/crystaldba/postgres-mcp)
+  (`--access-mode=restricted`) is the drop-in if a server is wanted later —
+  e.g. an external client (Claude Desktop, an IDE) becomes a second consumer.
+- **Knowledge retrieval** — direct `SELECT` on `kb.*`; one parametrised query,
+  no server.
+- **Python and Octave charts** — the generated script runs natively in the
+  `bwrap` sandbox (pandas / NumPy / SciPy / Matplotlib / Plotly; `octave-cli`
+  the same way). No MCP.
+- **MATLAB** — reached through
+  [`matlab/matlab-mcp-server`](https://github.com/matlab/matlab-mcp-server)
+  (stdio), the only way MathWorks ships it; the child still runs inside the
+  sandbox wrapper (§3).
+- **Wolfram** — `wolframscript` subprocess in the sandbox. No MCP.
 
-| Capability | First build | An MCP server when |
-|---|---|---|
-| SQL over the data bank | direct `asyncpg`, read-only role, the guard | an external client (Claude Desktop, an IDE) needs the same guarded access — then `crystaldba/postgres-mcp` |
-| Knowledge retrieval | direct `SELECT` on `kb.*` (one parametrised query) | not expected |
-| Visualization | in-process adapter running a sandboxed script | the engine ships only as an MCP server — MATLAB (`matlab-mcp-server`), §3 below |
-| Filesystem / other tools | not used | a concrete need appears |
-
-**Visualization engines** (Python, Octave, MATLAB, Mathematica) run the
-generated plot script. They are not MCP servers — only the MATLAB path happens
-to be an MCP integration because that is the only way MathWorks ships it.
+The visualization engines (Python, Octave, MATLAB, Wolfram) are the thing that
+runs the plot script; only MATLAB is an MCP integration.
 
 ### Module layout
 
