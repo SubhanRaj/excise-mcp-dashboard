@@ -1,6 +1,9 @@
 <div align="center">
 
-<img src="assets/brand/favicon-32.png" width="64" height="64" alt="State Emblem of Uttar Pradesh">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/brand/up-gov-emblem-white.png">
+  <img src="assets/brand/up-gov-emblem.svg" width="96" height="96" alt="State Emblem of Uttar Pradesh">
+</picture>
 
 # excise-mcp-dashboard
 
