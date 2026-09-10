@@ -236,6 +236,12 @@ inert stubs.
       (`components/{layout,sidebar}.blade.php`), and `public/vendor/tabler-icons/`;
       follow `docs/design-guidelines.md` (`govviolet` / `govsaffron`, Inter,
       GIGW accessibility baseline); Chart.js colours per §Charts
+- [ ] Customization panel: a FAB + Display panel (theme, font family via
+      on-demand Google Fonts, text size, line spacing, content width, density,
+      accent, high contrast, reduce-motion), `data-*` + one CSS var, anti-flash
+      script from the sibling, `localStorage` + cookie + `users.ui_prefs` JSON,
+      Reset. Port `CustomizationPanel.tsx` from
+      `~/Projects/chinese-intel-pipeline` (`EVALUATION.md` §4)
 - [ ] Port middleware: `SecurityHeaders` (CSP extended for the FastAPI origin,
       Plotly/Chart.js, `marked` + highlighter, `cleave.js`, `dexie`),
       `LogMutation`, `HasPrivilege` / `IsAdmin`. Every Livewire write method
@@ -250,9 +256,10 @@ inert stubs.
 - [ ] `/admin/activity-logs` (Admin only) ported; the audit table in
       `SECURITY.md` §5 is the coverage checklist
 - [ ] Migrations: `conversations` (ULID), `messages` (incl. `model`),
-      `message_tool_calls`, `queries` (prompt, sql, engine, `model`, row_count,
-      timings JSON, status, request_id), `chart_artifacts`, `query_feedback`,
-      `kb_uploads`, `google_connections`
+      `message_tool_calls`, `queries` (prompt, sql, engine, `model`,
+      `tables_used`, row_count, timings JSON, status, request_id),
+      `chart_artifacts`, `query_feedback`, `kb_uploads`, `google_connections`,
+      `users.ui_prefs` (JSON)
 - [ ] `RunExciseQuery` job (one-shot `/query`); queue worker systemd `--user`
       unit with `--timeout` above the orchestrator timeout
 - [ ] Livewire `Ask` component: split-view (chat left, canvas right, one
@@ -295,6 +302,8 @@ inert stubs.
       row; disconnect deletes it; a token never appears in a log or response
 - [ ] `SecurityHeaders` present; `activity_logs` on non-GET; SSE stage
       endpoint returns the sequence
+- [ ] customization panel: a pref change persists across reload (cookie +
+      `users.ui_prefs`), Reset restores defaults, timestamps render IST
 - [ ] `vendor/bin/pint --dirty` clean
 
 **Done when:** a signed-in analyst can use the one-shot form and the chat

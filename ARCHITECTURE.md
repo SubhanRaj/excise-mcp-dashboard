@@ -165,11 +165,13 @@ Milestone 6 quality check calls for it.
 
 ## Component diagrams
 
-Diagrams 1 and 2 are the two from the brief. Diagrams 1U and 2U match what
-this repo specifies: bubblewrap as the sandbox, a direct read-only `asyncpg`
-pool in place of a standalone Postgres MCP server, one Python engine, Livewire
-4, and the knowledge base, chat window, and Google OAuth. Diagram 3 covers the
-chat and ingestion paths.
+Diagrams 1 and 2 are the two from the brief, kept as supplied. Diagrams 1U, 2U,
+3, and 4 are the current state: bubblewrap as the sandbox, a direct read-only
+`asyncpg` pool in place of a standalone Postgres MCP server, one Python engine,
+Livewire 4, the Cloudflare Tunnel with the app's email-OTP login as the only
+gate (no Access), the knowledge base, the chat window with a model picker,
+Google OAuth, and the output store. 1U is the system flow, 2U the enforcement
+layers, 3 the chat and ingestion paths, 4 the output artifact lifecycle.
 
 ### Diagram 1 (as supplied in the brief): comprehensive system flow
 
@@ -264,21 +266,23 @@ flowchart TD
     subgraph Host["Office AIO — on-premise, no inbound ports"]
         subgraph WebTier["web/ — Laravel 13 + Livewire 4, Apache 8084"]
             Ask["Ask — one-shot analytical form"]:::app
-            Chat["Chat — streaming conversation"]:::app
-            Admin["Admin — users, connected Google sources, knowledge base"]:::app
-            Queue["Queue worker — RunExciseQuery job"]:::app
-            MDB[("MariaDB<br/>users, ledger, chat history,<br/>kb_uploads, google_connections")]:::db
+            Chat["Chat — streaming conversation + model picker"]:::app
+            Admin["Admin — users, Google sources, knowledge base, activity logs"]:::app
+            Queue["Queue worker — RunExciseQuery / RefreshAnalysis / exports"]:::app
+            MDB[("MariaDB<br/>users + ui_prefs, activity_logs, query ledger,<br/>chat history, saved_analyses / analysis_runs / reports,<br/>kb_uploads, google_connections, jobs")]:::db
+            Art[["local disk<br/>artifacts/&lt;ulid&gt;, report-exports/"]]:::db
         end
 
         subgraph Orch["orchestrator/ — FastAPI 8085, loopback only"]
             OneShot["pipeline.py<br/>plan_sql then guard then run then plot then summarize"]:::app
             Loop["chat/loop.py<br/>agentic tool loop"]:::app
-            Guard["sql/guard.py + sql/runner.py<br/>single SELECT, READ ONLY txn"]:::app
+            Guard["sql/guard.py + sql/runner.py<br/>single SELECT, READ ONLY txn, tables_used"]:::app
             Retr["kb/retrieve.py<br/>Postgres FTS (pgvector off)"]:::app
             PyEng["engines/python_engine.py<br/>Matplotlib / Plotly / pandas"]:::viz
+            Reg["model registry<br/>OLLAMA_ALLOWED_MODELS, per-role default"]:::app
         end
 
-        Ollama(("Ollama — CPU only<br/>qwen2.5-coder 7b, llama3.1 8b")):::ai
+        Ollama(("Ollama — CPU only<br/>qwen2.5-coder 7b, llama3.1 8b<br/>(gemma2 9b optional)")):::ai
         Sbx["bwrap sandbox<br/>no network, read-only FS, one scratch dir<br/>15s / 1GB caps, non-root user"]:::viz
 
         subgraph Bank["PostgreSQL 18 (5432) — the data bank"]
@@ -312,6 +316,8 @@ flowchart TD
     Loop --> Retr
     OneShot <--> Ollama
     Loop <--> Ollama
+    Reg -.->|"validates model key"| OneShot
+    Reg -.->|"validates model key"| Loop
     Guard -->|"SELECT as excise_ro"| AN
     Retr -->|"SELECT as excise_ro"| KB
     OneShot --> PyEng
@@ -319,6 +325,8 @@ flowchart TD
     PyEng --> Sbx
     PyEng -.->|"plotly json + png/svg/pdf"| OneShot
     OctEng -.-> Sbx
+    Queue -->|"copy artifacts out"| Art
+    MDB -.->|"saved analyses reference"| Art
 
     EtlData -->|"INSERT as excise_etl"| AN
     EtlKB -->|"INSERT as excise_etl"| KB
@@ -403,8 +411,10 @@ flowchart LR
 
 > The read-only role is the primary control for data access; the guard and the
 > `READ ONLY` transaction are redundant layers on top. `search_knowledge` runs
-> no model-authored SQL at all. `SECURITY.md` §1 and §2 have the exact grants
-> and the `bwrap` command line.
+> no model-authored SQL at all. The request `model` field is checked against
+> `OLLAMA_ALLOWED_MODELS` before any Ollama call, so the picker cannot run an
+> arbitrary model. `SECURITY.md` §1, §2, §3 have the grants, the `bwrap`
+> command line, and the model-registry check.
 
 ### Diagram 3: chat, knowledge, and ingestion
 
@@ -420,8 +430,8 @@ flowchart TD
     classDef ext fill:#d97706,stroke:#b45309,stroke-width:2px,color:#fff
 
     User(["Analyst"]):::client
-    Chat["Livewire Chat window<br/>SSE stream, markdown + code render"]:::app
-    Orch["FastAPI orchestrator<br/>chat tool loop"]:::app
+    Chat["Livewire Chat window<br/>SSE stream, markdown + code render, model picker"]:::app
+    Orch["FastAPI orchestrator<br/>chat tool loop, model registry"]:::app
     Ollama(("Ollama<br/>chat + coder + embed, CPU")):::ai
 
     subgraph Tools["Tools the model calls"]
@@ -466,6 +476,54 @@ flowchart TD
     User -.->|"OAuth connect via web/ Socialite"| G
 ```
 
+### Diagram 4: output artifact lifecycle
+
+From a run to a saved analysis to a report to an export. Raw data stays in
+PostgreSQL; every artifact lives in `web/`'s MariaDB plus the `local` disk.
+`DATA_PIPELINE.md` §Output store.
+
+```mermaid
+flowchart TD
+    classDef app fill:#059669,stroke:#047857,stroke-width:2px,color:#fff
+    classDef db fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#fff
+    classDef store fill:#0284c7,stroke:#0369a1,stroke-width:2px,color:#fff
+    classDef off fill:#94a3b8,stroke:#64748b,stroke-width:1px,color:#fff,stroke-dasharray:4 3
+
+    Run["/query or chat make_chart"]:::app
+    Q[("queries / messages<br/>question, SQL, engine, model, tables_used, timings")]:::db
+    Files[["local disk<br/>chart.plotly.json + png/svg/pdf"]]:::store
+    Sweep["sweeper timer<br/>unsaved runs &gt; ARTIFACT_TTL_DAYS"]:::off
+
+    Save["Save"]:::app
+    SA[("saved_analyses<br/>recipe: question, filters, engine, model, views")]:::db
+    Refresh{"refresh trigger"}:::app
+    AR[("analysis_runs<br/>ran_at, trigger, headline")]:::db
+    ETL(("etl.ingestion_runs<br/>completes for a used view")):::db
+
+    Rep[("reports / report_blocks<br/>ordered analyses + markdown")]:::db
+    Exp["export<br/>PDF (dompdf) / XLSX / ZIP<br/>stamped with etl_epoch"]:::app
+    RE[("report_exports<br/>cached per format")]:::store
+    Pub["backlog: reviewed hand-off to<br/>upexcise-stats-dashboard"]:::off
+
+    Run --> Q
+    Run --> Files
+    Files -.->|"not saved"| Sweep
+    Q --> Save --> SA
+    SA --> Refresh
+    Refresh -->|manual / schedule| AR
+    ETL -->|"tables_used match, auto_refresh"| Refresh
+    Refresh -->|re-run recipe| Run
+    AR --> Files
+    SA --> Rep
+    Rep --> Exp --> RE
+    SA -.-> Pub
+    Rep -.-> Pub
+```
+
+> A refresh re-runs the saved `recipe` through the same `/query` path, so it
+> passes the same guard, read-only role, and sandbox. `analysis_runs` is the
+> trend history — same question, successive data vintages.
+
 ## Cross-references
 
 - Hardware limits, model choice, retrieval and chat-integration decisions,
@@ -474,7 +532,7 @@ flowchart TD
 - Orchestrator internals, `IVisualizationEngine`, per-engine guides, the chat
   tool loop and retrieval: `MCP_ENGINES.md`
 - Read-only role SQL, sandbox invocation, knowledge-base read paths, Google
-  OAuth, tunnel + Access config: `SECURITY.md`
+  OAuth, tunnel + app auth, audit trail: `SECURITY.md`
 - Build order and checklists: `ROADMAP.md`
 - Every sudo / install / external-console step: `OPERATOR_SETUP.md`
 - Session rules and conventions: `CLAUDE.md`

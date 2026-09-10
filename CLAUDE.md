@@ -238,10 +238,19 @@ the 11/12 + Livewire 3 named in the original brief.
   `govviolet` (`#4a2bc2`) / `govsaffron` palette, Inter, the `@apply` component
   classes and anti-flash theme script from its `head.blade.php`, and the
   Tabler-icon admin shell (`components/layout.blade.php` + `sidebar.blade.php`).
-  This is an internal tool: keep the dark + high-contrast toggles and the GIGW
-  accessibility baseline (skip link, landmarks, one `h1`, `:focus-visible`
-  outline, explicit empty states); leave out the public reader-preferences
-  panel, the sitemap / SEO / JSON-LD surface, and the policy-page footer.
+  This is an internal tool: keep the GIGW accessibility baseline (skip link,
+  landmarks, one `h1`, `:focus-visible` outline, explicit empty states); leave
+  out the sitemap / SEO / JSON-LD surface and the policy-page footer.
+- **Customization panel**: a floating control (FAB) that opens a Display panel,
+  combining the sibling's reader prefs with `~/Projects/chinese-intel-pipeline`'s
+  `CustomizationPanel.tsx` set — theme (system / light / dark), font family
+  (small curated catalogue, Inter default, loaded on demand from Google Fonts),
+  text size, line spacing, content width, table density (comfortable / compact),
+  accent colour (govviolet default + a sanctioned few), high contrast, and a
+  "reduce motion" / streaming toggle for the chat. Applied via `data-*`
+  attributes + one CSS var, `localStorage` + a cookie for the anti-flash script,
+  and mirrored to `users.ui_prefs` (JSON) so it follows the login. A Reset
+  button. `EVALUATION.md` §4.
 - **Livewire write authorization**: route middleware gates a component's
   mount, but a `wire:click` / `wire:submit` that reaches `livewire/update`
   does not re-run route middleware. Every write method on an admin component
@@ -362,6 +371,8 @@ End with the co-author trailer the session is configured for.
 - `SecurityHeaders` present on a sample route; `activity_logs` written on a
   non-GET; an unauthenticated request to a protected route redirects to
   `/login`.
+- Customization panel: a changed preference persists across reload (cookie +
+  `users.ui_prefs`) and Reset restores defaults; timestamps render in IST.
 - The SSE/poll stage endpoint returns the stage sequence for a running job.
 
 **`orchestrator/` (pytest, `pytest-asyncio`):**
