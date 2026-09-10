@@ -313,6 +313,50 @@ command, `etl sync [--source NAME] [--all]`, reads `etl.source_registry`,
 runs each due source through: **fetch -> normalize -> validate -> upsert ->
 record run**.
 
+```mermaid
+flowchart TD
+    classDef app fill:#059669,stroke:#047857,stroke-width:2px,color:#fff
+    classDef db fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#fff
+    classDef edge fill:#d97706,stroke:#b45309,stroke-width:2px,color:#fff
+
+    Timer["systemd --user timer<br/>(schedule from the registry row)"]:::app
+    Reg[("etl.source_registry<br/>what to sync, how often")]:::db
+    Sync["etl sync --source NAME<br/>Postgres advisory lock so timers cannot overlap"]:::app
+
+    subgraph Adapters["one adapter per source"]
+        GS["gsheets"]:::app
+        GD["gdrive"]:::app
+        XL["excel"]:::app
+        CSV["csv"]:::app
+    end
+    GAPI[["Google Sheets / Drive API<br/>read-only scopes"]]:::edge
+    Files[["Excel / CSV<br/>local and network shares"]]:::edge
+
+    Norm["normalize<br/>district alias, FY parse, money to rupees, volume to BL"]:::app
+    Valid{"natural key present<br/>and parseable?"}:::app
+    Quar[("etl.quarantine<br/>raw_row + reason, counted")]:::db
+    Upsert["loader<br/>INSERT ... ON CONFLICT DO UPDATE on the natural key"]:::app
+    Fact[("data tables<br/>revenues / sales_volumes / operations / shops / ...")]:::db
+    Runs[("etl.ingestion_runs<br/>rows seen / upserted / quarantined, status")]:::db
+    AV[("analytics.* views<br/>published rows only — the AI path reads these")]:::db
+
+    Timer --> Sync
+    Reg --> Sync
+    Sync --> GS & GD & XL & CSV
+    GS <--> GAPI
+    GD <--> GAPI
+    Files -->|read| XL
+    Files -->|read| CSV
+    GS & GD & XL & CSV --> Norm
+    Norm --> Valid
+    Valid -->|no| Quar
+    Valid -->|yes| Upsert
+    Upsert --> Fact
+    Sync --> Runs
+    Quar --> Runs
+    Fact --> AV
+```
+
 ### Shared shape
 
 Every source adapter yields rows in one normalized dict shape per target
@@ -467,6 +511,43 @@ policies — not only the numbers. The corpus is verified Markdown, stored in a
 2. **Admin `.md` uploads** — the "Knowledge base" screen in `web/`. An
    uploaded file lands on a dedicated disk with a `kb_uploads` row; the ETL
    picks it up on the next run.
+
+```mermaid
+flowchart TD
+    classDef app fill:#059669,stroke:#047857,stroke-width:2px,color:#fff
+    classDef db fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#fff
+    classDef edge fill:#d97706,stroke:#b45309,stroke-width:2px,color:#fff
+    classDef ai fill:#7c3aed,stroke:#6d28d9,stroke-width:2px,color:#fff
+
+    PDFP[("pdf-markdown-pipeline<br/>MariaDB documents + public .md files<br/>visibility=public AND status=verified AND not deleted")]:::db
+    Upload["web/ Knowledge base screen<br/>admin .md upload — extension, size, UTF-8, no path separators"]:::app
+    KBU[("kb_uploads<br/>MariaDB in web/ — pending row + file on the kb-uploads disk")]:::db
+    GAPI[["Google Docs / Drive API"]]:::edge
+
+    subgraph EtlKB["etl/ knowledge sources — cron + advisory lock"]
+        PP["pdf_pipeline"]:::app
+        KU["kb_uploads"]:::app
+        GDoc["gdocs / gdrive (.md, .txt, exported Docs)"]:::app
+    end
+
+    Chunk["chunk.py<br/>heading-aware, ~1,200-token cap, ~100-token overlap,<br/>tables kept whole, heading_path recorded"]:::app
+
+    subgraph Bank["PostgreSQL — kb schema"]
+        Docs[("kb.documents<br/>origin, rule_set, source_url, content_sha256, withdrawn_at")]:::db
+        Chunks[("kb.chunks<br/>content + tsvector fts (+ embedding when enabled)")]:::db
+    end
+
+    Retr["orchestrator kb/retrieve.py<br/>websearch_to_tsquery('simple', ...), withdrawn_at IS NULL"]:::app
+    Model(("local model<br/>cites heading_path + source_url")):::ai
+
+    PDFP -->|SELECT via excise_mcp_kb_ro| PP
+    Upload --> KBU
+    KBU -->|ETL bridges MariaDB to Postgres| KU
+    GAPI --> GDoc
+    PP & KU & GDoc --> Chunk
+    Chunk --> Docs --> Chunks
+    Chunks -->|SELECT as excise_ro| Retr --> Model
+```
 
 ### `kb` schema
 

@@ -16,6 +16,29 @@ the same interface. Milestone 7 adds the output store — saved analyses,
 reports, and exports — and is post-MVP. MATLAB and Mathematica stay documented
 and unbuilt.
 
+```mermaid
+flowchart LR
+    classDef mvp fill:#059669,stroke:#047857,stroke-width:2px,color:#fff
+    classDef post fill:#94a3b8,stroke:#64748b,stroke-width:1px,color:#fff,stroke-dasharray:4 3
+
+    M0["M0<br/>approval + groundwork"]:::mvp
+    M1["M1<br/>data bank, ETL, Google ingestion"]:::mvp
+    M2["M2<br/>orchestrator, one-shot pipeline"]:::mvp
+    M3["M3<br/>knowledge base + retrieval"]:::mvp
+    M4["M4<br/>second engine (GNU Octave)"]:::mvp
+    M5["M5<br/>Laravel UI — form, chat, admin"]:::mvp
+    M6["M6<br/>perimeter, hardening, end-to-end"]:::mvp
+    M7["M7<br/>output store — saved analyses, reports, exports"]:::post
+
+    M0 --> M1 --> M2
+    M2 --> M3
+    M2 --> M4
+    M2 --> M5
+    M3 --> M5
+    M5 --> M6
+    M5 --> M7
+```
+
 ---
 
 ## Milestone 0 — Approval and groundwork (no code)

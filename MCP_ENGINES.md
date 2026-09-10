@@ -110,6 +110,34 @@ class QueryResponse(BaseModel):
 
 ### Pipeline stages
 
+```mermaid
+flowchart TD
+    classDef app fill:#059669,stroke:#047857,stroke-width:2px,color:#fff
+    classDef ai fill:#7c3aed,stroke:#6d28d9,stroke-width:2px,color:#fff
+    classDef viz fill:#0284c7,stroke:#0369a1,stroke-width:2px,color:#fff
+    classDef db fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#fff
+    classDef err fill:#b91c1c,stroke:#7f1d1d,stroke-width:2px,color:#fff
+
+    Q(["question + analytics.* schema card + few-shot examples"]):::app
+    P1["plan_sql<br/>Ollama qwen2.5-coder, structured SqlPlan"]:::ai
+    G{"guard_sql<br/>one SELECT / WITH, analytics.* only,<br/>no DML/DDL/COPY/volatile fn, LIMIT enforced"}:::app
+    RS["run_sql<br/>asyncpg as excise_ro, BEGIN READ ONLY,<br/>statement_timeout 10s, fetch, ROLLBACK"]:::db
+    P2["plan_plot<br/>Ollama qwen2.5-coder, structured PlotPlan,<br/>engine must be in the live registry"]:::ai
+    R["render<br/>engines/&lt;engine&gt;.py — script + Parquet into scratch,<br/>run under bwrap, collect declared outputs"]:::viz
+    S["summarize<br/>Ollama llama3.1, 2-4 sentence reading"]:::ai
+    Out(["chart + table + SQL + summary + per-stage timings"]):::app
+    Err["typed error<br/>(error, request_id, stage)"]:::err
+
+    Q --> P1 --> G
+    G -->|reject, reason to planner| P1
+    G -->|rejected twice| Err
+    G -->|ok — tables_used recorded| RS
+    RS -->|DB error| Err
+    RS --> P2 --> R
+    R -->|sandbox timeout / violation / no output| Err
+    R --> S --> Out
+```
+
 1. **plan_sql** — prompt Ollama (`qwen2.5-coder:7b`) with the question, the
    `analytics.*` schema card, and few-shot examples; require an `SqlPlan`
    (`{sql: str, rationale: str, expected_columns: list[str]}`). Validate as
@@ -253,6 +281,36 @@ for step in range(CHAT_MAX_TOOL_CALLS + 1):
         append result to messages
 # fell through the cap:
 emit `error` {stage: "tool_loop", message: "too many tool calls"}
+```
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant L as web/ (Laravel relay)
+    participant O as orchestrator /chat
+    participant M as Ollama (chat model)
+    participant T as tools - run_sql_query, search_knowledge, make_chart
+
+    B->>L: message
+    L->>O: POST /chat — bearer, capped history, model key
+    O->>O: reject the model key if it is not in the registry
+    loop up to CHAT_MAX_TOOL_CALLS
+        O->>M: stream a model turn
+        M-->>O: token deltas
+        O-->>L: SSE token events
+        L-->>B: append assistant text
+        alt the turn made a tool call
+            O-->>L: SSE tool_call
+            O->>T: dispatch — same guard + read-only role + sandbox
+            T-->>O: result (preview only, never the full row set)
+            O-->>L: SSE tool_result (+ chart if make_chart)
+            O->>M: append the tool result and continue
+        else no tool call
+            O-->>L: SSE done
+        end
+    end
+    Note over O: cap exceeded -> SSE error {stage: tool_loop}
+    L->>L: persist messages + message_tool_calls
 ```
 
 A client disconnect cancels the in-flight Ollama stream and any running tool.

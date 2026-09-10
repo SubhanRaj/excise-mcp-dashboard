@@ -11,6 +11,41 @@ Three enforcement layers, each independent of the others:
    own Fortify email-OTP login is the access gate, the same as the sibling
    apps.
 
+```mermaid
+flowchart TD
+    classDef client fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#fff
+    classDef edge fill:#d97706,stroke:#b45309,stroke-width:2px,color:#fff
+    classDef app fill:#059669,stroke:#047857,stroke-width:2px,color:#fff
+    classDef viz fill:#0284c7,stroke:#0369a1,stroke-width:2px,color:#fff
+    classDef db fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#fff
+
+    User(["user"]):::client
+
+    subgraph L3["Layer 3 — perimeter"]
+        CF["named Cloudflare Tunnel<br/>dials out over loopback, no inbound firewall port"]:::edge
+        Apache["Apache 127.0.0.1:8084"]:::app
+        Auth["Fortify — email + password, then 6-digit OTP, then session<br/>every route except /health behind auth"]:::app
+    end
+
+    Web["web/ — Laravel"]:::app
+    Orch["orchestrator/ — FastAPI, loopback only, bearer token"]:::app
+
+    subgraph L1["Layer 1 — the database refuses writes (engine-level)"]
+        Guard["sql/guard.py — one read-only SELECT,<br/>analytics.* only, no volatile function"]:::app
+        RO["excise_ro role — SELECT only,<br/>default_transaction_read_only = on"]:::db
+        Bank[("analytics.* + kb.* — published rows,<br/>wrapped in BEGIN READ ONLY + statement_timeout")]:::db
+    end
+
+    subgraph L2["Layer 2 — sandboxed execution"]
+        Sbx["bwrap namespace as non-root excise-sandbox<br/>no network, read-only FS, one scratch dir<br/>15s wall clock, 1GB address space, fd + proc caps"]:::viz
+    end
+
+    User -->|HTTPS| CF --> Apache --> Auth --> Web
+    Web -->|"/query and /chat, bearer token"| Orch
+    Orch -->|model-authored SQL| Guard --> RO --> Bank
+    Orch -->|LLM-generated plot script| Sbx
+```
+
 ## 1. PostgreSQL read-only role
 
 The data bank is `excise_bank` on the local cluster (`18/main`, port 5432,
