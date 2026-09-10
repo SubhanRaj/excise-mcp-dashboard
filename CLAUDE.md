@@ -182,6 +182,16 @@ the 11/12 + Livewire 3 named in the original brief.
   `--timeout=1900` reasoning in `laravel-apps-deploy.md`.
 - **Tailwind + Alpine**: Tailwind Play CDN and Chart.js / Plotly from jsDelivr,
   same as the siblings. Add every CDN host to the CSP.
+- **Branding and chrome**: copy the brand assets from
+  `~/Sites/upexcise-stats-dashboard` — the State Emblem of Uttar Pradesh
+  (`public/assets/img/up-gov-emblem.svg` + the white PNG), the favicons, the
+  app icons, `og-default.png`, and `scripts/make-brand-assets.php` that
+  regenerates them. Port the GIGW / UX4G chrome from that app's public layout:
+  the "Government of Uttar Pradesh" identity strip, the A- / A / A+ text-size
+  and high-contrast toggles (cookie-persisted, no library), the skip-to-main
+  link, and the footer policy links. The Department of Excise mark renders
+  beside the emblem when `public/assets/img/excise-logo.{svg,png,webp}` is
+  present. `EVALUATION.md` §4.
 - **Styling/UX**: split-view is a two-pane flex layout, chat left, canvas
   right, stacking to one column under `lg`. Streaming stage updates
   (`Querying database -> Running analysis -> Rendering chart -> Complete`) come
