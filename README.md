@@ -1,25 +1,42 @@
+<div align="center">
+
+<img src="assets/brand/favicon-32.png" width="64" height="64" alt="State Emblem of Uttar Pradesh">
+
 # excise-mcp-dashboard
 
-On-premise conversational analytics for Uttar Pradesh Excise departmental data.
-Ask a question in plain language; a local LLM turns it into a read-only SQL
-query over a PostgreSQL copy of the excise figures, runs a sandboxed analysis
-and plot script, and the web UI shows the chart, the data table, and the
-generated SQL.
+**Conversational analytics for UP Excise departmental data — on-premise, local LLM**
 
-> **Status: planning.** This repository is documentation only — no application
+Ask a question in plain language; a local model turns it into a read-only SQL
+query over a PostgreSQL copy of the excise figures, runs a sandboxed chart
+script, and the web UI shows the chart, the table, and the generated SQL. A
+knowledge base over the department's verified acts and rules answers questions
+about the law, and an OpenWebUI-style chat window reaches both.
+
+[![Laravel](https://img.shields.io/badge/Laravel-13-FF2D20?logo=laravel&logoColor=white)](https://laravel.com)
+[![Livewire](https://img.shields.io/badge/Livewire-4-4E56A6?logo=livewire&logoColor=white)](https://livewire.laravel.com)
+[![FastAPI](https://img.shields.io/badge/FastAPI-Python%203.12-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-18-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org)
+[![Ollama](https://img.shields.io/badge/Ollama-Qwen%202.5%20%2F%20Llama%203.1-000000)](https://ollama.com)
+[![Status](https://img.shields.io/badge/status-planning-blue)](ROADMAP.md)
+
+</div>
+
+---
+
+> **Planning stage.** This repository is documentation only — no application
 > code, no environment, no installs — until the design is approved. Everything
 > here is the blueprint a build session works from.
 
 ## What it does
 
-- **Analytical questions.** A natural-language question in; a read-only SQL
+- **Analytical questions** — a natural-language question in; a read-only SQL
   query, an interactive chart, a data table, a written summary, and the SQL
   itself out. Every query is kept in a ledger.
-- **Knowledge base.** UP Excise acts, rules, regulations, and policies, drawn
-  from the department's verified document repository and admin `.md` uploads.
+- **Knowledge base** — UP Excise acts, rules, regulations, and policies, from
+  the department's verified document repository and admin `.md` uploads.
   Questions about the law are answered from this corpus with citations back to
   the source.
-- **Chat window.** An OpenWebUI-style streaming conversation with the local
+- **Chat window** — an OpenWebUI-style streaming conversation with the local
   model. It calls the same SQL, retrieval, and charting tools mid-conversation,
   so the data and the law are both reachable without leaving the chat.
 
@@ -41,13 +58,13 @@ Three deployable units in one repository.
 
 | Unit | Runtime | Role |
 |---|---|---|
-| `web/` | Laravel 13 + Livewire 4, PHP 8.5 | Analytical form, chat window, admin screens (users, connected Google sources, knowledge base), auth, query ledger, exports |
+| `web/` | Laravel 13 + Livewire 4, PHP 8.5 | Analytical form, chat window, admin screens, auth, query ledger, exports |
 | `orchestrator/` | Python 3.12 + FastAPI | Local-model client, SQL guard and read-only runner, visualization sandbox, knowledge retrieval, streaming chat tool loop |
 | `etl/` | Python 3.12 | Ingestion from Google Sheets / Drive / Docs, Excel, and CSV into PostgreSQL; verified documents and admin uploads into the knowledge base |
 
-The model is served by [Ollama](https://ollama.com) (Qwen 2.5 / Llama 3.1),
-CPU-only. Retrieval is PostgreSQL full-text search, with `pgvector` as a
-documented upgrade. The verified document corpus comes from
+The model runs on [Ollama](https://ollama.com) (Qwen 2.5 / Llama 3.1), CPU-only.
+Retrieval is PostgreSQL full-text search, with `pgvector` as a documented
+upgrade. The verified document corpus comes from
 [`pdf-markdown-pipeline`](https://github.com/SubhanRaj/pdf-markdown-pipeline).
 
 ## Documents

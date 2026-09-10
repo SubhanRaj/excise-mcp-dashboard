@@ -182,16 +182,17 @@ the 11/12 + Livewire 3 named in the original brief.
   `--timeout=1900` reasoning in `laravel-apps-deploy.md`.
 - **Tailwind + Alpine**: Tailwind Play CDN and Chart.js / Plotly from jsDelivr,
   same as the siblings. Add every CDN host to the CSP.
-- **Branding and chrome**: copy the brand assets from
-  `~/Sites/upexcise-stats-dashboard` — the State Emblem of Uttar Pradesh
-  (`public/assets/img/up-gov-emblem.svg` + the white PNG), the favicons, the
-  app icons, `og-default.png`, and `scripts/make-brand-assets.php` that
-  regenerates them. Port the GIGW / UX4G chrome from that app's public layout:
-  the "Government of Uttar Pradesh" identity strip, the A- / A / A+ text-size
-  and high-contrast toggles (cookie-persisted, no library), the skip-to-main
-  link, and the footer policy links. The Department of Excise mark renders
-  beside the emblem when `public/assets/img/excise-logo.{svg,png,webp}` is
-  present. `EVALUATION.md` §4.
+- **Branding and chrome**: the brand kit is in `assets/brand/` — the State
+  Emblem of Uttar Pradesh (`up-gov-emblem.svg` + the white PNG), the favicons,
+  and the app icons. Move it into `web/public/` at Milestone 5. Port the GIGW
+  / UX4G chrome from `~/Sites/upexcise-stats-dashboard`'s public layout: the
+  "Government of Uttar Pradesh" identity strip, the A- / A / A+ text-size and
+  high-contrast toggles (cookie-persisted, no library), the skip-to-main link,
+  and the footer policy links. Regenerate the icons and the Open Graph card
+  with that repo's `scripts/make-brand-assets.php`. The Department of Excise
+  mark renders beside the emblem when
+  `web/public/assets/img/excise-logo.{svg,png,webp}` is present.
+  `EVALUATION.md` §4.
 - **Styling/UX**: split-view is a two-pane flex layout, chat left, canvas
   right, stacking to one column under `lg`. Streaming stage updates
   (`Querying database -> Running analysis -> Rendering chart -> Complete`) come

@@ -219,11 +219,12 @@ inert stubs.
       `excise_mcp_dashboard_local` (MariaDB, scoped user)
 - [ ] Port auth from `~/Sites/upexcise-stats-dashboard` (OTP login, magic-link
       onboarding + reset, `tests/Feature/Auth/*`)
-- [ ] Copy brand assets from `~/Sites/upexcise-stats-dashboard` — state emblem
-      (`public/assets/img/up-gov-emblem.{svg,png}`), favicons, app icons,
-      `og-default.png`, `scripts/make-brand-assets.php`; port the GIGW/UX4G
-      chrome (identity strip, A-/A/A+ and high-contrast toggles, skip link,
-      footer policy links) into the authed layout (`EVALUATION.md` §4)
+- [ ] Move `assets/brand/*` (state emblem, favicons, app icons) into
+      `web/public/`; port the GIGW/UX4G chrome (identity strip, A-/A/A+ and
+      high-contrast toggles, skip link, footer policy links) from
+      `~/Sites/upexcise-stats-dashboard` into the authed layout; regenerate
+      the icons and OG card with that repo's `scripts/make-brand-assets.php`
+      (`EVALUATION.md` §4)
 - [ ] Port middleware: `SecurityHeaders` (CSP extended for the FastAPI origin,
       Plotly/Chart.js, `marked` + highlighter), `LogMutation`, `HasPrivilege`
       / `IsAdmin`; add `VerifyCloudflareAccess` (JWT `aud` check)
