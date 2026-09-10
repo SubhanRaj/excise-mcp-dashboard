@@ -62,15 +62,18 @@ pulled, the sandbox user exists.
 ## Milestone 1 — Data bank, ETL, and Google ingestion
 
 ### Database (`db/`)
-- [ ] `db/schema.sql` — the PostgreSQL schema from `DATA_PIPELINE.md`
+- [x] `db/schema.sql` — the PostgreSQL schema from `DATA_PIPELINE.md`
       (dimensions, fact tables, shops split, reference tables, the `etl`
-      schema, the `kb` schema)
-- [ ] `db/analytics_views.sql` — the `analytics.*` published-only views
-- [ ] `db/roles.sql` — `excise_owner` / `excise_etl` / `excise_ro` from
+      schema, the `kb` schema); `set_updated_at()` trigger on every
+      `updated_at` table; fact-table and lookup indexes
+- [x] `db/analytics_views.sql` — the `analytics.*` published-only views
+- [x] `db/roles.sql` — `excise_owner` / `excise_etl` / `excise_ro` from
       `SECURITY.md` §1 (grants cover `analytics.*` and `kb.*`)
-- [ ] `db/seed_reference.sql` — `zones` / `divisions` / `districts` /
-      `financial_years` / `license_categories`, seeded from the sibling
-      dashboard's seeders and contact-list JSON
+- [x] `db/seed_reference.sql` — `zones` (5) / `divisions` (18) / `districts`
+      (75) / `financial_years` (FY2014-15..FY2025-26) / `license_categories`,
+      seeded from `~/Sites/UP-excise-mailer`'s contact-list JSON;
+      `ON CONFLICT DO NOTHING` throughout
+- [x] `db/README.md` — script purpose, apply order, roles
 - [ ] Owner runs `OPERATOR_SETUP.md` §Data bank — `createdb`, apply the four
       scripts, create the `excise_mcp_kb_ro` read-only MariaDB user for the
       pdf-markdown-pipeline sync
