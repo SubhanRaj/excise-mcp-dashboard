@@ -258,8 +258,8 @@ inert stubs.
 - [ ] Migrations: `conversations` (ULID), `messages` (incl. `model`),
       `message_tool_calls`, `queries` (prompt, sql, engine, `model`,
       `tables_used`, row_count, timings JSON, status, request_id),
-      `chart_artifacts`, `query_feedback`, `kb_uploads`, `google_connections`,
-      `users.ui_prefs` (JSON)
+      `chart_artifacts` (`spec` JSON + disk file paths), `query_feedback`,
+      `kb_uploads`, `google_connections`, `users.ui_prefs` (JSON)
 - [ ] `RunExciseQuery` job (one-shot `/query`); queue worker systemd `--user`
       unit with `--timeout` above the orchestrator timeout
 - [ ] Livewire `Ask` component: split-view (chat left, canvas right, one

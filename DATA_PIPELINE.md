@@ -620,11 +620,21 @@ One `/query` or chat `make_chart` call yields:
 
 | Piece | Stored as |
 |---|---|
-| the question + generated SQL + engine + model + timings + status | a `queries` row (chat: the `message` + `message_tool_calls` rows) |
-| interactive chart | `chart.plotly.json` on the `local` disk, referenced by a `chart_artifacts` row |
-| static chart | `chart.{png,svg,pdf}` on the `local` disk, same row |
-| table | `rows_preview` inline for the pane; full rows re-fetched on export, not stored |
+| the question + generated SQL + engine + model + timings + status | a `queries` row (chat: the `message` + `message_tool_calls` rows) in MariaDB |
+| interactive chart spec | `chart_artifacts.spec` — a `JSON` / `LONGTEXT` column in MariaDB (the Plotly figure, needed on every render, small because charts plot aggregates) |
+| rendered chart files | `chart.{png,svg,pdf}` on the `local` disk, path on the `chart_artifacts` row |
+| table | `rows_preview` (first N rows) inline as JSON on the row; full rows re-run from the stored SQL on export, not persisted |
 | written summary | text column on the `queries` / `messages` row |
+
+**Small and structured -> MariaDB; large blobs -> the disk.** The chart spec,
+`rows_preview`, the SQL, the summary, and every `saved_analyses` / `reports`
+row live in MariaDB — queryable, versioned with the row, and self-contained
+for the offline Dexie cache. The rendered PNG / SVG / PDF and the report
+exports go to the `local` disk with a pointer row. MariaDB *can* hold the
+rasters in a `LONGBLOB`, but that bloats every `mysqldump`, pushes big blobs
+through the InnoDB buffer pool against the hot session / job rows, and makes
+serving a file a `SELECT` + PHP stream instead of `Storage::download`. The
+four sibling apps keep artifacts on disk the same way.
 
 Files land under `web/storage/app/artifacts/<query-ulid>/` (on the Apache
 `ReadWritePaths` list). A run that nobody saves is swept after
@@ -670,7 +680,7 @@ latest`) or is frozen to a point in time.
 
 | Scope | Formats | Built from |
 |---|---|---|
-| one chart | PNG / SVG / PDF (artifact files), `plotly.json` (re-embeddable) | the stored files |
+| one chart | PNG / SVG / PDF (disk files), `plotly.json` (re-embeddable) | the disk files + the `spec` column |
 | one result | CSV / XLSX of the full rows | re-run the stored SQL, stream through the sibling `ExportService` (`openspout`) |
 | saved analysis | the chart + a `recipe.json` (reproducible) | the row + files |
 | report | one **PDF** (a print-view Blade → `barryvdh/laravel-dompdf`, DejaVu Sans for `₹` + Devanagari, the sibling `AnnualReport` shape); **XLSX** workbook, one sheet of rows per analysis block; **ZIP** bundle of the PDF + per-block CSVs + `plotly.json` + recipes | the blocks, resolved at export time; `etl_epoch` stamped on the output so the data vintage is on the page |

@@ -490,8 +490,8 @@ flowchart TD
     classDef off fill:#94a3b8,stroke:#64748b,stroke-width:1px,color:#fff,stroke-dasharray:4 3
 
     Run["/query or chat make_chart"]:::app
-    Q[("queries / messages<br/>question, SQL, engine, model, tables_used, timings")]:::db
-    Files[["local disk<br/>chart.plotly.json + png/svg/pdf"]]:::store
+    Q[("queries / messages + chart_artifacts<br/>SQL, engine, model, tables_used, timings,<br/>rows_preview, spec (Plotly JSON) — all MariaDB")]:::db
+    Files[["local disk<br/>chart.png / svg / pdf (rendered blobs)"]]:::store
     Sweep["sweeper timer<br/>unsaved runs &gt; ARTIFACT_TTL_DAYS"]:::off
 
     Save["Save"]:::app

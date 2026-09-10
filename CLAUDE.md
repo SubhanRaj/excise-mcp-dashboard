@@ -220,9 +220,12 @@ the 11/12 + Livewire 3 named in the original brief.
   with a "last synced" marker; a question typed offline queues and sends on
   reconnect.
 - **Output store**: the data bank (Postgres) is raw data only; charts, tables,
-  summaries, and the generated SQL are app artifacts in MariaDB + the `local`
-  disk, never written back to Postgres. A run's files sweep after
-  `ARTIFACT_TTL_DAYS` unless a `saved_analyses` row pins it. A saved analysis
+  summaries, and the generated SQL are app artifacts, never written back to
+  Postgres. Small and structured -> MariaDB: the chart spec (Plotly JSON in a
+  `chart_artifacts.spec` column), `rows_preview`, the SQL, the summary, every
+  `saved_analyses` / `reports` row. Large blobs -> the `local` disk: the
+  rendered PNG / SVG / PDF and the report exports, with a pointer row. A run's
+  files sweep after `ARTIFACT_TTL_DAYS` unless a `saved_analyses` row pins it. A saved analysis
   carries a `recipe` to re-run; each refresh (manual / scheduled / ETL-fired)
   adds an `analysis_runs` row — that history is the trend, shown with the
   sibling `Sparkline`. `reports` order saved analyses + Markdown blocks into a
