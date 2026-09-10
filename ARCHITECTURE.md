@@ -340,7 +340,7 @@ flowchart TD
 ```
 
 > Grey dashed nodes (Octave, MATLAB, Wolfram) are not in the first build.
-> Everything else is Milestones 1-6 in `ROADMAP.md`.
+> Everything else is covered by the `ROADMAP.md` milestones.
 
 ### Diagram 2 (as supplied in the brief): execution security & read-only sandbox
 

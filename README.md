@@ -70,7 +70,9 @@ Three deployable units in one repository.
 | `orchestrator/` | Python 3.12 + FastAPI | Local-model client, SQL guard and read-only runner, the visualization sandbox and its engine adapter, knowledge retrieval, streaming chat tool loop |
 | `etl/` | Python 3.12 | Ingestion from Google Sheets / Drive / Docs, Excel, and CSV into PostgreSQL; verified documents and admin uploads into the knowledge base |
 
-The model runs on [Ollama](https://ollama.com) (Qwen 2.5 / Llama 3.1), CPU-only.
+The model runs on [Ollama](https://ollama.com) (Qwen 2.5, Llama 3.1, or Gemma 2),
+CPU-only, one model resident at a time. Both the chat and the analytical form let
+the user pick which pulled model answers.
 Retrieval is PostgreSQL full-text search, with `pgvector` as a documented
 upgrade. The verified document corpus comes from
 [`pdf-markdown-pipeline`](https://github.com/SubhanRaj/pdf-markdown-pipeline).
@@ -93,8 +95,8 @@ against the same interface. The first build ships Python only —
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Systems overview, request paths, trust boundaries, the diagrams |
 | [DATA_PIPELINE.md](DATA_PIPELINE.md) | ETL design, the PostgreSQL schema, the `kb` knowledge-base schema, Google Sheets/Drive/Docs sources |
 | [MCP_ENGINES.md](MCP_ENGINES.md) | The FastAPI orchestrator, the `IVisualizationEngine` adapter, the chat tool loop and retrieval, per-engine integration guides |
-| [SECURITY.md](SECURITY.md) | Read-only PostgreSQL role, the bubblewrap execution sandbox, knowledge-base read paths, Google OAuth, Cloudflare Tunnel + Access |
-| [ROADMAP.md](ROADMAP.md) | Six milestones, checklist-driven |
+| [SECURITY.md](SECURITY.md) | Read-only PostgreSQL role, the bubblewrap execution sandbox, knowledge-base read paths, Google OAuth, the Cloudflare Tunnel and the email-OTP access gate, the audit trail |
+| [ROADMAP.md](ROADMAP.md) | Seven milestones, checklist-driven |
 | [OPERATOR_SETUP.md](OPERATOR_SETUP.md) | Every `sudo` / install / Google-console / Cloudflare step, copy-pasteable, grouped by milestone |
 
 ## Constraints (see [CLAUDE.md](CLAUDE.md) for the full list)
