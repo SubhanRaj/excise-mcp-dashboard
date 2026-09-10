@@ -345,7 +345,10 @@ From `~/Sites/upexcise-stats-dashboard`, `~/Sites/UP-excise-mailer`,
 | `SecurityHeaders` middleware (CSP, HSTS, `X-Frame-Options`, `X-Robots-Tag` noindex prefixes) | same, `app/Http/Middleware/SecurityHeaders.php` | Port; extend CSP with the FastAPI origin + Plotly/Chart.js CDN |
 | `LogMutation` middleware + `activity_logs` + `ActivityLog::record()` | same | Port as-is — audit every non-GET |
 | RBAC: flat `role` + `privileges` JSON + `designations` preset table | same, `app/Models/{User,Designation}.php` | Trim to `Admin` / `Analyst`; this tool has fewer surfaces |
-| Rate-limiter definitions | `upexcise-stats-dashboard/app/Providers/AppServiceProvider.php` | Port `login`/`two-factor`/`password-reset`; add `ask` |
+| Rate-limiter definitions | `upexcise-stats-dashboard/app/Providers/AppServiceProvider.php` | Port `login`/`two-factor`/`password-reset`; add `ask`, `chat` |
+| IST display macro + auth-event audit listeners | same `AppServiceProvider.php` — `Carbon::macro('ist')` (store UTC, convert at display), `Login` / `Logout` -> `activity_logs` | Port both; every user-facing timestamp calls `->ist()` |
+| Cleave.js money input (`numeralThousandsGroupStyle: 'lakh'`, visible + hidden input, `wire:ignore`) | `excise-budget-tracker/resources/views/components/currency-input.blade.php` (cleave.js@1.6.0 from jsDelivr) | Reuse for the few money inputs (schedule config, report metadata); add jsDelivr `cleave.js` to the CSP |
+| Dexie / IndexedDB slice cache keyed on an epoch, with a JSON slice endpoint and an explicit Sync | `upexcise-stats-dashboard` `resources/views/livewire/public/shops-table.blade.php`, `app/Http/Controllers/Public/{ShopSyncController,ReferenceJsonController}.php` | The offline read cache (Milestone 7) — cache conversations, recent messages, an opened report; key on `etl_epoch`; Dexie from jsDelivr on the CSP |
 | Export service (CSV / XLSX / PDF via `openspout` + `laravel-dompdf`) | `upexcise-stats-dashboard/app/Services/ExportService.php` | Reuse for the "export this result" button — same three formats the brief asks for |
 | Print-view report + PDF (one page, sparkline instead of Chart.js, DejaVu Sans for `₹` + Devanagari) | `upexcise-stats-dashboard/app/Support/AnnualReport.php`, `resources/views/public/report.blade.php`, `resources/views/exports/table.blade.php` | The Milestone 7 report export — a print-view Blade that also feeds `laravel-dompdf` (`DATA_PIPELINE.md` §Output store) |
 | Server-rendered SVG sparkline, no chart lib | `upexcise-stats-dashboard/app/Support/Sparkline.php` | Reuse for ledger-row mini previews |
@@ -466,6 +469,32 @@ Recommendations, each reversible:
    OAuth flow; per-user encrypted refresh tokens; register specific
    folders/sheets/docs, not "all of Drive". Prefer an Internal consent screen
    to avoid restricted-scope verification (§Google OAuth).
+
+10. **Queue: `database` driver; Redis is the documented upgrade.**
+    `QUEUE_CONNECTION=database` on MariaDB, like the four siblings — no new
+    service. The workload is a handful of jobs an hour (`RunExciseQuery`,
+    `RefreshAnalysis`, report exports, ETL notifications), serialized behind a
+    one-at-a-time LLM anyway. Move to Redis (`apt install redis`, root) only if
+    queue latency or `jobs` table contention shows up under real use;
+    `QUEUE_CONNECTION` is the only change. Kafka, Temporal, Airflow, and
+    Prefect are out of scope — one host, one queue, and a few systemd timers
+    with Postgres advisory locks for the ETL; the orchestrator is the tool-loop
+    coordinator. Revisit only if a second service or genuine event-streaming
+    appears.
+
+11. **Timezone and number format.** Store UTC (`TIMESTAMPTZ` in Postgres, UTC
+    in MariaDB); render every user-facing time in IST (`Asia/Kolkata`) via the
+    `Carbon::macro('ist')` ported from `upexcise-stats-dashboard`. Money shows
+    `₹` with `en-IN` grouping and a rupees / thousands / lakh / crore switcher;
+    counts render plain. Money inputs (rare) reuse the sibling Cleave.js
+    `currency-input` component. No new number library beyond Cleave.
+
+12. **Offline: read-only Dexie cache, no offline generation.** The ask -> SQL
+    -> sandbox path needs the server. A Dexie (IndexedDB) cache keyed on
+    `etl_epoch`, ported from the sibling shops-table pattern, lets an analyst
+    re-read the conversation list, recent messages, and an opened saved
+    analysis or report offline, with a "last synced" marker; a question typed
+    offline queues and sends on reconnect. Backlog / Milestone 7, not the MVP.
 
 The full four-engine, MCP-server, heuristic-router design stays documented in
 `ARCHITECTURE.md` and `MCP_ENGINES.md` as the target shape if requirements grow.

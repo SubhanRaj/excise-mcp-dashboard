@@ -237,11 +237,18 @@ inert stubs.
       follow `docs/design-guidelines.md` (`govviolet` / `govsaffron`, Inter,
       GIGW accessibility baseline); Chart.js colours per §Charts
 - [ ] Port middleware: `SecurityHeaders` (CSP extended for the FastAPI origin,
-      Plotly/Chart.js, `marked` + highlighter), `LogMutation`, `HasPrivilege`
-      / `IsAdmin`. Every Livewire write method re-checks its privilege —
-      `livewire/update` skips route middleware (`SECURITY.md` §3)
+      Plotly/Chart.js, `marked` + highlighter, `cleave.js`, `dexie`),
+      `LogMutation`, `HasPrivilege` / `IsAdmin`. Every Livewire write method
+      re-checks its privilege — `livewire/update` skips route middleware
+      (`SECURITY.md` §3)
 - [ ] RBAC trimmed to `Admin` / `Analyst`; `AppServiceProvider` rate limiters
-      incl. `ask` and `chat`
+      incl. `ask` and `chat`; `Carbon::macro('ist')` and the `Login` /
+      `Logout` -> `activity_logs` listeners ported from the sibling
+- [ ] Formatting: store UTC, render IST via `->ist()`; `₹` + `en-IN` grouping
+      with a rupees / thousands / lakh / crore switcher on money figures;
+      Cleave.js `currency-input` component for money inputs
+- [ ] `/admin/activity-logs` (Admin only) ported; the audit table in
+      `SECURITY.md` §5 is the coverage checklist
 - [ ] Migrations: `conversations` (ULID), `messages` (incl. `model`),
       `message_tool_calls`, `queries` (prompt, sql, engine, `model`, row_count,
       timings JSON, status, request_id), `chart_artifacts`, `query_feedback`,
@@ -387,11 +394,17 @@ Post-MVP. `DATA_PIPELINE.md` §Output store has the design.
       per `(report_id, format)`
 - [ ] Result cache keyed on normalized SQL + `etl_epoch` — a repeat question
       on unchanged data skips the model and the DB
+- [ ] Offline read cache: a Dexie store keyed on `etl_epoch` (ported from the
+      sibling shops-table pattern), a JSON slice endpoint for conversations /
+      recent messages / an opened report, a "last synced" marker, and an
+      outbox that sends a queued question on reconnect
 - [ ] Tests: save creates the row set; refresh appends an `analysis_runs` row
       and new artifacts; the sweeper spares a pinned run; an ETL completion
       queues only the `auto_refresh` analyses whose `tables_used` intersect;
       report PDF/XLSX/ZIP render with the right blocks and vintage; a shared
-      report link is read-only and respects `visibility`
+      report link is read-only and respects `visibility`; the offline cache
+      serves a cached report when the network is down and refuses to answer a
+      new question offline
 
 **Done when:** an analyst can save a result, refresh it as new data lands and
 see the trend, assemble saved analyses into a report, and export the report as

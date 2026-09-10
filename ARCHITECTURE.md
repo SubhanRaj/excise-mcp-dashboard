@@ -12,7 +12,12 @@ Cloudflare Tunnel, sharing one PostgreSQL data bank.
 | `etl/` | Python 3.12 CLI, run by cron / systemd timers | — | Google API (ingestion only) | Sheets / Drive / Docs / Excel / CSV -> Postgres data tables; pdf-markdown-pipeline verified docs + admin `.md` uploads + Google Docs -> `kb.*` |
 | PostgreSQL 18 | system service | 5432 | `127.0.0.1` (+ Tailscale later if needed) | The excise data bank (`analytics.*`) and the knowledge base (`kb.*`) — read-only for the AI path |
 | Ollama | system service | 11434 | `127.0.0.1` | Local LLM inference + embeddings, CPU-only |
-| MariaDB | system service | 3306 | `127.0.0.1` | `web/` operational store — sessions, users, ledger, chat history, output artifacts (`saved_analyses`, `analysis_runs`, `reports`), `kb_uploads`, `google_connections`, queue |
+| MariaDB | system service | 3306 | `127.0.0.1` | `web/` operational store — sessions, users, ledger, chat history, output artifacts (`saved_analyses`, `analysis_runs`, `reports`), `kb_uploads`, `google_connections`, `database`-driver queue |
+
+`web/` talks only to MariaDB; the orchestrator and ETL talk to PostgreSQL. The
+queue is the Laravel `database` driver on MariaDB (`SECURITY.md` §5 lists what
+is audited; `EVALUATION.md` §Right-sizing 10 has the Redis upgrade path). All
+timestamps are stored UTC and rendered in IST (`Asia/Kolkata`).
 
 ### Request path for one question
 

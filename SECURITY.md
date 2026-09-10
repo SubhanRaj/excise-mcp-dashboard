@@ -446,6 +446,33 @@ in the Cloud project; it only resolves through the tunnel.
 `*credentials*.json`, `*service-account*.json`, `web/storage/`, `**/.venv/`,
 `**/__pycache__/`; `/var/tmp` and the KB Markdown tree are outside the repo.
 
+## 5. Audit trail
+
+Every state change and every AI action is recorded. One `request_id` per query
+threads `web/` -> orchestrator -> `structlog` journal lines -> the ledger row,
+so a `queries` row links to its logs.
+
+| What | Where | Written by |
+|---|---|---|
+| Auth events — login, logout, failed OTP, password reset, onboarding | `activity_logs` | `Login` / `Logout` listeners + the auth controllers (ported from `upexcise-stats-dashboard`) |
+| Every non-GET authenticated request | `activity_logs` (`user_id`, route, method, IP, `request_id`) | `LogMutation` middleware |
+| Every AI query — question, generated SQL, `engine`, `model`, `tables_used`, row count, timings, status, `request_id` | `queries` (one-shot) / `messages` + `message_tool_calls` (chat) | `RunExciseQuery` / the chat relay |
+| Saved-analysis refreshes | `analysis_runs` (`trigger`, `ran_at`, `headline`) | `RefreshAnalysis` |
+| Exports — chart, result, report | `activity_logs` (scope, format, `report_id`) | the export controllers |
+| Google connect / disconnect / token refresh failure | `activity_logs` + `google_connections` timestamps; the token itself is never logged | the Socialite callback + the ETL auth code |
+| Knowledge upload / withdraw | `activity_logs` + `kb_uploads.status` | the "Knowledge base" screen |
+| ETL runs and quarantined rows | `etl.ingestion_runs` / `etl.quarantine` (Postgres) | `etl/` |
+| Orchestrator request/response, stage transitions, errors | `structlog` JSON to the systemd journal, `request_id` on every line | the orchestrator |
+
+- **Never logged**: bearer tokens, DB passwords, Google OAuth tokens, full
+  result row sets (a preview only), document text.
+- **Access**: `activity_logs` is Admin-only at `/admin/activity-logs` (ported).
+  An Analyst sees their own `queries` / `analysis_runs` in the ledger.
+- **Retention**: `activity_logs` and `queries` are kept indefinitely (small
+  rows); artifact files follow `ARTIFACT_TTL_DAYS` unless a run is saved
+  (`DATA_PIPELINE.md` §Output store); the journal rotates on the host's
+  `journald` policy.
+
 ## Incident-response quick reference
 
 - **LLM produced a destructive statement**: it cannot execute — `excise_ro`

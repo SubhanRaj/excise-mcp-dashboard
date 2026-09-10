@@ -153,7 +153,26 @@ the 11/12 + Livewire 3 named in the original brief.
   behind `auth`, an unauthenticated request lands on `/login`.
 - **Middleware**: port `SecurityHeaders` (CSP/HSTS/`X-Frame-Options`/noindex)
   and `LogMutation` (`activity_logs` row per non-GET) from the siblings. Add
-  the FastAPI origin and any chart CDN to the CSP allowlist explicitly.
+  the FastAPI origin and every CDN this app uses to the CSP allowlist
+  explicitly — Chart.js / Plotly, `marked` + highlighter, `cleave.js`, `dexie`,
+  all from jsDelivr.
+- **Data stores**: MariaDB (`excise_mcp_dashboard_local`, `db:provision`) is
+  the operational store — sessions, users, `activity_logs`, the query ledger,
+  chat history, `saved_analyses` / `analysis_runs` / `reports`, `kb_uploads`,
+  `google_connections`, the `database`-driver queue. PostgreSQL is the data
+  bank only. `web/` never connects to Postgres directly; the orchestrator does,
+  read-only.
+- **Audit**: every state change and AI action is recorded — `activity_logs`
+  (auth events + every non-GET), the `queries` / `analysis_runs` ledger with
+  `request_id`, export events, Google connect/disconnect, kb upload/withdraw,
+  `etl.ingestion_runs`. Tokens, passwords, and full row sets are never logged.
+  `SECURITY.md` §5.
+- **Formatting**: store UTC; render every user-facing time in IST
+  (`Asia/Kolkata`) via `Carbon::macro('ist')` ported from
+  `~/Sites/upexcise-stats-dashboard`. Money shows `₹` with `en-IN` grouping and
+  a rupees / thousands / lakh / crore switcher; counts render plain, no
+  decimals. Money inputs reuse the sibling Cleave.js `currency-input`
+  component (`excise-budget-tracker`).
 - **Rate limiters** in `AppServiceProvider`: `login`, `two-factor`,
   `password-reset` as in the siblings, plus `ask` (the one-shot query endpoint)
   and `chat` (per message) keyed by user id — start at 10/min, tune from the
@@ -187,10 +206,19 @@ the 11/12 + Livewire 3 named in the original brief.
   browse the ingested corpus (pipeline docs + uploads), withdraw an upload.
   Uploads land on a dedicated disk the ETL reads; the screen does not write
   `kb.*` directly.
-- **Queues**: `QUEUE_CONNECTION=database`. Long calls to the orchestrator run in
-  a job (`RunExciseQuery`), not in the web worker. `--timeout` on the queue
-  worker must exceed the orchestrator's own request timeout — follow the
-  `--timeout=1900` reasoning in `laravel-apps-deploy.md`.
+- **Queues**: `QUEUE_CONNECTION=database` on MariaDB, like the siblings. Long
+  calls to the orchestrator run in a job (`RunExciseQuery`, `RefreshAnalysis`,
+  report exports), not in the web worker. `--timeout` on the queue worker must
+  exceed the orchestrator's own request timeout — follow the `--timeout=1900`
+  reasoning in `laravel-apps-deploy.md`. Redis is the documented upgrade if the
+  `jobs` table shows contention (`EVALUATION.md` §Right-sizing 10); Kafka /
+  Temporal / Airflow are out of scope.
+- **Offline (Milestone 7)**: no offline generation — the ask -> SQL -> sandbox
+  path needs the server. A Dexie (IndexedDB) read cache keyed on `etl_epoch`,
+  ported from the sibling shops-table pattern, holds the conversation list,
+  recent messages, and an opened saved analysis / report for offline reading,
+  with a "last synced" marker; a question typed offline queues and sends on
+  reconnect.
 - **Output store**: the data bank (Postgres) is raw data only; charts, tables,
   summaries, and the generated SQL are app artifacts in MariaDB + the `local`
   disk, never written back to Postgres. A run's files sweep after
