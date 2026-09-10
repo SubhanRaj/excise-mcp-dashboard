@@ -1,0 +1,28 @@
+# secrets
+**/.env
+*.env
+!*.env.example
+*.pem
+*credentials*.json
+*service-account*.json
+
+# python
+**/.venv/
+**/__pycache__/
+*.pyc
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+
+# laravel (web/ lands in Phase 4)
+web/vendor/
+web/node_modules/
+web/storage/*.key
+web/storage/framework/
+web/storage/logs/
+web/bootstrap/cache/*.php
+web/.phpunit.result.cache
+
+# scratch / artifacts
+/var/tmp/excise-charts/
+*.parquet
