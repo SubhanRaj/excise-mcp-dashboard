@@ -1,273 +1,349 @@
 # ROADMAP.md — excise-mcp-dashboard
 
-Phased build. Each milestone is a set of checklist items with a stated "done
-when" gate. Nothing here is built yet — this repo is documentation only until
-the owner approves Phase 4.
+Phased build. Each milestone is a checklist with a stated "done when" gate.
+Nothing here is built yet — this repo is documentation only until the owner
+replies `Approved. Proceed to Phase 4.`
 
-Scope note: Milestones 1, 2, and 4 build the reduced design from
-`EVALUATION.md` §Right-sizing (one Python engine, direct read-only `asyncpg`,
-explicit engine selection). Milestone 3 adds a second engine behind the same
-interface. The MATLAB and Mathematica adapters stay documented and unbuilt
-until a concrete requirement and a licence exist.
+Every `sudo` / install / external-console step is collected, copy-pasteable,
+in [`OPERATOR_SETUP.md`](OPERATOR_SETUP.md), grouped by the milestone that
+needs it. The checkboxes below reference those sections.
+
+Scope note: Milestones 1, 2, 5, and 6 build the reduced design from
+`EVALUATION.md` §Right-sizing — one Python engine, direct read-only `asyncpg`,
+explicit tool selection, Postgres FTS before vectors, native Livewire chat.
+Milestone 3 adds the knowledge base. Milestone 4 adds a second engine behind
+the same interface. MATLAB and Mathematica stay documented and unbuilt.
 
 ---
 
 ## Milestone 0 — Approval and groundwork (no code)
 
-- [ ] Owner reviews all seven docs and replies `Approved. Proceed to Phase 4.`
-- [ ] Owner runs the operator-only prerequisites (Claude has no sudo):
-  - [ ] `sudo pg_ctlcluster 18 main start` and `sudo systemctl enable
-        postgresql` — the cluster is currently down
-  - [ ] `sudo useradd --system --no-create-home --shell /usr/sbin/nologin
-        excise-sandbox`
-  - [ ] `sudo install -d -o excise-sandbox -g excise-sandbox -m 0700
-        /var/tmp/excise-charts`
-  - [ ] confirm `bwrap --version` works for a non-root user
-- [ ] `ollama pull qwen2.5-coder:7b-instruct-q4_K_M`
-- [ ] `ollama pull llama3.1:8b-instruct-q4_K_M`
-- [ ] Decide the Cloudflare hostname (`analytics.exciseup.in` unless the owner
-      prefers another `*.exciseup.in`)
-- [ ] Obtain the Google Cloud service-account JSON, place it outside the repo,
-      share the target Sheets/Drive folder with its email as Viewer
+- [ ] Owner reviews all docs and replies `Approved. Proceed to Phase 4.`
+- [ ] Owner runs `OPERATOR_SETUP.md` §0 — start PostgreSQL, create the sandbox
+      user and scratch dir, confirm `bwrap` works unprivileged
+- [ ] Owner runs `OPERATOR_SETUP.md` §Models — `ollama pull` for the SQL model
+      and the chat model
+- [ ] Owner decides the Cloudflare hostname (`analytics.exciseup.in` unless
+      another `*.exciseup.in` is preferred)
+- [ ] Owner decides the Google consent-screen type (Internal vs External —
+      `OPERATOR_SETUP.md` §Google Cloud has the trade-off) and whether the
+      Google connect feature is in scope for the first build at all
 
-**Done when:** approval is given, Postgres is running, both models are pulled,
-the sandbox user exists.
+**Done when:** approval is given, PostgreSQL is running, both LLM models are
+pulled, the sandbox user exists.
 
 ---
 
-## Milestone 1 — Data bank + ETL
+## Milestone 1 — Data bank, ETL, and Google ingestion
 
-### Database
-- [ ] `web/` scaffold is not required yet; create `db/` with:
-  - [ ] `db/schema.sql` — the PostgreSQL schema from `DATA_PIPELINE.md`
-        (dimensions, fact tables, shops split, reference tables, `etl` schema)
-  - [ ] `db/analytics_views.sql` — the `analytics.*` published-only views
-  - [ ] `db/roles.sql` — `excise_owner` / `excise_etl` / `excise_ro` from
-        `SECURITY.md` §1
-  - [ ] `db/seed_reference.sql` — `zones` / `divisions` / `districts` /
-        `financial_years` / `license_categories`, seeded from the sibling
-        dashboard's seeders and contact-list JSON
-- [ ] `createdb -O excise_owner excise_bank`, apply the four scripts in order
-- [ ] Verify: `\dt analytics.*` shows the views; `psql -U excise_ro` can
-      `SELECT` from `analytics.revenues` and **cannot** `INSERT` anywhere or
-      see `public.*`
+### Database (`db/`)
+- [ ] `db/schema.sql` — the PostgreSQL schema from `DATA_PIPELINE.md`
+      (dimensions, fact tables, shops split, reference tables, the `etl`
+      schema, the `kb` schema)
+- [ ] `db/analytics_views.sql` — the `analytics.*` published-only views
+- [ ] `db/roles.sql` — `excise_owner` / `excise_etl` / `excise_ro` from
+      `SECURITY.md` §1 (grants cover `analytics.*` and `kb.*`)
+- [ ] `db/seed_reference.sql` — `zones` / `divisions` / `districts` /
+      `financial_years` / `license_categories`, seeded from the sibling
+      dashboard's seeders and contact-list JSON
+- [ ] Owner runs `OPERATOR_SETUP.md` §Data bank — `createdb`, apply the four
+      scripts, create the `excise_mcp_kb_ro` read-only MariaDB user for the
+      pdf-markdown-pipeline sync
+- [ ] Verify: `psql -U excise_ro` can `SELECT` from `analytics.revenues` and
+      `kb.documents`, and **cannot** `INSERT` anywhere or read `public.*`
 
-### ETL
-- [ ] `etl/` package: `config.py` (pydantic-settings), `db.py` (asyncpg or
-      psycopg pool on `excise_etl`), `run.py` (`etl sync` CLI), `sources/`
-      (`gsheets.py`, `gdrive.py`, `excel.py`, `csv.py`), `maps/` (column maps),
-      `loader.py` (upsert on natural key), `quarantine.py`
-- [ ] Port the note-row / district-resolution / money-normalization logic from
-      `~/Sites/upexcise-stats-dashboard/app/Console/Commands/ImportExciseData.php`
-      into `etl/normalize.py`
-- [ ] `etl.source_registry` rows for the initial sources; `etl.ingestion_runs`
-      + `etl.quarantine` writing on every run
+### ETL core (`etl/`)
+- [ ] `etl/` package: `config.py` (pydantic-settings), `db.py` (writer pool on
+      `excise_etl`), `run.py` (`etl sync` CLI), `loader.py` (upsert on natural
+      key), `quarantine.py`, `normalize.py` (port note-row / district /
+      money logic from `~/Sites/upexcise-stats-dashboard`'s `ImportExciseData.php`)
+- [ ] `etl.source_registry` / `etl.ingestion_runs` / `etl.quarantine` writing
+      on every run; Postgres advisory lock so timers cannot overlap
+- [ ] `etl/sources/excel.py`, `etl/sources/csv.py`
 - [ ] Excel adapter loads the NITI submission workbooks from
-      `~/mentor_portal_db/UP Excise Data Collection/` and reconciles row
-      counts against the sibling's verified figures (75 districts; 900
-      rows/series on revenues/sales_volumes/operations; ~79,685 shops /
-      242,520 shop-years; 3,524 brands; 5,537 brand prices; 72 duty rates; 60
-      policy rows)
-- [ ] Google Sheets + Drive adapters pull a live test sheet end to end
+      `~/mentor_portal_db/UP Excise Data Collection/` and reconciles counts
+      against the sibling's verified import (75 districts; 900 rows/series on
+      revenues/sales_volumes/operations; ~79,685 shops / 242,520 shop-years;
+      3,524 brands; 5,537 brand prices; 72 duty rates; 60 policy rows)
+
+### Google ingestion
+- [ ] Owner runs `OPERATOR_SETUP.md` §Google Cloud — create the project,
+      configure the consent screen, enable Drive / Sheets / Docs APIs, create
+      the OAuth client (web) and, if used, the service account
+- [ ] `web/` (minimal, ahead of the full UI): `laravel/socialite` Google
+      provider, `/google/connect` + `/google/callback`, `google_connections`
+      table (encrypted refresh token), an internal loopback
+      `GET /internal/google-token/{connection}` endpoint (bearer auth)
+- [ ] `etl/google_auth.py` — resolve a source's auth mode (`service_account`
+      or `oauth`), mint/refresh access tokens, typed "reconnect needed" error
+- [ ] `etl/sources/gsheets.py`, `etl/sources/gdrive.py` — pull a live test
+      sheet and a test Drive folder end to end in both auth modes
 - [ ] `deploy/` systemd `--user` timers for the schedules in
-      `DATA_PIPELINE.md` §Schedules, with `Persistent=true` and an advisory
-      lock
-- [ ] `OnFailure=` notifier unit mails the run summary via Resend
+      `DATA_PIPELINE.md` §Schedules, `Persistent=true`, `OnFailure=` notifier
+      that mails the run summary via Resend
 
 ### Tests
 - [ ] `etl/tests/`: each source adapter parses a fixture to the normalized
       shape; re-running a fixture changes no counts; a malformed row is
-      quarantined and counted; district-alias resolution; FY parsing; money
-      normalization
+      quarantined and counted; district-alias and FY parsing; money
+      normalization; both Google auth modes against a mocked API; token
+      refresh and revocation paths
 - [ ] `ruff`, `ruff format --check`, `mypy --strict` green on `etl/`
 
-**Done when:** `etl sync --source niti_full` populates `excise_bank`, the
-counts match the sibling's verified import, `analytics.*` returns only
-published rows, and `excise_ro` is provably read-only.
+**Done when:** `etl sync --source niti_full` populates `excise_bank`, counts
+match the sibling's verified import, `analytics.*` returns only published
+rows, `excise_ro` is provably read-only, and a Google Sheet syncs through an
+OAuth connection.
 
 ---
 
-## Milestone 2 — Orchestrator (Postgres + Python tool)
+## Milestone 2 — Orchestrator: the one-shot analytical pipeline
 
 - [ ] `orchestrator/` scaffold per `MCP_ENGINES.md` §Module layout; venv,
       pinned `requirements.txt` + `.lock`
 - [ ] `config.py` Settings; `auth.py` bearer-token dependency (constant-time)
 - [ ] `schemas.py`: `QueryRequest` / `QueryResponse` / `SqlPlan` / `PlotPlan` /
       `Stage` / typed errors
-- [ ] `sql/schema_card.py` renders `analytics.*` into a prompt schema
-      description (table, columns, dtypes, a one-line note each)
+- [ ] `sql/schema_card.py` renders `analytics.*` into a prompt schema card
 - [ ] `llm/client.py`: Ollama async client, `format=`-constrained structured
-      output, one-retry validation loop; `llm/prompts.py` with the system
-      prompt, schema card slot, and 6–10 few-shot NL->SQL examples for excise
-      questions
+      output, one-retry validation loop; `llm/prompts.py` (system prompt,
+      schema card slot, 6–10 few-shot NL->SQL examples)
 - [ ] `sql/guard.py`: `sqlglot` single-read-only-SELECT parser with the full
-      reject list from `SECURITY.md` §SQL guard; `LIMIT` injection
+      reject list from `SECURITY.md`; `LIMIT` injection
 - [ ] `sql/runner.py`: `asyncpg` pool on `DATABASE_URL_READONLY`,
       `BEGIN READ ONLY` + `SET LOCAL` timeouts + `ROLLBACK`, row cap
 - [ ] `engines/base.py`: `IVisualizationEngine` Protocol, registry, errors
 - [ ] `engines/python_engine.py`: script harness (Parquet preamble), output
       collection (`plotly.json` / `png` / `svg` / `pdf`), `is_available()`
-- [ ] `sandbox/bwrap.py`: build and run the `bwrap` command from `SECURITY.md`
-      §2, rlimits / `systemd-run` cgroup caps, artifact copy-out, scratch
-      cleanup; decide `systemd-run` vs scoped sudoers with the owner
+- [ ] `sandbox/bwrap.py`: the `bwrap` command from `SECURITY.md` §2, rlimits /
+      `systemd-run` cgroup caps, artifact copy-out, scratch cleanup; decide
+      `systemd-run` vs a scoped sudoers rule with the owner
+      (`OPERATOR_SETUP.md` §Sandbox)
 - [ ] `pipeline.py`: the six stages, `Stage` events, per-stage timing
-- [ ] `main.py`: FastAPI app, lifespan (pool, `httpx` client, `ollama` warmup),
+- [ ] `main.py`: FastAPI app, lifespan (pool, `httpx`, ollama warmup),
       `/health`, `/query` (chunked stage stream + final JSON),
       `/query/{id}/status`
 - [ ] `deploy/`: systemd `--user` unit `excise-orchestrator.service` on
       `127.0.0.1:8085`
-- [ ] Manual end-to-end from `curl`: a question -> SQL -> rows -> a
-      `chart.png` + `chart.plotly.json` -> a summary
+- [ ] Manual end-to-end from `curl`: a question -> SQL -> rows -> `chart.png` +
+      `chart.plotly.json` -> a summary
 
 ### Tests
-- [ ] tool schemas round-trip (model -> JSON Schema -> sample payload ->
-      validate)
-- [ ] guard rejects non-SELECT, multi-statement, cross-schema, volatile-fn;
-      integration test: a write attempt fails against real local Postgres via
-      `excise_ro`
+- [ ] tool schemas round-trip; guard rejects non-SELECT / multi-statement /
+      cross-schema / volatile-fn; integration test: a write attempt fails
+      against real local Postgres via `excise_ro`
 - [ ] router: explicit `engine` picks the adapter; unknown/unavailable ->
       typed error; default `python`
 - [ ] sandbox: past-wallclock killed; socket open fails; write outside
       `/scratch` fails; past-memory killed
-- [ ] Ollama client: malformed structured output -> exactly one retry -> typed
-      error
-- [ ] `ruff` / `ruff format --check` / `mypy --strict` green on `orchestrator/`
+- [ ] Ollama client: malformed structured output -> one retry -> typed error
+- [ ] `ruff` / `ruff format --check` / `mypy --strict` green
 
 **Done when:** `POST /query` with a bearer token turns an excise question into
 a validated read-only SQL run plus a sandboxed Python chart plus a summary,
-and every failure path returns a typed error with a stage.
+every failure path typed.
 
 ---
 
-## Milestone 3 — Second engine (GNU Octave), optional adapters stubbed
+## Milestone 3 — Knowledge base and retrieval
 
-- [ ] Owner runs `sudo apt install octave` (Claude has no sudo)
-- [ ] `engines/octave_engine.py`: CSV hand-off, `octave-cli --no-gui --norc`
-      under the same sandbox, `print()` to `chart.{png,svg,pdf}`,
-      `supported_outputs = {"png","svg","pdf"}`, `is_available()` on
-      `octave-cli --version`
-- [ ] `sandbox/bwrap.py` gains an Octave profile (ro-bind the octave prefix)
-- [ ] Router prompt gains one capability line for `octave`
-- [ ] Tests: an `.m` script renders a PNG in the sandbox; an unavailable
-      Octave is skipped cleanly; the pipeline falls back to a static chart
-      when a no-Plotly-JSON engine is chosen
-- [ ] `engines/matlab_engine.py` and `engines/wolfram_engine.py` exist as
-      documented stubs raising `EngineUnavailable("not configured")`, guarded
-      by `ENABLE_MATLAB` / `ENABLE_WOLFRAM` config flags defaulting off, with
-      the integration notes from `MCP_ENGINES.md` in the docstring. No
-      dependency added, nothing installed.
-
-**Done when:** the LLM can choose `python` or `octave`, both run in the
-sandbox, and the proprietary adapters are inert stubs behind off-by-default
-flags.
-
----
-
-## Milestone 4 — Laravel Livewire UI
-
-- [ ] `web/` scaffold: Laravel 13 + Livewire 4 + Fortify, matching the sibling
-      dependency set; `php artisan db:provision` -> `excise_mcp_dashboard_local`
-      (MariaDB, scoped user)
-- [ ] Port auth from `~/Sites/upexcise-stats-dashboard`: OTP login, magic-link
-      onboarding + reset, `tests/Feature/Auth/*`
-- [ ] Port middleware: `SecurityHeaders` (extend CSP for the FastAPI origin +
-      Plotly/Chart.js CDN), `LogMutation`, `HasPrivilege` / `IsAdmin`
-- [ ] Port `VerifyCloudflareAccess` middleware (JWT `aud` check against the
-      Access certs) — `SECURITY.md` §Cloudflare Access
-- [ ] RBAC trimmed to `Admin` / `Analyst`; `AppServiceProvider` rate limiters
-      incl. `ask`
-- [ ] Migrations: `conversations` (ULID), `messages`, `queries` (prompt, sql,
-      engine, row_count, timings JSON, status, request_id), `chart_artifacts`
-      (paths, kind), `query_feedback` (thumbs + note)
-- [ ] `RunExciseQuery` job: calls the orchestrator with the bearer token,
-      persists the ledger rows and artifacts, records stages; queue worker
-      systemd `--user` unit with `--timeout` above the orchestrator's timeout
-- [ ] Livewire `Ask` component: split-view layout (chat left, canvas right,
-      one column under `lg`); submit -> job -> SSE stage stream
-      (`Querying database -> Running analysis -> Rendering chart -> Complete`),
-      `wire:poll` fallback
-- [ ] Chart canvas: render `chart.plotly.json` interactively (Plotly CDN);
-      show the data table (`rows_preview`, paginated); show the generated SQL
-      (collapsed, copyable); export buttons for PNG / SVG / PDF (serve the
-      artifact files) and CSV / XLSX of the rows (reuse the sibling's
-      `ExportService`)
-- [ ] Query ledger view: every past query with prompt, SQL, timing, engine,
-      status, and the thumbs-up/down + note control; filter by user (Admin
-      sees all, Analyst sees own)
-- [ ] Admin: user CRUD (ported), ETL `source_registry` editor, a read-only
-      view of `etl.ingestion_runs` / `etl.quarantine`
-- [ ] `deploy/`: Apache vhost on `127.0.0.1:8084`, `DocumentRoot web/public`;
-      operator appends `web/storage` + `web/bootstrap/cache` to the Apache
-      `ProtectHome` override `ReadWritePaths=` line (edit in place)
+- [ ] `db/` already has the `kb` schema (Milestone 1). Add
+      `db/kb_indexes.sql` — the GIN FTS index, the document/chunk indexes
+- [ ] `etl/sources/pdf_pipeline.py` — read
+      `pdf_markdown_pipeline_local.documents` (via `excise_mcp_kb_ro`,
+      `SELECT`-only) filtered public + verified + not-deleted, join for
+      `rule_set` / `doc_type` / `language` / URL slug, read each Markdown file
+      from `~/Sites/pdf-markdown-pipeline/storage/app/public/<markdown_path>`
+- [ ] `etl/chunk.py` — heading-aware chunking with `heading_path`, ~1,200-token
+      cap, ~100-token overlap, tables kept whole
+- [ ] `etl/sources/kb_uploads.py` — ingest pending `kb_uploads` rows staged by
+      `web/`; `etl/sources/gdocs.py` — Google Docs -> Markdown -> `kb.*`;
+      `gdrive.py` gains the `.md` / Docs -> `kb.*` branch
+- [ ] Withdrawal handling: a doc that stops matching the filter, or a withdrawn
+      upload, sets `kb.documents.withdrawn_at`; re-run changes no other rows
+- [ ] `orchestrator/app/kb/retrieve.py` — FTS query over `kb.chunks`
+      (`websearch_to_tsquery('simple', ...)`, `withdrawn_at IS NULL`, top
+      `KB_RETRIEVE_K`); a `pgvector` code path behind `KB_EMBEDDINGS_ENABLED`
+      (off)
+- [ ] `orchestrator/app/kb/embed.py` — local Ollama embed client, used only
+      when embeddings are enabled
+- [ ] `orchestrator` `/kb/search` endpoint (retrieval only, no LLM) for tests
+      and the "cite sources" panel; `/health` reports `kb_docs` and
+      `embeddings`
+- [ ] `etl.source_registry` rows: `pdf_pipeline_docs` (daily), `kb_uploads`
+      (15 min), `gdocs_*` / `gdrive_kb_*`
 
 ### Tests
-- [ ] Auth suite (ported)
-- [ ] `ask` flow: submit -> `conversations`/`messages`/`queries` rows; mocked
-      orchestrator success -> chart artifact + ledger row; mocked error ->
-      failed stage shown + ledger row still written
-- [ ] `ask` rate limiting; `SecurityHeaders` present; `activity_logs` on
-      non-GET; SSE endpoint returns the stage sequence
-- [ ] `VerifyCloudflareAccess` rejects a missing/invalid assertion
-- [ ] `vendor/bin/pint --dirty` clean
+- [ ] fixture mirroring `pdf_markdown_pipeline_local.documents` + a Markdown
+      file -> correct `kb.documents` + `kb.chunks` with metadata and source
+      URL; non-public / non-verified skipped; re-run changes no counts;
+      removed upstream doc -> `withdrawn_at`
+- [ ] retrieval returns expected chunks by FTS rank; empty corpus -> no
+      context; `pgvector` path (when enabled) merges + de-dupes with FTS
+- [ ] upload validation in `web/` (extension, size, path traversal)
+- [ ] `ruff` / `mypy` / `pint` green
 
-**Done when:** a signed-in analyst asks a question in the browser, watches the
-four stages stream, and gets an interactive chart + table + SQL + summary,
-with every query in the ledger and exportable.
+**Done when:** the verified pdf-markdown-pipeline corpus and admin `.md`
+uploads are searchable through `/kb/search`, withdrawal is respected, and
+turning on `pgvector` is a config flag plus a backfill (not a rebuild).
 
 ---
 
-## Milestone 5 — Perimeter, hardening, end-to-end
+## Milestone 4 — Second engine (GNU Octave); proprietary adapters stubbed
 
-- [ ] Operator: `cloudflared tunnel create excise-mcp-dashboard`,
-      `route dns --overwrite-dns <uuid> analytics.exciseup.in`,
-      `~/.cloudflared/excise-mcp-config.yml`, systemd `--user` tunnel unit
-      enabled
-- [ ] Cloudflare Zero Trust: self-hosted app on `analytics.exciseup.in`,
-      Allow policy (authorized emails / domain + OTP or IdP), default Block,
-      automatic `cloudflared` authentication on
+- [ ] Owner runs `OPERATOR_SETUP.md` §Octave (`sudo apt install octave`)
+- [ ] `engines/octave_engine.py`: CSV hand-off, `octave-cli --no-gui --norc`
+      under the same sandbox, `print()` to `chart.{png,svg,pdf}`,
+      `supported_outputs = {"png","svg","pdf"}`, `is_available()`
+- [ ] `sandbox/bwrap.py` gains an Octave profile
+- [ ] Router prompt gains one capability line for `octave`; the chat
+      `make_chart` tool can target it too
+- [ ] Tests: an `.m` script renders a PNG in the sandbox; unavailable Octave
+      is skipped cleanly; pipeline falls back to a static chart when a
+      no-Plotly-JSON engine is chosen
+- [ ] `engines/matlab_engine.py` and `engines/wolfram_engine.py` as documented
+      stubs raising `EngineUnavailable("not configured")`, behind
+      `ENABLE_MATLAB` / `ENABLE_WOLFRAM` (default off), integration notes from
+      `MCP_ENGINES.md` in the docstrings. No dependency added.
+
+**Done when:** the model can choose `python` or `octave` from both the
+one-shot path and the chat, both run in the sandbox, proprietary adapters are
+inert stubs.
+
+---
+
+## Milestone 5 — Laravel UI: analytical form, chat window, admin
+
+- [ ] `web/` scaffold: Laravel 13 + Livewire 4 + Fortify, sibling dependency
+      set + `laravel/socialite`; `php artisan db:provision` ->
+      `excise_mcp_dashboard_local` (MariaDB, scoped user)
+- [ ] Port auth from `~/Sites/upexcise-stats-dashboard` (OTP login, magic-link
+      onboarding + reset, `tests/Feature/Auth/*`)
+- [ ] Port middleware: `SecurityHeaders` (CSP extended for the FastAPI origin,
+      Plotly/Chart.js, `marked` + highlighter), `LogMutation`, `HasPrivilege`
+      / `IsAdmin`; add `VerifyCloudflareAccess` (JWT `aud` check)
+- [ ] RBAC trimmed to `Admin` / `Analyst`; `AppServiceProvider` rate limiters
+      incl. `ask` and `chat`
+- [ ] Migrations: `conversations` (ULID), `messages`, `message_tool_calls`,
+      `queries` (prompt, sql, engine, row_count, timings JSON, status,
+      request_id), `chart_artifacts`, `query_feedback`, `kb_uploads`,
+      `google_connections`
+- [ ] `RunExciseQuery` job (one-shot `/query`); queue worker systemd `--user`
+      unit with `--timeout` above the orchestrator timeout
+- [ ] Livewire `Ask` component: split-view (chat left, canvas right, one
+      column under `lg`); submit -> job -> SSE stage stream
+      (`Querying database -> Running analysis -> Rendering chart -> Complete`),
+      `wire:poll` fallback
+- [ ] Livewire `Chat` component: conversation list rail, active thread,
+      Alpine SSE reader appending assistant tokens; tool-call cards (SQL,
+      cited knowledge snippets with `docsrepo.exciseup.in` links, chart);
+      history persists and resumes; markdown/code render client-side,
+      sanitised
+- [ ] Chart canvas: interactive `chart.plotly.json`; data table
+      (`rows_preview`, paginated); generated SQL (collapsed, copyable); export
+      PNG / SVG / PDF (artifact files) + CSV / XLSX (rows, reuse the sibling
+      `ExportService`)
+- [ ] Query ledger view: every past `/query` with prompt, SQL, timing, engine,
+      status, thumbs + note; Admin sees all, Analyst sees own
+- [ ] Admin: user CRUD (ported); "Connected sources" (Google connect /
+      disconnect, list Drive folders / Sheets / Docs, register as
+      `source_registry` rows, show "reconnect needed"); "Knowledge base"
+      (upload `.md`, browse the ingested corpus, withdraw an upload); a
+      read-only view of `etl.ingestion_runs` / `etl.quarantine`
+- [ ] `deploy/`: Apache vhost on `127.0.0.1:8084`, `DocumentRoot web/public`;
+      owner runs `OPERATOR_SETUP.md` §Apache (append `ReadWritePaths`, incl.
+      the `kb-uploads` disk path)
+
+### Tests
+- [ ] Auth suite (ported); `VerifyCloudflareAccess` rejects missing/invalid
+      assertion
+- [ ] `ask` flow: submit -> ledger rows; mocked orchestrator success -> chart
+      artifact + ledger row; mocked error -> failed stage shown + ledger row
+- [ ] chat flow: streamed tokens; a tool call persisted and rendered; history
+      loads and resumes; `chat` rate limit
+- [ ] knowledge upload: valid `.md` accepted + `kb_uploads` row; non-`.md` /
+      oversize rejected; path traversal blocked
+- [ ] Google OAuth: connect redirect scopes; callback stores encrypted token +
+      row; disconnect deletes it; a token never appears in a log or response
+- [ ] `SecurityHeaders` present; `activity_logs` on non-GET; SSE stage
+      endpoint returns the sequence
+- [ ] `vendor/bin/pint --dirty` clean
+
+**Done when:** a signed-in analyst can use the one-shot form and the chat
+window; the chat calls SQL and knowledge tools and renders charts; admins can
+connect Google and upload `.md` files; every query and message is in the
+ledger / history and exportable.
+
+---
+
+## Milestone 6 — Perimeter, hardening, end-to-end
+
+- [ ] Owner runs `OPERATOR_SETUP.md` §Tunnel — create the tunnel, route DNS,
+      write the config, enable the systemd `--user` unit
+- [ ] Owner runs `OPERATOR_SETUP.md` §Cloudflare Access — self-hosted app,
+      Allow policy, default Block, automatic `cloudflared` authentication;
+      register the Google `redirect_uri` against the live hostname
 - [ ] Confirm the app rejects any request without a valid
       `Cf-Access-Jwt-Assertion` even on the loopback port
 - [ ] Sandbox hardening pass: re-verify no network, read-only FS, scratch-only
       writes, all rlimits / cgroup caps; add the scratch sweeper timer;
       finalize `systemd-run` vs scoped sudoers
-- [ ] `excise_ro` audit: connect as it and attempt writes, cross-schema reads,
-      volatile functions, `COPY`, long scans — all must fail or time out
-- [ ] Secrets audit: `.env` perms `600`, nothing sensitive committed,
-      `.gitignore` covers `**/.env` / `*.pem` / `*credentials*.json` /
-      `**/.venv/` / `web/storage/`; service-account JSON outside the repo
+- [ ] `excise_ro` audit: connect as it and attempt writes, cross-schema reads
+      (`public.*`, `etl.*`), volatile functions, `COPY`, long scans, and
+      writes to `kb.*` — all must fail or time out
+- [ ] Secrets audit: `.env` perms `600`; nothing sensitive committed;
+      `.gitignore` covers `**/.env` (keep `*.env.example`), `*.pem`,
+      `*credentials*.json`, `*service-account*.json`, `**/.venv/`,
+      `web/storage/`; service-account JSON outside the repo; Google refresh
+      tokens only in the encrypted DB column
+- [ ] Retrieval quality check: run the representative question set against FTS;
+      if sections are being missed, install `pgvector`
+      (`OPERATOR_SETUP.md` §pgvector), pull the embed model, backfill, flip
+      `KB_EMBEDDINGS_ENABLED`, re-measure
 - [ ] Security headers / CSP review against the live site (no silently blocked
       CDN); `X-Robots-Tag: noindex` site-wide
-- [ ] Load reality check: several queries queued, confirm one-at-a-time
-      execution, model swap behavior, memory ceiling under a plot + Postgres +
-      inference at once; confirm behavior under the 3.0 GHz thermal cap
-- [ ] Backup: `pg_dump excise_bank` on a timer (data is re-derivable from
-      sources but a dump saves a re-import); `web/` DB in the existing MariaDB
-      backup routine
-- [ ] End-to-end test script: 15–20 representative excise questions (revenue
-      trends, district comparisons, dispatch volumes, enforcement counts, duty
-      rates, shop quotas) run through the browser; record SQL correctness,
-      chart correctness, latency; file the failures
-- [ ] `DEPLOY.md` written from the actual steps taken (follow the sibling
-      `DEPLOY.md` shape)
+- [ ] Load reality check: several `/query` and `/chat` requests queued —
+      confirm one-at-a-time execution, model swap behaviour, memory ceiling
+      under a plot + Postgres + inference at once; confirm behaviour under the
+      3.0 GHz thermal cap
+- [ ] Backup: `pg_dump excise_bank` on a timer; `web/` DB in the existing
+      MariaDB backup routine
+- [ ] End-to-end test script: 20–30 representative questions across the
+      one-shot form and the chat — revenue trends, district comparisons,
+      dispatch volumes, enforcement counts, duty rates, shop quotas, and
+      policy/acts lookups ("what does the 2016 policy say about MGQ", "which
+      rule governs bar licence fees", a hybrid actual-vs-policy question).
+      Record SQL correctness, retrieval correctness, chart correctness,
+      latency; file the failures
+- [ ] `DEPLOY.md` written from the actual steps taken (sibling `DEPLOY.md`
+      shape)
 - [ ] Update `CLAUDE.md` "Build status" and this file
 
 **Done when:** `https://analytics.exciseup.in` is reachable only through
 Cloudflare Access, every enforcement layer is verified by trying to break it,
-the representative question set passes, and the deploy runbook is written.
+the representative question set (numbers + law + hybrid) passes, and the
+deploy runbook is written.
 
 ---
 
 ## Backlog (not scheduled)
 
-- MATLAB engine — needs a MATLAB install + licence that permits multi-user
+- `pgvector` semantic retrieval — pulled in by Milestone 6's quality check if
+  FTS recall is weak; otherwise stays off
+- MATLAB engine — needs a MATLAB install + a licence that permits multi-user
   deployment + the Go toolchain, and a named toolbox requirement
 - Mathematica engine — needs Wolfram Engine/licence and a symbolic /
   high-precision requirement
+- OpenWebUI in Docker as an alternate chat frontend against an
+  OpenAI-compatible shim on the orchestrator — only if its model management /
+  prompt library is wanted (`EVALUATION.md` §2c)
+- `prism-php/prism` — only if LLM orchestration ever moves into `web/` and the
+  Python orchestrator is retired
 - `crystaldba/postgres-mcp` mounted as a real MCP server — only if an external
-  MCP client (Claude Desktop, an IDE) becomes a second consumer of the data
-  bank
+  MCP client (Claude Desktop, an IDE) becomes a second consumer of the bank
 - Tailscale access to `excise_bank` for DBeaver — follow
   `infra-notes/postgres-tailscale-remote-access.md`, named read-only role only
-- Result caching keyed on normalized SQL + the ETL run id, if repeat questions
-  show up in the ledger
-- Scheduled/"saved" questions that re-run on a timer and post a chart
+- Result caching keyed on normalized SQL + the ETL run id
+- Scheduled / "saved" questions that re-run on a timer and post a chart
+- `drive.file` scope instead of `drive.readonly` if the broad-read grant
+  becomes a concern

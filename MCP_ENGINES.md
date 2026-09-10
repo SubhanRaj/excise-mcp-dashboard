@@ -16,21 +16,28 @@ orchestrator/
     main.py            FastAPI app, lifespan (asyncpg pool, httpx client, ollama warmup)
     config.py          pydantic-settings Settings (one object)
     auth.py            bearer-token dependency
-    schemas.py         Pydantic v2: QueryRequest/Response, SqlPlan, PlotPlan, Stage, errors
+    schemas.py         Pydantic v2: QueryRequest/Response, SqlPlan, PlotPlan, Stage,
+                       ChatRequest, chat SSE events, tool schemas, errors
     llm/
-      client.py        Ollama async client, structured-output loop, retry
-      prompts.py       system prompts, schema card, few-shot examples
+      client.py        Ollama async client, structured-output loop, retry, streaming
+      prompts.py       system prompts, schema card, few-shot examples, chat system prompt
     sql/
       guard.py         "single read-only SELECT/WITH" parser + checks
       runner.py        asyncpg pool, READ ONLY txn, statement timeout
       schema_card.py   renders analytics.* views into the prompt schema description
+    kb/
+      retrieve.py      FTS query over kb.chunks (+ pgvector path when enabled)
+      embed.py         local Ollama embed model client (only when KB_EMBEDDINGS_ENABLED)
+    chat/
+      loop.py          agentic tool-calling loop, streams SSE events
+      tools.py         tool defs: run_sql_query, search_knowledge, make_chart
     engines/
       base.py          IVisualizationEngine protocol + registry + errors
       python_engine.py the one implemented engine
-      octave_engine.py Milestone 3
+      octave_engine.py Milestone 4
     sandbox/
       bwrap.py         build + run the bubblewrap command, collect artifacts
-    pipeline.py        orchestrates stages, emits Stage events
+    pipeline.py        the one-shot analytical flow: orchestrates stages, emits Stage events
   tests/
   requirements.txt / requirements.lock
 ```
@@ -39,9 +46,15 @@ orchestrator/
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| `GET` | `/health` | — | `{status, ollama, postgres, engines}` — no auth |
+| `GET` | `/health` | — | `{status, ollama, postgres, engines, kb_docs, embeddings}` — no auth |
 | `POST` | `/query` | `QueryRequest` | streamed `Stage` lines then a final `QueryResponse` (chunked), or a typed error |
 | `GET` | `/query/{id}/status` | — | last `Stage` for a running query (poll fallback) |
+| `POST` | `/chat` | `ChatRequest` | `text/event-stream` — `token` / `tool_call` / `tool_result` / `chart` / `done` / `error` events |
+| `POST` | `/kb/search` | `{query: str, k: int}` | `{chunks: [...]}` — retrieval only, no LLM (used by tests and the "cite sources" panel) |
+
+Both `/query` and `/chat` require the bearer token. `/query` is the one-shot
+analytical form (question in, chart + table + SQL + summary out). `/chat` is
+the free-form conversation where the model decides which tools to call.
 
 `QueryRequest`:
 
@@ -142,6 +155,12 @@ DATABASE_URL_READONLY       postgres://excise_ro:...@127.0.0.1:5432/excise_bank
 OLLAMA_BASE_URL             http://127.0.0.1:11434
 OLLAMA_SQL_MODEL            qwen2.5-coder:7b-instruct-q4_K_M
 OLLAMA_CHAT_MODEL           llama3.1:8b-instruct-q4_K_M
+OLLAMA_EMBED_MODEL          nomic-embed-text            (only used when embeddings enabled)
+KB_EMBEDDINGS_ENABLED       false                       (FTS-only until flipped)
+KB_EMBED_DIM               768
+KB_RETRIEVE_K              6                            (chunks injected per turn)
+CHAT_MAX_TOOL_CALLS        4                            (per turn, then end with error)
+CHAT_CONTEXT_TURNS         8
 SANDBOX_USER                excise-sandbox
 SANDBOX_SCRATCH_ROOT        /var/tmp/excise-charts        (per-run subdir, cleaned)
 SANDBOX_WALLCLOCK_SECONDS   15
@@ -149,6 +168,116 @@ SANDBOX_MEMORY_MB           1024
 QUERY_ROW_LIMIT_DEFAULT     5000
 STATEMENT_TIMEOUT           10s
 ```
+
+## Chat and retrieval
+
+`/chat` runs a free-form conversation with the local model. Where `/query` is a
+fixed SQL->plot->summarize pipeline, `/chat` lets the model choose tools turn
+by turn. Same primitives underneath — the SQL guard, the read-only runner, the
+sandbox, the engine registry — no parallel implementation.
+
+### `ChatRequest`
+
+```python
+class ChatRequest(BaseModel):
+    conversation_id: str            # ULID from Laravel
+    message: str
+    history: list[ChatTurn] = []    # prior user/assistant/tool turns, capped by Laravel
+```
+
+### SSE events
+
+`token` (assistant text delta), `tool_call` (`{name, arguments}` as the model
+emits it), `tool_result` (`{name, ok, summary}` — never the full row set),
+`chart` (`{plotly_json?, files}` when `make_chart` ran), `done`
+(`{message_id, tool_calls_count}`), `error` (`{stage, message}`). Laravel
+relays these to the browser and persists `messages` + `message_tool_calls`.
+
+### Tools (`chat/tools.py`)
+
+| Tool | Arguments | Does | Guardrails |
+|---|---|---|---|
+| `search_knowledge` | `{query: str, k?: int}` | Retrieves from `kb.chunks` (§Retrieval), returns chunk text + `heading_path` + `source_url` | read-only; `withdrawn_at IS NULL`; `k` capped at 12 |
+| `run_sql_query` | `{sql: str}` or `{question: str}` | If `question`, first plan SQL like `/query`'s `plan_sql`; then `guard.py` -> `runner.py` (READ ONLY txn, statement timeout, row cap); returns column list + row count + a small preview | identical guard + read-only role as the one-shot path; no writes possible |
+| `make_chart` | `{spec: str, data_ref: str}` | Runs a generated Python plot script over the last `run_sql_query` result in the `bwrap` sandbox; returns artifact refs | same sandbox, same caps; `data_ref` must point at a result from this conversation |
+
+Ollama's native tool-calling (`tools=[...]` on `/api/chat`) drives this;
+Qwen 2.5 and Llama 3.1 both support it. The loop:
+
+```
+messages = system + history + [user message]
+for step in range(CHAT_MAX_TOOL_CALLS + 1):
+    stream a model turn                      # emit `token` events as text arrives
+    if the turn made no tool call:
+        emit `done`; return
+    for call in tool_calls:
+        emit `tool_call`
+        result = dispatch(call)              # guarded exactly as above
+        emit `tool_result` (+ `chart` if make_chart)
+        append result to messages
+# fell through the cap:
+emit `error` {stage: "tool_loop", message: "too many tool calls"}
+```
+
+A client disconnect cancels the in-flight Ollama stream and any running tool.
+
+### Routing (knowledge / data / hybrid / general)
+
+There is no separate classifier. The system prompt describes the three tools
+and when each applies; the model calls what it needs:
+
+- "What does the 2016 excise policy say about MGQ?" -> `search_knowledge` only.
+- "Revenue trend for Lucknow since FY2018-19" -> `run_sql_query` (+ maybe
+  `make_chart`).
+- "How does actual Lucknow revenue compare to what the 2019 policy targeted?"
+  -> `search_knowledge` for the target, `run_sql_query` for the actuals, then
+  a text answer tying them together.
+- "Explain what MGQ means" -> neither tool, a plain answer.
+
+This is the same "explicit selection over a heuristic" choice as the engine
+router (`EVALUATION.md` §Right-sizing point 3).
+
+### Retrieval (`kb/retrieve.py`)
+
+Default path, no embeddings:
+
+```sql
+SELECT c.content, c.heading_path, d.title, d.source_url, d.doc_type,
+       ts_rank(c.fts, websearch_to_tsquery('simple', $1)) AS rank
+FROM kb.chunks c
+JOIN kb.documents d ON d.id = c.document_id
+WHERE d.withdrawn_at IS NULL
+  AND c.fts @@ websearch_to_tsquery('simple', $1)
+ORDER BY rank DESC
+LIMIT $2;                                    -- KB_RETRIEVE_K
+```
+
+With `KB_EMBEDDINGS_ENABLED`: also embed the query via `kb/embed.py`
+(local Ollama embed model), run an HNSW cosine search on `kb.chunks.embedding`,
+merge the two result sets, de-duplicate by `chunk.id`, keep the top
+`KB_RETRIEVE_K` by a blended score. Everything stays on the box.
+
+Retrieved chunks go into the model context as a labelled block with the
+`heading_path` and `source_url` for each, and the system prompt instructs the
+model to cite the section and link when it uses one. An empty retrieval
+returns nothing and the model is told to say it has no source rather than
+guess.
+
+### Conversation memory (chat)
+
+Same as `/query`: an in-memory `deque` per `conversation_id`, capped at
+`CHAT_CONTEXT_TURNS` or ~3k tokens. Laravel also resends trimmed history and
+owns the durable record (`conversations` / `messages` / `message_tool_calls`
+in its MariaDB). An orchestrator restart loses only the in-memory window.
+
+### Model roles, restated
+
+`qwen2.5-coder:7b` for `run_sql_query` planning and `make_chart` scripting;
+`llama3.1:8b` for the conversational turns and `summarize`. `nomic-embed-text`
+only if embeddings are enabled. `OLLAMA_MAX_LOADED_MODELS=1` still holds — the
+chat model and the coder model swap between a tool call and the reply. At this
+concurrency the reload cost is acceptable; if it is not, raise it to 2 and
+accept ~13 GB resident (`EVALUATION.md` §2 has the headroom math).
 
 ## `IVisualizationEngine` — the adapter interface
 
@@ -259,7 +388,7 @@ Contract every engine keeps:
   `stdout_tail`; wall-clock -> `SandboxTimeout`; `MemoryError` / OOM-kill ->
   `SandboxViolation` (rlimit); no `chart.*` produced -> `RenderEmpty`.
 
-### 2. GNU Octave — `octave_engine.py` — Milestone 3, only if needed
+### 2. GNU Octave — `octave_engine.py` — Milestone 4, only if needed
 
 - **Availability**: `octave-cli --version` exits 0. **Not installed on the box
   now** — needs `sudo apt install octave` (root; give the command, do not work
@@ -278,7 +407,7 @@ Contract every engine keeps:
   trivially portable to NumPy/SciPy. Until then it is a false choice for the
   LLM and stays unregistered.
 
-### 3. MATLAB via `matlab-mcp-server` — Milestone 3, behind a config flag,
+### 3. MATLAB via `matlab-mcp-server` — Milestone 4, behind a config flag,
      currently blocked
 
 - **Prerequisites, none of which the box has**: MATLAB R2021a+ installed and
@@ -303,7 +432,7 @@ Contract every engine keeps:
   with no SciPy equivalent) and a licence that permits the deployment.
   `EVALUATION.md` §Right-sizing.
 
-### 4. Wolfram Mathematica (`wolframscript`) — Milestone 3, behind a config
+### 4. Wolfram Mathematica (`wolframscript`) — Milestone 4, behind a config
      flag, currently blocked
 
 - **Prerequisites**: Wolfram Engine (free for non-production developer use) or

@@ -31,27 +31,27 @@ db/roles.sql`). `db:provision` is MariaDB-only and is not used here.
 CREATE ROLE excise_owner LOGIN PASSWORD :'owner_pw';
 ALTER DATABASE excise_bank OWNER TO excise_owner;
 
--- ETL writer
+-- ETL writer: data tables, kb.*, and etl bookkeeping
 CREATE ROLE excise_etl LOGIN PASSWORD :'etl_pw';
 GRANT CONNECT ON DATABASE excise_bank TO excise_etl;
-GRANT USAGE ON SCHEMA public, etl TO excise_etl;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public, etl TO excise_etl;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public, etl TO excise_etl;
-ALTER DEFAULT PRIVILEGES FOR ROLE excise_owner IN SCHEMA public, etl
+GRANT USAGE ON SCHEMA public, kb, etl TO excise_etl;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public, kb, etl TO excise_etl;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public, kb, etl TO excise_etl;
+ALTER DEFAULT PRIVILEGES FOR ROLE excise_owner IN SCHEMA public, kb, etl
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO excise_etl;
 -- no CREATE: excise_etl cannot add or drop tables
 
--- Read-only AI role
+-- Read-only AI role: analytics views + the knowledge base, nothing else
 CREATE ROLE excise_ro LOGIN PASSWORD :'ro_pw';
 GRANT CONNECT ON DATABASE excise_bank TO excise_ro;
-GRANT USAGE ON SCHEMA analytics TO excise_ro;
-GRANT SELECT ON ALL TABLES IN SCHEMA analytics TO excise_ro;
-ALTER DEFAULT PRIVILEGES FOR ROLE excise_owner IN SCHEMA analytics
+GRANT USAGE ON SCHEMA analytics, kb TO excise_ro;
+GRANT SELECT ON ALL TABLES IN SCHEMA analytics, kb TO excise_ro;
+ALTER DEFAULT PRIVILEGES FOR ROLE excise_owner IN SCHEMA analytics, kb
     GRANT SELECT ON TABLES TO excise_ro;
 
 -- excise_ro must not see base data or write anywhere
 REVOKE ALL ON SCHEMA public, etl FROM excise_ro;
-REVOKE CREATE ON SCHEMA public FROM PUBLIC;         -- no ad-hoc object creation by anyone
+REVOKE CREATE ON SCHEMA public, kb, analytics FROM PUBLIC;   -- no ad-hoc object creation by anyone
 REVOKE ALL ON DATABASE excise_bank FROM PUBLIC;
 
 -- Force read-only at the session level, belt to the transaction's braces
@@ -59,8 +59,13 @@ ALTER ROLE excise_ro SET default_transaction_read_only = on;
 ALTER ROLE excise_ro SET statement_timeout = '10s';
 ALTER ROLE excise_ro SET idle_in_transaction_session_timeout = '15s';
 ALTER ROLE excise_ro SET lock_timeout = '2s';
-ALTER ROLE excise_ro SET search_path = analytics;
+ALTER ROLE excise_ro SET search_path = analytics, kb;
 ```
+
+`kb.*` is `SELECT`-only to `excise_ro` exactly like `analytics.*`. Retrieval
+(FTS or `pgvector`) is a read; the model cannot write to the knowledge base.
+Ingestion writes as `excise_etl` only. The retrieval query always adds
+`WHERE d.withdrawn_at IS NULL`.
 
 ### Why each layer
 
@@ -97,7 +102,37 @@ Defense in depth, not the primary control. Parse with `sqlglot`; reject unless:
 - a `LIMIT` is present — inject `LIMIT :row_limit` if the LLM omitted it.
 
 A rejection returns the reason to the planner for exactly one re-plan, then a
-typed `SQL rejected` error to the user.
+typed `SQL rejected` error to the user. This applies to model-authored SQL from
+both `/query` and the chat's `run_sql_query` tool. `search_knowledge` does not
+run model-authored SQL at all — it is a fixed parametrised query
+(`websearch_to_tsquery` / a vector search) with the user text bound as a
+parameter, so there is no SQL-injection surface there.
+
+### Knowledge base — read paths
+
+The knowledge base pulls from another app on the same box. Both reads are
+read-only and least-privilege:
+
+- **`pdf_markdown_pipeline_local` (MariaDB)** — a dedicated user
+  `excise_mcp_kb_ro` with `SELECT` on that database only, no other schema, no
+  write. Created by the operator (`OPERATOR_SETUP.md` §Knowledge base). The
+  sync reads `documents` joined to `sections`/`rule_sets`/`departments`,
+  filtered to `visibility='public' AND status='verified' AND deleted_at IS
+  NULL`. A non-public or non-verified document is never read.
+- **Markdown files** — `~/Sites/pdf-markdown-pipeline/storage/app/public/`,
+  group-read for the ETL user. The sync only opens paths taken from a matched
+  `documents.markdown_path`; it never lists the tree or follows a path with
+  `..` in it.
+- **Admin `.md` uploads** — validated in `web/` before they are staged:
+  extension is `.md`, size `<= 2 MB`, content decodes as UTF-8, the filename
+  is replaced with a generated ULID (the original is kept only as a display
+  label), no path separators reach disk. Stored on a dedicated `kb-uploads`
+  disk that is on the Apache `ReadWritePaths` list. The ETL reads that disk;
+  `web/` never writes `kb.*`.
+- **Withdrawn content** — a document that loses public/verified status
+  upstream, or an upload an admin withdraws, gets `kb.documents.withdrawn_at`
+  set. Retrieval filters it out; the row and its chunks stay for audit and
+  are purged on a slow schedule, not immediately.
 
 ### Network
 
@@ -311,30 +346,101 @@ export). RBAC copied and trimmed from the sibling.
 ### Headers, logging, rate limits
 
 - Port `SecurityHeaders` middleware: CSP allowing Tailwind Play CDN, jsDelivr
-  (Chart.js / Plotly), Google Fonts, and `connect-src 'self'` for the SSE
-  endpoint; HSTS; `X-Frame-Options: DENY`; `X-Content-Type-Options: nosniff`;
-  `Referrer-Policy: same-origin`; `X-Robots-Tag: noindex` on the whole site
-  (this is not a public dashboard).
+  (Chart.js / Plotly, the chat's `marked` + highlighter), Google Fonts, and
+  `connect-src 'self'` for the SSE endpoints; HSTS; `X-Frame-Options: DENY`;
+  `X-Content-Type-Options: nosniff`; `Referrer-Policy: same-origin`;
+  `X-Robots-Tag: noindex` on the whole site (this is not a public dashboard).
 - Port `LogMutation` — an `activity_logs` row for every non-GET authenticated
-  request, including every `ask`.
+  request, including every `ask`, every chat message, every knowledge upload,
+  and every Google connect/disconnect.
 - Rate limiters in `AppServiceProvider`: `login`, `two-factor`,
-  `password-reset` from the sibling; `ask` keyed by user id, start 10/min.
-- The orchestrator refuses any `/query` call whose bearer token does not match
-  `ORCH_BEARER_TOKEN` (constant-time compare), logs the request-id, and never
-  logs the token or the DB password.
+  `password-reset` from the sibling; `ask` and `chat` keyed by user id, start
+  10/min.
+- The orchestrator refuses any `/query` or `/chat` call whose bearer token
+  does not match `ORCH_BEARER_TOKEN` (constant-time compare), logs the
+  request-id, and never logs the token or the DB password.
+- Chat rendering: assistant Markdown is rendered client-side with output
+  sanitised (no raw HTML passthrough); a fenced code block is display-only,
+  never executed in the browser. Retrieved knowledge snippets are shown as
+  quoted text with the source link, not rendered as live Markdown from an
+  untrusted document.
+
+## 4. Google OAuth
+
+`web/` connects a user's Google account so the ETL can read that person's
+Drive, Sheets, and Docs. This is additive — the service-account path stays for
+server-owned content.
+
+### Consent screen and scopes
+
+- Scopes, all read-only and the minimum needed:
+  `.../auth/drive.readonly`, `.../auth/spreadsheets.readonly`,
+  `.../auth/documents.readonly`.
+- `drive.readonly` is a **restricted** scope. In a Google Cloud project with
+  the consent screen set to **Internal** (the department's Google Workspace),
+  restricted scopes work for users in that Workspace with no Google
+  verification. If the consent screen is **External**, `drive.readonly`
+  triggers Google's app-verification and a CASA security assessment before
+  more than 100 users can connect. Prefer **Internal** — `OPERATOR_SETUP.md`
+  §Google Cloud has the setup and this decision point. If Internal is not
+  possible, either accept the External test-user cap (100 users, no
+  verification) or narrow to `drive.file` (only files the user explicitly
+  picks) to avoid the restricted-scope process.
+- Request `access_type=offline` and `prompt=consent` so Google returns a
+  refresh token on first connect.
+
+### Token handling
+
+- `laravel/socialite` (Google provider) runs the flow. The callback stores one
+  `google_connections` row per user: `user_id`, `google_sub` (the stable
+  account id), `email`, `scopes`, `refresh_token` (**`Crypt`-encrypted**,
+  Laravel `APP_KEY`), `access_token` + `expires_at` (short-lived, may be left
+  null and re-minted on demand), `created_at`, `last_used_at`,
+  `revoked_at`.
+- The refresh token is written once, read only by the token-refresh code, and
+  never returned in any HTTP response or Livewire payload. Log lines about a
+  connection use `google_connections.id` and the masked email, never a token.
+- The ETL gets a fresh access token by reading the encrypted refresh token
+  over loopback: either `web/` exposes an internal `GET
+  /internal/google-token/{connection}` (bearer-auth, `127.0.0.1` only) that
+  returns a short-lived access token, or the ETL holds `client_id` /
+  `client_secret` in `etl/.env` and refreshes directly with `google-auth`
+  against the stored refresh token. Pick one at Milestone 1; the internal
+  endpoint keeps the client secret in one place (`web/`).
+- **Disconnect**: the user (or an admin) hits disconnect → `web/` calls
+  Google's token-revoke endpoint, then sets `revoked_at` and clears the
+  encrypted token. Any `source_registry` row bound to that connection is
+  disabled and flagged on the "Connected sources" screen.
+- **Scope of trust**: a connected token can read everything in that user's
+  Drive within the granted scopes. Only connect accounts that are supposed to
+  feed the data bank, register specific folders / sheets / docs rather than
+  "all of Drive", and review connections periodically. The `drive.file`
+  fallback above removes the broad-read concern entirely if it becomes one.
+
+### `VerifyCloudflareAccess` and the OAuth routes
+
+The Socialite redirect and callback routes are behind Cloudflare Access and
+the app login like everything else — a stranger cannot reach
+`/google/connect`. The Google `redirect_uri` is
+`https://analytics.exciseup.in/google/callback`, registered in the Cloud
+project; it only resolves through the tunnel.
 
 ### Secrets
 
 | Secret | Location | Perms |
 |---|---|---|
-| `web/.env` `APP_KEY`, MariaDB creds, Resend key, `ORCH_BEARER_TOKEN` | `web/.env` | `600`, not committed |
+| `web/.env` `APP_KEY`, MariaDB creds, Resend key, `ORCH_BEARER_TOKEN`, `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | `web/.env` | `600`, not committed |
 | `orchestrator/.env` `ORCH_BEARER_TOKEN`, `DATABASE_URL_READONLY` | `orchestrator/.env` | `600`, not committed |
+| `etl/.env` `DATABASE_URL_ETL`, `GOOGLE_APPLICATION_CREDENTIALS` path, KB MariaDB creds, (optionally `GOOGLE_CLIENT_ID`/`SECRET` if the ETL refreshes tokens directly) | `etl/.env` | `600`, not committed |
 | Postgres role passwords | set once via `db/roles.sql` with `psql -v`, then only in `orchestrator/.env` / `etl/.env` | — |
 | Google service-account JSON | a path outside the repo, referenced by `GOOGLE_APPLICATION_CREDENTIALS` | `600`, owned by the ETL user |
+| Google OAuth **refresh tokens** (per user) | `google_connections.refresh_token`, `Crypt`-encrypted with `APP_KEY`, in `web/`'s MariaDB | DB row, never in a file, never logged |
+| KB MariaDB read-only user (`excise_mcp_kb_ro`) password | `etl/.env` | `600` |
 | Tunnel credentials, `cert.pem` | `~/.cloudflared/` | as-is, gitignored by not being in the repo |
 
-`.gitignore` covers `**/.env`, `**/*.env`, `*.pem`, `*credentials*.json`,
-`web/storage/`, `**/.venv/`, `**/__pycache__/`, `/var/tmp` is outside the repo.
+`.gitignore` covers `**/.env`, `**/*.env` (keeping `*.env.example`), `*.pem`,
+`*credentials*.json`, `*service-account*.json`, `web/storage/`, `**/.venv/`,
+`**/__pycache__/`; `/var/tmp` and the KB Markdown tree are outside the repo.
 
 ## Incident-response quick reference
 
@@ -350,5 +456,15 @@ export). RBAC copied and trimmed from the sibling.
   `excise-sandbox` user has no login and owns nothing but scratch.
 - **Tunnel down**: `systemctl --user status excise-mcp-dashboard-tunnel`;
   restart it; the app is simply unreachable meanwhile — no data exposure.
-- **Suspected token leak**: rotate `ORCH_BEARER_TOKEN` in both `.env` files,
-  restart both services.
+- **Suspected bearer-token leak**: rotate `ORCH_BEARER_TOKEN` in both `.env`
+  files, restart both services.
+- **Suspected Google token compromise**: disconnect the affected
+  `google_connections` row (revokes at Google, clears the encrypted token),
+  disable its `source_registry` sources, rotate `GOOGLE_CLIENT_SECRET` in the
+  Cloud console and `web/.env` if the client secret itself may be exposed.
+- **A withdrawn document still shows in chat citations**: check the retrieval
+  query applies `withdrawn_at IS NULL`; run `etl sync --source pdf_pipeline_docs`
+  to re-sync withdrawal state.
+- **Model wrote to `kb.*` or `analytics.*`**: not possible — `excise_ro` has
+  `SELECT` only and the session is `READ ONLY`. Treat any such report as a
+  role-misconfiguration bug and re-run `db/roles.sql` verification.

@@ -7,12 +7,12 @@ Cloudflare Tunnel, sharing one PostgreSQL data bank.
 
 | Unit | Runtime | Port | Exposure | Job |
 |---|---|---|---|---|
-| `web/` | Laravel 13 + Livewire 4, PHP 8.5, Apache vhost | 8084 | via Cloudflare Tunnel + Access | Split-view chat/chart UI, auth, query ledger, exports, background jobs |
-| `orchestrator/` | Python 3.12 + FastAPI, uvicorn | 8085 | `127.0.0.1` only | MCP client to Ollama, SQL generation, engine router, sandbox launcher |
-| `etl/` | Python 3.12 CLI, run by cron / systemd timers | — | none | Normalize Sheets / Drive / Excel / CSV into PostgreSQL |
-| PostgreSQL 18 | system service | 5432 | `127.0.0.1` (+ Tailscale later if needed) | The excise data bank — read-only for the AI path |
-| Ollama | system service | 11434 | `127.0.0.1` | Local LLM inference, CPU-only |
-| MariaDB | system service | 3306 | `127.0.0.1` | `web/` operational store — sessions, users, ledger, queue |
+| `web/` | Laravel 13 + Livewire 4, PHP 8.5, Apache vhost | 8084 | via Cloudflare Tunnel + Access | Analytical form + OpenWebUI-style chat window + admin (users, connected Google sources, knowledge base); auth; query ledger; exports; background jobs |
+| `orchestrator/` | Python 3.12 + FastAPI, uvicorn | 8085 | `127.0.0.1` only | MCP client to Ollama; one-shot SQL pipeline; streaming chat with a tool loop (`run_sql_query`, `search_knowledge`, `make_chart`); knowledge retrieval; engine router; sandbox launcher |
+| `etl/` | Python 3.12 CLI, run by cron / systemd timers | — | Google API (ingestion only) | Sheets / Drive / Docs / Excel / CSV -> Postgres data tables; pdf-markdown-pipeline verified docs + admin `.md` uploads + Google Docs -> `kb.*` |
+| PostgreSQL 18 | system service | 5432 | `127.0.0.1` (+ Tailscale later if needed) | The excise data bank (`analytics.*`) and the knowledge base (`kb.*`) — read-only for the AI path |
+| Ollama | system service | 11434 | `127.0.0.1` | Local LLM inference + embeddings, CPU-only |
+| MariaDB | system service | 3306 | `127.0.0.1` | `web/` operational store — sessions, users, ledger, chat history, `kb_uploads`, `google_connections`, queue |
 
 ### Request path for one question
 
@@ -51,6 +51,44 @@ response as it goes (chunked) or the job polls a `/query/{id}/status`
 endpoint; Laravel relays them to the browser over SSE, with `wire:poll` as the
 fallback if SSE behaves badly through the tunnel.
 
+### Request path for a chat message
+
+1. Analyst opens the chat window, picks or starts a conversation, sends a
+   message. Livewire posts it and opens an SSE reader.
+2. `web/` calls `POST http://127.0.0.1:8085/chat` (bearer token) with the
+   message and the trimmed conversation history.
+3. The orchestrator runs the tool loop (`MCP_ENGINES.md` §Chat and retrieval):
+   the model streams text; when it needs data it calls `run_sql_query` (same
+   guard + read-only run as the one-shot path), for the law it calls
+   `search_knowledge` (FTS over `kb.chunks`, optionally vector), for a picture
+   it calls `make_chart` (same `bwrap` sandbox). Each tool call and result is
+   an SSE event.
+4. `web/` relays the SSE stream to the browser and persists `messages` +
+   `message_tool_calls`; a chart is stored as a `chart_artifacts` row.
+5. Cited knowledge chunks render with a link to `docsrepo.exciseup.in`; SQL
+   the model ran renders as an inline, copyable card.
+
+### Knowledge ingestion path
+
+- `etl sync --source pdf_pipeline_docs` (daily): reads
+  `pdf_markdown_pipeline_local.documents` (a dedicated read-only MariaDB user)
+  filtered to public + verified, reads each Markdown file from that project's
+  `public` disk, chunks, writes `kb.documents` + `kb.chunks` in Postgres.
+- `etl sync --source kb_uploads` (every 15 min): ingests admin-uploaded `.md`
+  files staged by `web/`.
+- `etl sync --source gdocs_* / gdrive_kb_*`: Google Docs and Drive `.md`/Docs
+  via a user's OAuth connection.
+- A document that stops being public/verified upstream is marked
+  `withdrawn_at`; retrieval skips it, the text stays for audit.
+
+### Google OAuth path
+
+`web/` runs `laravel/socialite` (Google, read-only Drive/Sheets/Docs scopes,
+offline access). A per-user `google_connections` row holds an encrypted
+refresh token. The ETL reads the refresh token over loopback and lets
+`google-auth` mint access tokens; a revoked grant surfaces as "reconnect
+needed" on the admin screen. `SECURITY.md` §Google OAuth.
+
 ### Trust boundaries
 
 - **Internet -> Cloudflare edge**: TLS, Access policy (email domain / group).
@@ -65,8 +103,18 @@ fallback if SSE behaves badly through the tunnel.
   a `bwrap` namespace — no network, root filesystem read-only, one writable
   scratch dir, `RLIMIT` memory cap, `timeout(1)` wall clock. See `SECURITY.md`.
 - **ETL -> PostgreSQL**: separate role with `INSERT`/`UPDATE`/`DELETE` on the
-  data tables only, no DDL after the initial migration. Runs from cron, not
-  reachable from the web path.
+  data tables and `kb.*` only, no DDL after the initial migration. Runs from
+  cron, not reachable from the web path.
+- **Orchestrator -> knowledge base**: the same read-only role reads `kb.*`
+  (`SELECT` only). Retrieval is FTS (built-in) or, when enabled, `pgvector`
+  cosine search with embeddings from the local Ollama — no outbound network.
+- **ETL -> Google API**: the only outbound call other than the tunnel.
+  Read-only scopes; a service account for server-owned content, a user's
+  OAuth refresh token for their own Drive/Sheets/Docs. Tokens are encrypted
+  at rest and never logged.
+- **`web/` -> pdf-markdown-pipeline data**: read-only. A scoped MariaDB user
+  (`SELECT` on `pdf_markdown_pipeline_local` only) and group-read on that
+  project's `storage/app/public` Markdown tree. No write path.
 
 ### Failure behavior
 
@@ -79,10 +127,13 @@ output from the LLM.
 
 ### What is deliberately not in the first build
 
-Octave / MATLAB / Mathematica engines, an MCP server in front of Postgres, and
-a complexity-based routing heuristic. The interfaces below accommodate them;
-`EVALUATION.md` §Right-sizing explains why they wait. `ROADMAP.md` Milestone 3
-adds Octave behind the same `IVisualizationEngine`.
+Octave / MATLAB / Mathematica engines, an MCP server in front of Postgres, a
+complexity-based routing heuristic, `pgvector` semantic retrieval, and an
+embedded OpenWebUI. The interfaces accommodate all of them; `EVALUATION.md`
+§Right-sizing explains why they wait. `ROADMAP.md` Milestone 3 builds the
+knowledge base on Postgres FTS; Milestone 4 adds Octave behind the same
+`IVisualizationEngine`; `pgvector` is a config flag plus a backfill if the
+Milestone 6 quality check calls for it.
 
 ## Component diagrams
 
@@ -193,12 +244,73 @@ flowchart LR
 > memory caps, and `timeout(1)`. `firejail` is not installed and is not
 > required. `SECURITY.md` §Code-execution sandbox has the exact invocation.
 
+### Diagram 3: chat, knowledge, and ingestion (added 2026-09-10)
+
+Not one of the two diagrams supplied with the brief — this one covers the
+chat window, the knowledge base, and the Google OAuth ingestion added in the
+second scope pass.
+
+```mermaid
+flowchart TD
+    classDef client fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#fff
+    classDef app fill:#059669,stroke:#047857,stroke-width:2px,color:#fff
+    classDef ai fill:#7c3aed,stroke:#6d28d9,stroke-width:2px,color:#fff
+    classDef db fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#fff
+    classDef ext fill:#d97706,stroke:#b45309,stroke-width:2px,color:#fff
+
+    User([Analyst]):::client
+    Chat[Livewire Chat window\nSSE stream, markdown + code render]:::app
+    Orch[FastAPI orchestrator\nchat tool loop]:::app
+    Ollama((Ollama\nchat + coder + embed, CPU)):::ai
+
+    subgraph Tools [Tools the model calls]
+        T1[search_knowledge]:::app
+        T2[run_sql_query\nsame guard + read-only role]:::app
+        T3[make_chart\nsame bwrap sandbox]:::app
+    end
+
+    subgraph Bank [PostgreSQL data bank]
+        AN[(analytics.* views\npublished rows)]:::db
+        KB[(kb.documents / kb.chunks\nFTS, optional pgvector)]:::db
+    end
+
+    subgraph Ingest [etl/ - cron / timers]
+        E1[pdf_pipeline sync]:::app
+        E2[kb_uploads sync]:::app
+        E3[gdocs / gdrive sync]:::app
+    end
+
+    PDFP[(pdf-markdown-pipeline\nMariaDB + public .md files\npublic + verified only)]:::db
+    UP[Admin .md uploads\nweb/ kb-uploads disk]:::app
+    G[[Google Drive / Sheets / Docs]]:::ext
+
+    User <--> Chat <-->|/chat bearer| Orch
+    Orch <--> Ollama
+    Orch --> T1 --> KB
+    Orch --> T2 --> AN
+    Orch --> T3
+    T1 -. cited snippets + docsrepo links .-> Chat
+
+    E1 --> PDFP
+    E1 --> KB
+    E2 --> UP
+    E2 --> KB
+    E3 --> G
+    E3 --> KB
+    E3 --> AN
+
+    User -.->|OAuth connect via web/ Socialite| G
+```
+
 ## Cross-references
 
-- Hardware limits and model choice: `EVALUATION.md`
-- ETL design and the PostgreSQL schema: `DATA_PIPELINE.md`
-- Orchestrator internals, `IVisualizationEngine`, per-engine guides:
-  `MCP_ENGINES.md`
-- Read-only role SQL, sandbox invocation, tunnel + Access config: `SECURITY.md`
+- Hardware limits, model choice, retrieval and chat-integration decisions,
+  reuse inventory: `EVALUATION.md`
+- ETL design, PostgreSQL schema, the `kb` schema, Google sources: `DATA_PIPELINE.md`
+- Orchestrator internals, `IVisualizationEngine`, per-engine guides, the chat
+  tool loop and retrieval: `MCP_ENGINES.md`
+- Read-only role SQL, sandbox invocation, knowledge-base read paths, Google
+  OAuth, tunnel + Access config: `SECURITY.md`
 - Build order and checklists: `ROADMAP.md`
+- Every sudo / install / external-console step: `OPERATOR_SETUP.md`
 - Session rules and conventions: `CLAUDE.md`

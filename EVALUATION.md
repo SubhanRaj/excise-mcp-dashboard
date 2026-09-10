@@ -87,10 +87,16 @@ tasks are **SQL from a schema** and **short Matplotlib/Plotly scripts**.
   strong function-calling / JSON-mode adherence in Ollama. ~6–7 GB resident
   leaves room for compute.
 - **Fallback / generalist: `llama3.1:8b-instruct` (Q4_K_M).** Use for the
-  conversational summary of results and as a second opinion if Qwen's SQL is
-  malformed twice. Comparable footprint.
+  conversational chat turns, the summary of results, and as a second opinion
+  if Qwen's SQL is malformed twice. Comparable footprint. Both Qwen and Llama
+  3.1 support Ollama tool-calling, which the chat loop needs.
 - Keep both pulled; the orchestrator selects per task (SQL/plot -> Qwen,
-  narration -> Llama). Neither is DeepSeek-derived.
+  chat/narration -> Llama). Neither is DeepSeek-derived.
+- **Embedding model (only if `KB_EMBEDDINGS_ENABLED`)**:
+  `nomic-embed-text` (768-dim, ~275 MB) or `bge-m3` (1024-dim, ~600 MB,
+  better on mixed English/Hindi). Adds its footprint on top of whichever LLM
+  is loaded; at ~300–600 MB it fits, but see §Retrieval for why it stays off
+  until FTS is shown to be the bottleneck.
 
 ### Runtime settings
 
@@ -113,6 +119,62 @@ Pydantic v2 models -> JSON Schema -> passed to Ollama as the enforced `format`.
 On a parse/validation failure: one retry with the validator error appended to
 the prompt, then a typed error to the user. `MCP_ENGINES.md` §Structured output
 has the loop.
+
+### RAM budget with the chat scope added
+
+The chat window does not add a resident cost on top of the one-shot pipeline —
+it uses the same two models. The only new resident item is the embedding
+model, and only if embeddings are turned on:
+
+| Loaded set | Resident | Fits in ~10–12 GiB headroom |
+|---|---|---|
+| One 7–8B model (swapped per task), `MAX_LOADED_MODELS=1` | ~6–7 GB | yes, with margin |
+| + `nomic-embed-text` when embeddings on | ~6.5–7.5 GB | yes |
+| Two 7–8B models pinned (`MAX_LOADED_MODELS=2`, no swap) | ~12–13 GB | tight — only if swap latency in chat proves annoying, and accept less room for a concurrent plot + Postgres |
+
+Keep `MAX_LOADED_MODELS=1`. The chat's coder<->chat model swap between a tool
+call and the reply costs a reload; at this concurrency that is acceptable.
+
+## 2b. Retrieval: FTS first, `pgvector` as the documented upgrade
+
+The knowledge corpus (pdf-markdown-pipeline verified docs + admin uploads) is
+small — a few hundred documents, a few thousand chunks. Two options:
+
+| | Postgres FTS (`tsvector`) | `pgvector` + embeddings |
+|---|---|---|
+| New dependency | none — built into PG 18 | `postgresql-18-pgvector` (apt, root) + an Ollama embed model |
+| RAM cost | zero | ~300–600 MB resident when the embed model is loaded |
+| Ingestion cost | negligible (generated column) | embed every chunk (CPU, ~seconds per doc) |
+| Query cost | one GIN index scan | embed the query + HNSW scan |
+| Recall on legal text | good for keyword / citation lookups ("section 12", "MGQ", a rule number); weaker on paraphrase | better on "what does the policy say about minimum quotas" style paraphrase |
+| Bilingual (English/Hindi) | `'simple'` config, no stemming — works for both, exact-ish | depends on the embed model; `bge-m3` is multilingual, `nomic-embed-text` is English-first |
+
+**Recommendation: ship FTS.** `kb.chunks` carries a nullable `embedding`
+column from the first migration, so enabling `pgvector` later is: install the
+extension, `ALTER COLUMN ... TYPE vector(N)`, backfill embeddings in an `etl`
+run, flip `KB_EMBEDDINGS_ENABLED`. No schema rework. Turn it on only if real
+questions show FTS missing relevant sections — measure against the
+representative question set in `ROADMAP.md` Milestone 6.
+
+## 2c. Chat integration: native Livewire, not embedded OpenWebUI
+
+The ask is an OpenWebUI-style chat window. Options weighed:
+
+| Approach | What it costs | Verdict |
+|---|---|---|
+| **Embed OpenWebUI** (Docker) behind a second subdomain, point its OpenAI endpoint at the orchestrator | `apt install docker` (absent), a second web app with its own SQLite/Postgres and its own auth/users to reconcile with Cloudflare Access, a second tunnel, container updates | Rejected — a whole parallel app and Docker for a UI we can build |
+| **Native Livewire chat** against the orchestrator's `/chat` SSE stream | one more Livewire component + an Alpine SSE reader + `marked`/highlighter from the CDN already on the CSP | **Chosen** — reuses the auth, the layout system, the ledger, the deploy path |
+| **Move LLM logic into PHP** with `prism-php/prism` (Ollama support, streaming, tool calls) | a capable package, but it duplicates the orchestrator's tool loop in a second language and splits the "who talks to Ollama" responsibility | Not now — noted as the path if the orchestrator is ever dropped |
+
+The orchestrator already is the MCP client and owns the SQL guard, the
+sandbox, and retrieval. Keeping the chat loop there means one implementation
+of each tool. `web/` renders and streams.
+
+If OpenWebUI itself is wanted later (its model management, its prompt
+library), the integration is documented as a backlog item: run it in Docker,
+add it as a second Access-protected subdomain, and point its "OpenAI API"
+base URL at an OpenAI-compatible shim on the orchestrator (`/v1/chat/completions`
+wrapping the same tool loop). Not on the critical path.
 
 ## 3. Tooling and protocol verification
 
@@ -191,6 +253,19 @@ firejail, so no install is required for the core sandbox.
 - Cloudflare Access / Zero Trust is not yet configured for any of the four
   existing apps — this would be the first. Setup is in `SECURITY.md`.
 
+### Google OAuth (for the Drive / Sheets / Docs connect feature)
+
+- `laravel/socialite` is the package; not currently used in any sibling.
+- `drive.readonly` is a **restricted** scope. A **Internal** consent screen
+  (department Google Workspace) avoids Google's verification / CASA
+  assessment; an **External** screen hits that process past 100 users. Decide
+  this before Milestone 1 — `OPERATOR_SETUP.md` §Google Cloud. Fallback:
+  `drive.file` (user-picked files only) is not restricted.
+- Redirect URI `https://analytics.exciseup.in/google/callback` — only resolves
+  through the tunnel, behind Access.
+- Refresh tokens are `Crypt`-encrypted per user in `web/`'s MariaDB, never
+  logged, revoked on disconnect. `SECURITY.md` §Google OAuth.
+
 ### Ports
 
 In use: 8080 `pdf-markdown-pipeline`, 8081 `excise-budget-tracker`, 8082
@@ -218,6 +293,7 @@ From `~/Sites/upexcise-stats-dashboard`, `~/Sites/UP-excise-mailer`,
 | Server-rendered SVG sparkline, no chart lib | `upexcise-stats-dashboard/app/Support/Sparkline.php` | Reuse for ledger-row mini previews |
 | Deploy runbook shape (Apache vhost + tunnel + systemd `--user`, `view:clear` after pull, ProtectHome `ReadWritePaths` gotcha) | `upexcise-stats-dashboard/DEPLOY.md`, `infra-notes/laravel-apps-deploy.md` | `deploy/` follows this exactly |
 | `db:provision` scoped-user convention (`<app>_local`, db name = user, never root) | `subhanraj/laravel-db-provisioner` in every sibling | Use for the MariaDB operational store |
+| `laravel/socialite` | not yet used in any sibling — new dependency, but the standard Laravel OAuth package | The Google connect flow (`SECURITY.md` §Google OAuth). One package, not a hand-rolled OAuth client |
 
 ### Directly reusable — data
 
@@ -226,6 +302,8 @@ From `~/Sites/upexcise-stats-dashboard`, `~/Sites/UP-excise-mailer`,
 | **Complete excise relational schema** — `zones -> divisions -> districts`, `financial_years`, fact tables `revenues` / `sales_volumes` / `operations`, `shops` + `shop_years`, `brands` / `brand_prices` / `duty_rates` / `policy_entries`, natural keys, `Publishable` pattern | `~/Sites/upexcise-stats-dashboard` `docs/data-model.md` + migrations | **Translate this to PostgreSQL as the data bank.** It is already imported, verified (75 districts, 900 rows/series, ~79.7k shops / 242k shop-years, 3.5k brands), and bug-fixed. Do not design a new schema. `DATA_PIPELINE.md` §Schema. |
 | NITI workbook importer (`excise:import`, `openspout`, idempotent upsert on natural key, note-row quarantine) | `upexcise-stats-dashboard/app/Console/Commands/ImportExciseData.php` | The Excel-source branch of the ETL is this logic, moved to Python `etl/` |
 | Zone/division/district seed (from the mailer's contact-list JSON) | `upexcise-stats-dashboard` seeders | Seed the Postgres dimension tables |
+| **Verified policy / acts / rules corpus** — `documents` table (`visibility`, `status='verified'`, `document_type`, `language`, `rule_set` / `section` / `department`) + Markdown on the `public` disk (`storage/app/public/<markdown_path>`) | `~/Sites/pdf-markdown-pipeline` (`docsrepo.exciseup.in`), DB `pdf_markdown_pipeline_local` | The primary knowledge-base feed. Read-only sync in `etl/sources/pdf_pipeline.py` — MariaDB (scoped read-only user) + filesystem. `DATA_PIPELINE.md` §Knowledge base. |
+| Government document taxonomy (Level -> Body -> Section, Acts & Rules, named policies with year-over-year supersession) | `~/Sites/pdf-markdown-pipeline` `claude.md` | Maps onto `kb.documents.doc_type` / `rule_set` / `effective_from` / `effective_to` |
 | Legacy `pg_dump` set (~30 GB) | `~/mentor_portal_db` | Optional historical backfill source, already PostgreSQL-native |
 | Local analysis-DB + scoped-user pattern (prod is Cloudflare D1, local clone for offline analysis) | `~/Projects/up-excise-spatial-revenue-optimizer`, `infra-notes/up-excise-local-analysis-db.md` | Same shape as what this project is — a local read-only analytical copy |
 
@@ -246,6 +324,14 @@ From `~/Sites/upexcise-stats-dashboard`, `~/Sites/UP-excise-mailer`,
 - No MCP client code, no Ollama integration code, no code-execution sandbox
   anywhere on the box.
 - No Cloudflare Access / Zero Trust configuration on the account yet.
+- **No retrieval / RAG / embedding / vector-search code anywhere.** `pgvector`
+  is not confirmed installed (checking needs root). The KB retrieval layer is
+  greenfield; `MCP_ENGINES.md` §Chat and retrieval is the spec.
+- **No chat / streaming / tool-loop UI anywhere.** The siblings render charts
+  and tables, not conversations. The Livewire chat component and the
+  orchestrator `/chat` loop are new.
+- **No OAuth / Socialite** in any sibling — all use email+OTP only.
+- No Google embed model, no `nomic-embed-text` / `bge-m3` pulled.
 
 ## 5. Right-sizing assessment (Technical Evaluator note)
 
@@ -290,6 +376,26 @@ Recommendations, each reversible:
 5. **Match the installed stack, not the brief's versions.** Build `web/` on
    Laravel 13 / Livewire 4 / PHP 8.5 like the four siblings, not Laravel 11/12
    / Livewire 3.
+
+6. **Knowledge base: FTS before vectors.** Built-in Postgres full-text search
+   over a few thousand chunks needs no extension and no embedding model.
+   `kb.chunks` keeps a nullable `embedding` column so `pgvector` is a later
+   `ALTER` + backfill, not a rebuild. Turn embeddings on only when the
+   representative question set shows FTS missing sections (§2b).
+
+7. **Chat: native Livewire, not embedded OpenWebUI in Docker.** The
+   orchestrator already owns the tool loop; `web/` renders and streams. One
+   implementation of each tool, no second app, no Docker (§2c).
+
+8. **Chat routing: the model picks tools, no classifier.** Same reasoning as
+   point 3 — a "is this a data question or a law question" classifier guesses
+   and is hard to debug. The system prompt describes the three tools; the
+   model calls what it needs, including none.
+
+9. **Google: OAuth via Socialite, service account kept.** One package for the
+   OAuth flow; per-user encrypted refresh tokens; register specific
+   folders/sheets/docs, not "all of Drive". Prefer an Internal consent screen
+   to avoid restricted-scope verification (§Google OAuth).
 
 The full four-engine, MCP-server, heuristic-router design stays documented in
 `ARCHITECTURE.md` and `MCP_ENGINES.md` as the target shape if requirements grow.

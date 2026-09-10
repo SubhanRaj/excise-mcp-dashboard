@@ -327,27 +327,59 @@ Idempotent by construction: re-running the same source over the same
 unchanged input upserts identical values and changes no counts. This is the
 property the sibling `excise:import` already has and the tests enforce.
 
+### Google auth modes
+
+Every Google adapter (`gsheets`, `gdrive`, `gdocs`) takes an `auth` field on
+its `source_registry` row:
+
+- **`service_account`** — a Google Cloud service account, key file path in
+  `GOOGLE_APPLICATION_CREDENTIALS` (env, `600`, never committed), the target
+  shared with the service-account email as Viewer. For server-owned content
+  that does not belong to a person.
+- **`oauth`** — a user-delegated connection. The Laravel app runs the OAuth
+  flow (`laravel/socialite`, Google provider, `access_type=offline`,
+  `prompt=consent`) and stores one `google_connections` row per user with a
+  `Crypt`-encrypted refresh token and the granted scopes. The ETL reads
+  `client_id` / `client_secret` (from `etl/.env`) plus the connection's
+  refresh token (from the operational DB over a loopback read) and lets
+  `google-auth` mint and refresh access tokens. A `source_registry` row in
+  `oauth` mode carries `connection_id`. A refresh failure (revoked, expired
+  consent) sets the run `failed` with `reason = 'google reconnect needed:
+  <connection>'` and the "Connected sources" screen flags it — never a silent
+  skip.
+
+Scopes requested (read-only, minimum needed):
+`.../auth/drive.readonly`, `.../auth/spreadsheets.readonly`,
+`.../auth/documents.readonly`. `SECURITY.md` §Google OAuth covers the consent
+screen (Internal vs External), the restricted-scope verification caveat, and
+token handling.
+
 ### Source adapters
 
 **Google Sheets** (`etl/sources/gsheets.py`)
-- Auth: a Google Cloud **service account**; the JSON key file path comes from
-  `GOOGLE_APPLICATION_CREDENTIALS` (env), never committed, `600` perms. The
-  target sheets are shared with the service account's email as Viewer.
-- Library: `google-api-python-client` + `google-auth` (read-only scope
-  `https://www.googleapis.com/auth/spreadsheets.readonly`).
+- Library: `google-api-python-client` + `google-auth`, scope
+  `spreadsheets.readonly`. Auth mode per §Google auth modes.
 - Reads a named range or a whole tab; the `source_registry` row carries the
   sheet id, the tab/range, and the target table. A per-sheet column map
   (`etl/maps/<sheet>.yml`) translates sheet headers to normalized fields.
-- Change detection: the Sheets API returns a `revisionId` / the Drive API a
-  `modifiedTime`; skip a source whose `modifiedTime` is not newer than the
-  last successful run unless `--force`.
+- Change detection: the Sheets/Drive API `modifiedTime`; skip a source not
+  newer than the last successful run unless `--force`.
 
 **Google Drive** (`etl/sources/gdrive.py`)
-- Same service account, scope `.../auth/drive.readonly`.
-- Lists a folder, downloads new/changed `.xlsx` / `.csv` files to a temp dir,
-  then hands each to the Excel or CSV adapter. Native Google Sheets files in
-  the folder are exported as `.xlsx` via `files().export`.
+- Scope `drive.readonly`. Auth mode per §Google auth modes.
+- Lists a folder, downloads new/changed files to a temp dir, then dispatches
+  by MIME type: `.xlsx` / `.csv` -> the Excel or CSV adapter (data tables);
+  `.md` / `.txt` and exported Google Docs -> the knowledge adapter (`kb.*`,
+  see §Knowledge base). Native Google Sheets export as `.xlsx`; native Google
+  Docs export as `text/markdown`.
 - Dedup on Drive `fileId` + `md5Checksum`.
+
+**Google Docs** (`etl/sources/gdocs.py`)
+- Scope `documents.readonly`. Auth mode per §Google auth modes.
+- For a registered Doc id, pulls the document and renders it to Markdown
+  (headings, lists, tables, links). Target is always `kb.*` — a Doc is
+  reference text, not tabular data. The `source_registry` row carries the
+  Doc id and a `title` / `category` override.
 
 **Excel** (`etl/sources/excel.py`)
 - Library: `openpyxl` for `.xlsx`; `.xls` is rare — convert with LibreOffice
@@ -413,7 +445,153 @@ off) fires on next boot. A run acquires a Postgres advisory lock
 - No writes from the web path — `etl/` is cron-only, not importable by `web/`
   or `orchestrator/`.
 - No schema changes after the initial migration — the ETL role has
-  `INSERT`/`UPDATE`/`DELETE` on data tables and `etl.*`, no `CREATE`/`ALTER`.
+  `INSERT`/`UPDATE`/`DELETE` on data tables, `kb.*`, and `etl.*`, no
+  `CREATE`/`ALTER`.
 - No deletes of published history except through an explicit
   `etl sync --source X --reconcile` run that logs every delete to
   `etl.quarantine` first.
+
+---
+
+## Knowledge base
+
+The model can answer questions about UP Excise acts, rules, regulations, and
+policies — not only the numbers. The corpus is verified Markdown, stored in a
+`kb` schema in the same Postgres data bank, retrieved by the orchestrator
+(`MCP_ENGINES.md` §Chat and retrieval). Two feeds:
+
+1. **pdf-markdown-pipeline** — the department's verified document repository
+   (`~/Sites/pdf-markdown-pipeline`, live at `docsrepo.exciseup.in`). Only
+   `visibility = 'public'` **and** `status = 'verified'` **and**
+   `deleted_at IS NULL` documents are ingested.
+2. **Admin `.md` uploads** — the "Knowledge base" screen in `web/`. An
+   uploaded file lands on a dedicated disk with a `kb_uploads` row; the ETL
+   picks it up on the next run.
+
+### `kb` schema
+
+```sql
+CREATE SCHEMA kb;
+
+CREATE TABLE kb.documents (
+    id             BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    origin         TEXT NOT NULL,           -- 'pdf_pipeline' | 'upload' | 'gdoc' | 'gdrive'
+    origin_ref     TEXT NOT NULL,           -- pipeline document id | upload ulid | gdoc id | drive fileId
+    title          TEXT NOT NULL,
+    doc_type       TEXT,                    -- 'act' | 'rule' | 'rule_amendment' | 'policy' | 'government_order' | 'notice' | 'court_order' | 'service_code' | 'other'
+    language       TEXT,                    -- 'english' | 'hindi' | 'both'
+    department     TEXT,                    -- 'excise' | 'sugarcane' | ...
+    rule_set       TEXT,                    -- named Act / Rules / policy series, when known
+    effective_from DATE,
+    effective_to   DATE,                    -- set when a later doc supersedes this one
+    source_url     TEXT,                    -- deep link on docsrepo.exciseup.in, or the Drive/Docs URL
+    content_sha256 TEXT NOT NULL,           -- of the full Markdown, for change detection
+    ingested_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    withdrawn_at   TIMESTAMPTZ NULL,        -- upstream doc went non-public / unverified / deleted, or upload withdrawn
+    UNIQUE (origin, origin_ref)
+);
+
+CREATE TABLE kb.chunks (
+    id             BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    document_id    BIGINT NOT NULL REFERENCES kb.documents(id) ON DELETE CASCADE,
+    ord            INTEGER NOT NULL,        -- chunk order within the document
+    heading_path   TEXT,                    -- 'Chapter III > Section 12 > (2)' for citation
+    content        TEXT NOT NULL,           -- the chunk text, Markdown
+    token_estimate INTEGER NOT NULL,
+    fts            tsvector GENERATED ALWAYS AS (
+                       to_tsvector('simple', coalesce(heading_path,'') || ' ' || content)
+                   ) STORED,
+    embedding      real[] NULL,             -- populated only when KB_EMBEDDINGS_ENABLED; becomes vector(N) with pgvector
+    UNIQUE (document_id, ord)
+);
+
+CREATE INDEX kb_chunks_fts       ON kb.chunks USING GIN (fts);
+CREATE INDEX kb_chunks_doc       ON kb.chunks (document_id);
+-- with pgvector:
+-- ALTER TABLE kb.chunks ALTER COLUMN embedding TYPE vector(768) USING embedding::vector(768);
+-- CREATE INDEX kb_chunks_hnsw ON kb.chunks USING hnsw (embedding vector_cosine_ops);
+```
+
+The Postgres FTS config is `'simple'` (no stemming) because the corpus is
+bilingual English/Hindi and the Hindi text must not be run through an English
+stemmer. `pg_trgm` on `content` is an option for fuzzy matching if `'simple'`
+recall is weak; `EVALUATION.md` §Retrieval.
+
+### `analytics`-side exposure
+
+The read-only role sees `kb.documents` and `kb.chunks` directly (`SECURITY.md`
+§Read-only role) — no view needed, `withdrawn_at IS NULL` is a filter the
+retrieval query always applies. The base fact-table `analytics.*` views and
+the `kb.*` tables are the model's entire world.
+
+### pdf-markdown-pipeline sync (`etl/sources/pdf_pipeline.py`)
+
+Reads from two places on the same box, both read-only:
+
+- **MariaDB `pdf_markdown_pipeline_local`** (the app's DB): the `documents`
+  table, filtered `visibility = 'public' AND status = 'verified' AND
+  deleted_at IS NULL`, joined to `sections` / `rule_sets` / `departments` for
+  `rule_set`, `doc_type` (`documents.document_type`), `language`, and the slug
+  segments that build the `docsrepo.exciseup.in` URL. A dedicated read-only
+  MariaDB user (`excise_mcp_kb_ro`, `SELECT` on that DB only) — the operator
+  creates it, `OPERATOR_SETUP.md` §KB.
+- **Filesystem**: the Markdown for each row is at
+  `~/Sites/pdf-markdown-pipeline/storage/app/public/<markdown_path>`
+  (`markdown_path` is relative to the `public` disk). Read-only file access;
+  the ETL user needs group read on that tree.
+
+Per document: hash the Markdown, compare to `kb.documents.content_sha256`;
+if new or changed, re-chunk and replace the document's `kb.chunks`. A
+`documents` row that no longer matches the filter (unpublished, un-verified,
+deleted) sets `withdrawn_at` — the content stays for audit but retrieval
+skips it. Idempotent: an unchanged corpus changes no rows.
+
+### Admin upload flow
+
+1. `web/` "Knowledge base" screen: an admin (`kb.manage` privilege) uploads a
+   `.md` file. Validation: extension `.md`, `<= 2 MB`, UTF-8 decodable,
+   filename sanitised to `[a-z0-9-_]`, no path separators. Optional title,
+   `doc_type`, `rule_set`, `effective_from`.
+2. The file is written to the `kb-uploads` disk
+   (`web/storage/app/kb-uploads/<ulid>.md`, on the Apache `ReadWritePaths`
+   list) and a `kb_uploads` row is created (`ulid`, `original_name`, `title`,
+   metadata, `status = 'pending'`, `uploaded_by`).
+3. The next `etl sync --source kb_uploads` run reads pending rows, ingests
+   each into `kb.documents` (`origin = 'upload'`, `origin_ref = <ulid>`,
+   `source_url` = a `web/` route that serves the stored file), chunks into
+   `kb.chunks`, sets the `kb_uploads` row `status = 'ingested'`.
+4. "Withdraw" on the screen sets `kb_uploads.status = 'withdrawn'`; the next
+   run sets `kb.documents.withdrawn_at`.
+
+`kb_uploads` lives in `web/`'s MariaDB (it is operational state); `kb.*` lives
+in Postgres (it is model-facing data). The ETL bridges them.
+
+### Chunking
+
+- Split on Markdown headings first; a section longer than ~1,200 tokens splits
+  again on paragraph boundaries with a ~100-token overlap.
+- `heading_path` records the heading breadcrumb so a retrieved chunk can be
+  cited as "Section 12(2) of the UP Excise Manual" with a link.
+- Tables are kept whole in one chunk where possible.
+- No chunk crosses a document boundary.
+
+### Embeddings (only when `KB_EMBEDDINGS_ENABLED`)
+
+Off by default. When enabled: at ingestion, `etl/` batches chunk text through
+the local Ollama embed model (`nomic-embed-text`, 768-dim, or `bge-m3`) and
+writes `kb.chunks.embedding`. The orchestrator embeds the query the same way
+at retrieval and does cosine search (`pgvector` HNSW) merged with the FTS
+result. Nothing is sent off the box. `EVALUATION.md` §Retrieval has the
+decision and the RAM cost.
+
+### Knowledge sources in `etl.source_registry`
+
+| name | source | ref | target | schedule |
+|---|---|---|---|---|
+| `pdf_pipeline_docs` | `pdf_pipeline` | — | `kb` | `0 3 * * *` (daily 03:00) |
+| `kb_uploads` | `upload` | — | `kb` | `*/15 * * * *` (picks up new uploads) |
+| `gdocs_<name>` | `gdoc` | Doc id | `kb` | per registration |
+| `gdrive_kb_<name>` | `gdrive` | folder id | `kb` (`.md`/`.txt`/Docs only) | hourly |
+
+Same `etl.ingestion_runs` / `etl.quarantine` bookkeeping and advisory lock as
+the data-table sources.

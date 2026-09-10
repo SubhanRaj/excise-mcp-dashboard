@@ -16,6 +16,23 @@ plain language; a local LLM turns it into a read-only SQL query against a
 PostgreSQL copy of the excise data, runs a short analysis/plot script, and the
 web UI shows the chart, the table, and the generated SQL.
 
+Two more capabilities sit on the same LLM and UI:
+
+- **A knowledge base.** The model can pull up UP Excise acts, rules,
+  regulations, and policies — the verified Markdown already published in
+  `~/Sites/pdf-markdown-pipeline` (`docsrepo.exciseup.in`, public + verified
+  documents only) — and admins can upload further `.md` files (rule notes,
+  circulars). Questions that are about the law rather than the numbers are
+  answered from this corpus; questions that need both get both. See
+  `DATA_PIPELINE.md` §Knowledge base and `MCP_ENGINES.md` §Chat and retrieval.
+- **A general chat window**, OpenWebUI-style: streaming conversation with the
+  local model, conversation history, markdown/code rendering. The model calls
+  tools from inside the chat — `search_knowledge`, `run_sql_query`,
+  `make_chart` — so the same data-lake and knowledge access is available
+  conversationally, not only through the one-shot analytical form. Built
+  natively in Livewire against the orchestrator's streaming endpoint; no
+  Docker, no embedded OpenWebUI (`EVALUATION.md` §Chat integration).
+
 It sits alongside the four existing departmental Laravel apps on the office AIO
 (`~/Sites/infra-notes/laravel-apps-deploy.md`) and follows their deployment
 pattern: Apache vhost on a private port, one named Cloudflare Tunnel, systemd
@@ -24,7 +41,8 @@ pattern: Apache vhost on a private port, one named Cloudflare Tunnel, systemd
 ## Hard constraints (do not violate)
 
 - **No DeepSeek models.** Any family, any quant, any purpose. The model is
-  chosen in `EVALUATION.md` from Llama 3.1, Qwen 2.5, or Gemma 2 only.
+  chosen in `EVALUATION.md` from Llama 3.1, Qwen 2.5, or Gemma 2 only. The
+  embedding model is also local (Ollama), also not DeepSeek.
 - **No unsandboxed code execution.** Every LLM-generated script (Python,
   Octave, anything) runs under the sandbox in `SECURITY.md` — non-root user,
   `bwrap` namespace, no network, writable path limited to one scratch dir,
@@ -33,6 +51,20 @@ pattern: Apache vhost on a private port, one named Cloudflare Tunnel, systemd
   connects as a dedicated `LOGIN` role with `SELECT` only and
   `default_transaction_read_only = on`. `INSERT`/`UPDATE`/`DELETE`/`DDL` are
   refused by the database engine, not by a string filter in application code.
+  This holds whether the SQL comes from the one-shot form or from a tool call
+  inside the chat — same read-only role, same guard, same sandbox.
+- **The knowledge base is read-only to the AI path too.** `kb.*` is granted
+  `SELECT` to the read-only role. Ingestion (pdf-markdown-pipeline sync,
+  admin `.md` uploads) writes through the ETL role only. The model retrieves
+  from `kb.*`; it never writes to it.
+- **No document or query leaves the box.** Retrieval, embedding, inference,
+  and plotting are all local. The only outbound network is the Cloudflare
+  Tunnel (serving the UI) and, when a user has connected Google, the Google
+  Drive/Sheets/Docs API for ingestion — nothing else.
+- **Google OAuth tokens are encrypted at rest and never logged.** Refresh
+  tokens are stored `Crypt`-encrypted per user; access tokens are short-lived
+  and in-memory. A disconnect deletes the stored token. See `SECURITY.md`
+  §Google OAuth.
 - **No secrets in `.env` for anything that can live elsewhere.** The
   Laravel↔orchestrator bearer token and the Postgres read-only password are the
   two required secrets; both go in the respective `.env` files with `600`
@@ -48,17 +80,48 @@ pattern: Apache vhost on a private port, one named Cloudflare Tunnel, systemd
 
 ```
 excise-mcp-dashboard/
-  web/            Laravel 13 + Livewire 4 app (the split-view UI)
-  orchestrator/   Python 3.12 FastAPI service (MCP client, engine router)
-  etl/            Python ingestion jobs (Sheets / Drive / Excel / CSV -> Postgres)
-  db/             SQL: schema, read-only role grants, seed reference data
-  deploy/         Apache vhost, cloudflared config, systemd --user units
+  web/            Laravel 13 + Livewire 4 app (analytical form + chat window + admin)
+  orchestrator/   Python 3.12 FastAPI service (MCP client, tool loop, engine router,
+                  SQL + knowledge retrieval + streaming chat)
+  etl/            Python ingestion jobs:
+                    - Sheets / Drive / Docs / Excel / CSV -> Postgres data tables
+                    - pdf-markdown-pipeline verified docs + admin .md uploads -> kb.*
+  db/             SQL: schema (data + kb), read-only role grants, seed reference data
+  deploy/         Apache vhost, cloudflared config, systemd --user units + timers
   docs/           this set of Markdown files
+  OPERATOR_SETUP.md   every sudo / install / Google-console step, copy-pasteable
 ```
 
 Three deployable units (`web`, `orchestrator`, `etl`) in one repo. Keep them in
 one repo while the interfaces are still moving; split later only if a second
 consumer appears.
+
+## Decisions (why the build looks like this)
+
+- **Chat window: native Livewire, not embedded OpenWebUI.** OpenWebUI is a
+  separate Svelte app with its own database and needs Docker (absent). What is
+  wanted is its UX — streaming, history, markdown/code rendering, a model
+  picker — which Livewire + Alpine + an SSE stream from the orchestrator
+  cover. All LLM logic (chat loop, tool calls, retrieval, SQL) stays in the
+  Python orchestrator; `web/` renders and streams. If the LLM logic ever needs
+  to live in PHP instead, `prism-php/prism` is the package to use — not a
+  second service. Running OpenWebUI itself in Docker against the orchestrator's
+  OpenAI-compatible endpoint stays a documented backlog option, not the path.
+- **Retrieval: Postgres full-text search first, `pgvector` as the documented
+  upgrade.** The policy/acts corpus is small (a few hundred verified docs).
+  Built-in `tsvector` + `websearch_to_tsquery` needs no extension and no
+  embedding model. Add `pgvector` + a local embedding model only if FTS recall
+  proves weak on real questions — the `kb.chunks` table carries a nullable
+  `embedding` column from day one so the switch is additive. `EVALUATION.md`
+  §Retrieval.
+- **Google access: OAuth (user-delegated) alongside the service account.** The
+  service account covers server-owned sheets. OAuth via `laravel/socialite`
+  lets an analyst connect their own Drive / Sheets / Docs. Both feed the same
+  ETL adapters. `DATA_PIPELINE.md` §Google sources, `SECURITY.md` §Google OAuth.
+- **Knowledge base lives in the Postgres data bank (`kb` schema), not in
+  `web/`'s MariaDB.** The orchestrator already has a read-only Postgres
+  connection; retrieval is one more `SELECT`. Keeps all model-facing data in
+  one place behind one read-only role.
 
 ## Laravel conventions (`web/`)
 
@@ -90,8 +153,29 @@ the 11/12 + Livewire 3 named in the original brief.
   and `LogMutation` (`activity_logs` row per non-GET) from the siblings. Add
   the FastAPI origin and any chart CDN to the CSP allowlist explicitly.
 - **Rate limiters** in `AppServiceProvider`: `login`, `two-factor`,
-  `password-reset` as in the siblings, plus `ask` (the query-submit endpoint)
-  keyed by user id — start at 10/min, tune from the ledger.
+  `password-reset` as in the siblings, plus `ask` (the one-shot query endpoint)
+  and `chat` (per message) keyed by user id — start at 10/min, tune from the
+  ledger.
+- **Chat UI**: a full-page Livewire `Chat` component. Conversation list in a
+  left rail, the active thread in the main pane, an Alpine-driven SSE reader
+  appending assistant token deltas. Markdown + fenced code render client-side
+  (`marked` + a highlighter from jsDelivr, on the CSP allowlist). Tool calls
+  the model makes (`run_sql_query`, `search_knowledge`, `make_chart`) render
+  as inline cards — the SQL, the retrieved snippets with links to
+  `docsrepo.exciseup.in`, the chart. History persists in `conversations` /
+  `messages` / `message_tool_calls`. No streaming LLM logic in PHP — `web/`
+  reads the orchestrator's `/chat` SSE and relays it.
+- **Google connect**: `laravel/socialite` + the Google provider with the
+  Drive/Sheets/Docs read-only scopes and `access_type=offline` +
+  `prompt=consent` for a refresh token. A `google_connections` row per user,
+  refresh token `Crypt`-encrypted. An admin "Connected sources" screen lists
+  Drive folders / Sheets / Docs to register as ETL sources. `SECURITY.md`
+  §Google OAuth.
+- **Knowledge**: an admin "Knowledge base" screen — upload `.md` files
+  (validated: extension, `<= 2 MB`, filename sanitised, no path segments),
+  browse the ingested corpus (pipeline docs + uploads), withdraw an upload.
+  Uploads land on a dedicated disk the ETL reads; the screen does not write
+  `kb.*` directly.
 - **Queues**: `QUEUE_CONNECTION=database`. Long calls to the orchestrator run in
   a job (`RunExciseQuery`), not in the web worker. `--timeout` on the queue
   worker must exceed the orchestrator's own request timeout — follow the
@@ -141,6 +225,28 @@ to copy — this is the first. Set the house style here.
   web app renders `stage` in the UI.
 - **No broad `except Exception: pass`.** Catch what you can handle; let the rest
   surface to the request-id'd handler.
+- **Streaming** (`/chat`): FastAPI `StreamingResponse` yielding SSE events
+  (`token`, `tool_call`, `tool_result`, `done`, `error`). Generation is
+  cancellable — a client disconnect aborts the Ollama call and any in-flight
+  tool.
+- **Tool loop**: the chat agent loop lives in `orchestrator/app/chat/`. Tools
+  are the same primitives the one-shot pipeline uses (`sql/`, `kb/`,
+  `engines/`) — no parallel implementation. Hard cap on tool calls per turn
+  (default 4); exceeding it ends the turn with a typed error.
+- **Retrieval** (`orchestrator/app/kb/`): FTS query builder over `kb.chunks`
+  by default; a `pgvector` code path guarded by `KB_EMBEDDINGS_ENABLED`,
+  embeddings via the local Ollama embed model. Retrieval never calls out of
+  the box.
+- **Embeddings** (when enabled): one pinned Ollama embed model
+  (`nomic-embed-text` or `bge-m3`), batched, run in `etl/` at ingestion time
+  and in the orchestrator at query time. Dimensions pinned in config and in
+  the `kb.chunks.embedding` column type.
+- **Google API** (`etl/`): `google-api-python-client` + `google-auth`.
+  Auth mode per source — `service_account` (key file path from env) or
+  `oauth` (client id/secret + a per-connection refresh token read from the
+  operational DB). `google-auth` handles access-token refresh; a
+  refresh failure raises a typed "reconnect needed" error, never a silent
+  skip.
 
 ## Docs, comments, commits
 
@@ -162,9 +268,19 @@ End with the co-author trailer the session is configured for.
   `queries` row set; a mocked orchestrator response renders a chart artifact
   and a ledger entry; an orchestrator error renders the failed stage and still
   writes a ledger row.
-- Rate limiting on `ask`.
+- Chat flow: a message streams assistant tokens from a mocked orchestrator;
+  a tool call in the stream (`run_sql_query`, `search_knowledge`,
+  `make_chart`) is persisted and rendered; conversation history loads and
+  resumes.
+- Rate limiting on `ask` and on chat message submit.
+- Knowledge upload: a `.md` file uploads, is validated (extension, size, no
+  path traversal), lands on the ingestion disk, and creates a pending
+  `kb_uploads` row; a non-`.md` or oversize file is rejected.
+- Google OAuth: the connect redirect carries the right scopes; the callback
+  stores an encrypted token and a `google_connections` row; disconnect
+  deletes it; a token is never written to logs or returned in a response.
 - `SecurityHeaders` present on a sample route; `activity_logs` written on a
-  non-GET.
+  non-GET; `VerifyCloudflareAccess` rejects a missing/invalid assertion.
 - The SSE/poll stage endpoint returns the stage sequence for a running job.
 
 **`orchestrator/` (pytest, `pytest-asyncio`):**
@@ -183,25 +299,55 @@ End with the co-author trailer the session is configured for.
   dir fails; a script that allocates past the memory cap is killed.
 - Ollama client: a malformed structured output triggers exactly one retry then
   a typed error.
+- Retrieval: a question retrieves the expected `kb.chunks` rows by FTS rank;
+  an empty corpus returns no context and the answer path says so rather than
+  hallucinating; with `pgvector` enabled, vector and FTS results merge and
+  de-duplicate.
+- Chat tool loop: a chat turn that needs data emits a `run_sql_query` tool
+  call routed through the same guard + read-only run + sandbox; a law question
+  emits `search_knowledge`; a mixed question emits both; the loop terminates
+  at a max tool-call count with a typed error.
+- Streaming: `/chat` yields SSE token deltas and tool-call events in order;
+  a client disconnect cancels the in-flight generation.
 
 **`etl/` (pytest):**
-- Each source adapter (Sheets, Drive, Excel, CSV) parses a fixture file into
-  the normalized row shape.
+- Each source adapter (Sheets, Drive, Docs, Excel, CSV) parses a fixture file
+  into the normalized row shape.
 - The loader upserts on each table's natural key — a re-run of the same fixture
   changes no row counts.
 - A malformed / short row is quarantined, not inserted, and counted in the run
   summary.
+- Google adapter auth mode: `service_account` and `oauth` both resolve to a
+  working client against a mocked API; an expired access token refreshes from
+  the stored refresh token; a revoked token surfaces a clear "reconnect
+  needed" error.
+- Knowledge ingestion: a fixture mirroring `pdf_markdown_pipeline_local.documents`
+  (visibility `public`, status `verified`) plus its Markdown file produces
+  `kb.documents` + chunked `kb.chunks` rows with correct metadata and source
+  URL; a non-public or non-verified row is skipped; a re-run changes no
+  counts; a removed upstream doc is marked withdrawn, not deleted.
 
 **Cross-cutting:** `ruff`, `ruff format --check`, `mypy --strict` on the Python
 trees; `vendor/bin/pint --dirty` on `web/`. All green before commit.
 
 ## Negative constraints, restated for grep
 
-- NO DeepSeek.
-- NO raw / unsandboxed execution of generated code.
-- NO root DB access, NO write DB access, for the AI/orchestrator path.
+- NO DeepSeek (chat model or embedding model).
+- NO raw / unsandboxed execution of generated code, including SQL/plot tool
+  calls made from inside the chat.
+- NO root DB access, NO write DB access, for the AI/orchestrator path —
+  `analytics.*` and `kb.*` are `SELECT`-only to the read-only role.
+- NO writes to `kb.*` except through the ETL role (sync + admin uploads).
+- NO embedded OpenWebUI, NO Docker for the chat — native Livewire + the
+  orchestrator stream (`EVALUATION.md` §Chat integration).
+- NO `pgvector` / embedding model until FTS recall is shown insufficient
+  (`EVALUATION.md` §Retrieval).
+- NO Google OAuth token in a log line, a response body, or the repo.
+- NO document, prompt, embedding, or query sent anywhere but the local Ollama
+  and (ingestion only) the Google API.
 - NO new dependency where an installed one or a few lines of stdlib do the job.
 - NO speculative abstraction — one engine implemented until a second is
   actually needed (`EVALUATION.md` §Right-sizing).
-- NO committing `.env`, service-account JSON, `cert.pem`, tunnel credentials.
+- NO committing `.env`, service-account JSON, OAuth client secret, `cert.pem`,
+  tunnel credentials.
 - NO `composer create-project` / venv / installs before Phase 4 approval.
