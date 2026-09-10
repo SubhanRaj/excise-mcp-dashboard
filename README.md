@@ -1,9 +1,10 @@
 # excise-mcp-dashboard
 
 On-premise conversational analytics for UP Excise departmental data. An
-authorized user asks a question in plain language; a local LLM (Ollama, no
-DeepSeek) turns it into a read-only SQL query against a PostgreSQL copy of the
-excise figures, runs a sandboxed analysis/plot script, and the web UI shows
+authorized user asks a question in plain language; a local LLM — Qwen 2.5 or
+Llama 3.1 served through Ollama, never DeepSeek — turns it into a read-only SQL
+query against a PostgreSQL copy of the excise figures, runs a sandboxed
+analysis/plot script, and the web UI shows
 the chart, the table, and the generated SQL. A knowledge base over the
 department's verified acts, rules, and policies answers questions about the
 law, and an OpenWebUI-style chat window ties the two together.
