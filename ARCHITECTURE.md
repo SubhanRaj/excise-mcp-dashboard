@@ -137,7 +137,14 @@ Milestone 6 quality check calls for it.
 
 ## Component diagrams
 
-### Diagram 1: comprehensive system flow
+Diagrams 1 and 2 are the two supplied with the brief, embedded unchanged.
+Diagrams 1U and 2U are the corrected versions that match what this repo
+actually specifies (bubblewrap not firejail, direct read-only `asyncpg` not a
+standalone Postgres MCP server, one Python engine, Livewire 4, plus the
+knowledge base, chat window, and Google OAuth added in the second scope pass).
+Diagram 3 covers the chat and ingestion paths.
+
+### Diagram 1 (as supplied in the brief): comprehensive system flow
 
 ```mermaid
 flowchart TD
@@ -212,7 +219,95 @@ flowchart TD
 > MATLAB, and Wolfram paths and the standalone Postgres MCP server are drawn
 > here as the target shape; see `EVALUATION.md` §Right-sizing and `ROADMAP.md`.
 
-### Diagram 2: execution security & read-only sandbox
+### Diagram 1U (updated): system flow as this repo specifies it
+
+```mermaid
+flowchart TD
+    classDef client fill:#2563eb,stroke:#1d4ed8,stroke-width:2px,color:#fff
+    classDef edge fill:#d97706,stroke:#b45309,stroke-width:2px,color:#fff
+    classDef app fill:#059669,stroke:#047857,stroke-width:2px,color:#fff
+    classDef ai fill:#7c3aed,stroke:#6d28d9,stroke-width:2px,color:#fff
+    classDef viz fill:#0284c7,stroke:#0369a1,stroke-width:2px,color:#fff
+    classDef db fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#fff
+    classDef off fill:#94a3b8,stroke:#64748b,stroke-width:1px,color:#fff,stroke-dasharray:4 3
+
+    User(["Analyst"]):::client
+    CF["Cloudflare Tunnel + Access<br/>Zero Trust policy, JWT verified in-app"]:::edge
+
+    subgraph Host["Office AIO — on-premise, no inbound ports"]
+        subgraph WebTier["web/ — Laravel 13 + Livewire 4, Apache 8084"]
+            Ask["Ask — one-shot analytical form"]:::app
+            Chat["Chat — streaming conversation"]:::app
+            Admin["Admin — users, connected Google sources, knowledge base"]:::app
+            Queue["Queue worker — RunExciseQuery job"]:::app
+            MDB[("MariaDB<br/>users, ledger, chat history,<br/>kb_uploads, google_connections")]:::db
+        end
+
+        subgraph Orch["orchestrator/ — FastAPI 8085, loopback only"]
+            OneShot["pipeline.py<br/>plan_sql then guard then run then plot then summarize"]:::app
+            Loop["chat/loop.py<br/>agentic tool loop"]:::app
+            Guard["sql/guard.py + sql/runner.py<br/>single SELECT, READ ONLY txn"]:::app
+            Retr["kb/retrieve.py<br/>Postgres FTS (pgvector off)"]:::app
+            PyEng["engines/python_engine.py<br/>Matplotlib / Plotly / pandas"]:::viz
+        end
+
+        Ollama(("Ollama — CPU only<br/>qwen2.5-coder 7b, llama3.1 8b")):::ai
+        Sbx["bwrap sandbox<br/>no network, read-only FS, one scratch dir<br/>15s / 1GB caps, non-root user"]:::viz
+
+        subgraph Bank["PostgreSQL 18 (5432) — the data bank"]
+            AN[("analytics.* views<br/>published rows only")]:::db
+            KB[("kb.documents / kb.chunks<br/>tsvector FTS")]:::db
+        end
+
+        subgraph EtlTier["etl/ — cron / systemd timers"]
+            EtlData["data sources<br/>Sheets / Drive / Excel / CSV"]:::app
+            EtlKB["kb sources<br/>pdf-pipeline / uploads / Docs"]:::app
+        end
+
+        OctEng["engines/octave_engine.py<br/>Milestone 4"]:::off
+        MatEng["matlab / wolfram adapters<br/>stub, flag-off"]:::off
+    end
+
+    GAPI[["Google Drive / Sheets / Docs API<br/>read-only scopes"]]:::edge
+    PDFP[("pdf-markdown-pipeline<br/>MariaDB + public .md<br/>verified + public only")]:::db
+
+    User <-->|HTTPS| CF
+    CF <-->|reverse proxy| WebTier
+    Ask -->|dispatch| Queue
+    Queue -->|"/query bearer"| OneShot
+    Chat <-->|"/chat SSE bearer"| Loop
+    Admin --- MDB
+    Ask --- MDB
+    Chat --- MDB
+
+    OneShot --> Guard
+    Loop --> Guard
+    Loop --> Retr
+    OneShot <--> Ollama
+    Loop <--> Ollama
+    Guard -->|"SELECT as excise_ro"| AN
+    Retr -->|"SELECT as excise_ro"| KB
+    OneShot --> PyEng
+    Loop --> PyEng
+    PyEng --> Sbx
+    PyEng -.->|"plotly json + png/svg/pdf"| OneShot
+    OctEng -.-> Sbx
+
+    EtlData -->|"INSERT as excise_etl"| AN
+    EtlKB -->|"INSERT as excise_etl"| KB
+    EtlData <--> GAPI
+    EtlKB <--> GAPI
+    EtlKB -->|read-only| PDFP
+    Admin -.->|"OAuth connect (Socialite)"| GAPI
+
+    Retr -.->|"cited snippets + docsrepo links"| Loop
+    OneShot -.->|"sql + rows + chart + summary"| WebTier
+```
+
+> Grey dashed nodes (Octave, MATLAB, Wolfram) are not in the first build.
+> Everything else is Milestones 1-6 in `ROADMAP.md`.
+
+### Diagram 2 (as supplied in the brief): execution security & read-only sandbox
 
 ```mermaid
 flowchart LR
@@ -244,6 +339,46 @@ flowchart LR
 > memory caps, and `timeout(1)`. `firejail` is not installed and is not
 > required. `SECURITY.md` §Code-execution sandbox has the exact invocation.
 
+### Diagram 2U (updated): three enforcement layers as built
+
+```mermaid
+flowchart LR
+    classDef safe fill:#059669,stroke:#047857,stroke-width:2px,color:#fff
+    classDef gen fill:#7c3aed,stroke:#6d28d9,stroke-width:2px,color:#fff
+    classDef box fill:#475569,stroke:#334155,stroke-width:2px,color:#fff
+
+    subgraph Gen["LLM output — untrusted"]
+        SQL["Generated SQL<br/>from /query or the chat run_sql_query tool"]:::gen
+        Script["Generated plot script<br/>Python today, Octave later"]:::gen
+        Q["User question text<br/>for knowledge search"]:::gen
+    end
+
+    subgraph Enforce["Enforcement — each layer independent"]
+        G1["sql/guard.py<br/>exactly one SELECT / WITH<br/>analytics + kb only, no volatile fns<br/>LIMIT injected"]:::box
+        G2["Role excise_ro<br/>SELECT only on analytics.* + kb.*<br/>default_transaction_read_only = on<br/>statement_timeout 10s"]:::box
+        G3["bwrap namespace + non-root user<br/>unshare-all so no network<br/>read-only root FS, one writable scratch dir<br/>RLIMIT_AS 1GB, timeout KILL 15s"]:::box
+        G4["Fixed parametrised query<br/>websearch_to_tsquery / vector search<br/>user text bound as a parameter"]:::box
+    end
+
+    subgraph Targets["Targets"]
+        DB[("PostgreSQL<br/>analytics.* views + kb.*")]:::safe
+        Eng["Python / Octave engine<br/>inside the sandbox"]:::safe
+    end
+
+    SQL --> G1
+    G1 --> G2
+    G2 --> DB
+    Script --> G3
+    G3 --> Eng
+    Q --> G4
+    G4 --> DB
+```
+
+> The read-only role is the primary control for data access; the guard and the
+> `READ ONLY` transaction are redundant layers on top. `search_knowledge` runs
+> no model-authored SQL at all. `SECURITY.md` §1 and §2 have the exact grants
+> and the `bwrap` command line.
+
 ### Diagram 3: chat, knowledge, and ingestion (added 2026-09-10)
 
 Not one of the two diagrams supplied with the brief — this one covers the
@@ -258,38 +393,41 @@ flowchart TD
     classDef db fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#fff
     classDef ext fill:#d97706,stroke:#b45309,stroke-width:2px,color:#fff
 
-    User([Analyst]):::client
-    Chat[Livewire Chat window\nSSE stream, markdown + code render]:::app
-    Orch[FastAPI orchestrator\nchat tool loop]:::app
-    Ollama((Ollama\nchat + coder + embed, CPU)):::ai
+    User(["Analyst"]):::client
+    Chat["Livewire Chat window<br/>SSE stream, markdown + code render"]:::app
+    Orch["FastAPI orchestrator<br/>chat tool loop"]:::app
+    Ollama(("Ollama<br/>chat + coder + embed, CPU")):::ai
 
-    subgraph Tools [Tools the model calls]
-        T1[search_knowledge]:::app
-        T2[run_sql_query\nsame guard + read-only role]:::app
-        T3[make_chart\nsame bwrap sandbox]:::app
+    subgraph Tools["Tools the model calls"]
+        T1["search_knowledge"]:::app
+        T2["run_sql_query<br/>same guard + read-only role"]:::app
+        T3["make_chart<br/>same bwrap sandbox"]:::app
     end
 
-    subgraph Bank [PostgreSQL data bank]
-        AN[(analytics.* views\npublished rows)]:::db
-        KB[(kb.documents / kb.chunks\nFTS, optional pgvector)]:::db
+    subgraph Bank["PostgreSQL data bank"]
+        AN[("analytics.* views<br/>published rows")]:::db
+        KB[("kb.documents / kb.chunks<br/>FTS, optional pgvector")]:::db
     end
 
-    subgraph Ingest [etl/ - cron / timers]
-        E1[pdf_pipeline sync]:::app
-        E2[kb_uploads sync]:::app
-        E3[gdocs / gdrive sync]:::app
+    subgraph Ingest["etl/ — cron / timers"]
+        E1["pdf_pipeline sync"]:::app
+        E2["kb_uploads sync"]:::app
+        E3["gdocs / gdrive sync"]:::app
     end
 
-    PDFP[(pdf-markdown-pipeline\nMariaDB + public .md files\npublic + verified only)]:::db
-    UP[Admin .md uploads\nweb/ kb-uploads disk]:::app
-    G[[Google Drive / Sheets / Docs]]:::ext
+    PDFP[("pdf-markdown-pipeline<br/>MariaDB + public .md files<br/>public + verified only")]:::db
+    UP["Admin .md uploads<br/>web/ kb-uploads disk"]:::app
+    G[["Google Drive / Sheets / Docs"]]:::ext
 
-    User <--> Chat <-->|/chat bearer| Orch
+    User <--> Chat
+    Chat <-->|"/chat bearer"| Orch
     Orch <--> Ollama
-    Orch --> T1 --> KB
-    Orch --> T2 --> AN
+    Orch --> T1
+    T1 --> KB
+    Orch --> T2
+    T2 --> AN
     Orch --> T3
-    T1 -. cited snippets + docsrepo links .-> Chat
+    T1 -.->|"cited snippets + docsrepo links"| Chat
 
     E1 --> PDFP
     E1 --> KB
@@ -299,7 +437,7 @@ flowchart TD
     E3 --> KB
     E3 --> AN
 
-    User -.->|OAuth connect via web/ Socialite| G
+    User -.->|"OAuth connect via web/ Socialite"| G
 ```
 
 ## Cross-references
