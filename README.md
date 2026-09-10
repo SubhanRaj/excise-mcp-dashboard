@@ -5,7 +5,7 @@
   <img src="assets/brand/up-gov-emblem.svg" width="96" height="96" alt="State Emblem of Uttar Pradesh">
 </picture>
 
-# excise-mcp-dashboard
+# UP Excise MCP Dashboard
 
 **Conversational analytics for UP Excise departmental data — on-premise, local LLM**
 
