@@ -1,8 +1,14 @@
 # ROADMAP.md — excise-mcp-dashboard
 
 Phased build. Each milestone is a checklist with a stated "done when" gate.
-Nothing here is built yet — this repo is documentation only until the owner
-replies `Approved. Proceed to Phase 4.`
+
+**Position:** Phase 4 is approved. Milestone 0 — approval given, PostgreSQL
+running, `excise_bank` created, the sandbox user and scratch dir in place,
+MariaDB migrated; the model pull and the Cloudflare / Google-consent decisions
+are the owner's remaining M0 items. Milestone 1 is in progress — the database
+(`db/`) is complete (schema, `analytics.*` views, the three roles, reference
+seed); the ETL core and Google ingestion are not started. The `web/` skeleton
+is in review (PR #1).
 
 Every `sudo` / install / external-console step is collected, copy-pasteable,
 in [`OPERATOR_SETUP.md`](OPERATOR_SETUP.md), grouped by the milestone that
@@ -43,8 +49,8 @@ flowchart LR
 
 ## Milestone 0 — Approval and groundwork (no code)
 
-- [ ] Owner reviews all docs and replies `Approved. Proceed to Phase 4.`
-- [ ] Owner runs `OPERATOR_SETUP.md` §0 — start PostgreSQL, create the sandbox
+- [x] Owner reviews all docs and replies `Approved. Proceed to Phase 4.`
+- [x] Owner runs `OPERATOR_SETUP.md` §0 — start PostgreSQL, create the sandbox
       user and scratch dir, confirm `bwrap` works unprivileged
 - [ ] Owner runs `OPERATOR_SETUP.md` §Models — `ollama pull` for the SQL model
       and the chat model
@@ -460,6 +466,13 @@ PDF / XLSX / ZIP with the data vintage on it.
   prompt library is wanted (`EVALUATION.md` §2c)
 - `prism-php/prism` — only if LLM orchestration ever moves into `web/` and the
   Python orchestrator is retired
+- Multi-step "research" mode — a sequential `plan -> run each sub-task with the
+  existing tools -> synthesise` loop inside the orchestrator, one Ollama
+  client, a step cap. Only if a real question set needs decompose-run-
+  synthesise that the bounded tool loop cannot express. Multi-agent frameworks
+  (CrewAI, AutoGen, Semantic Kernel) stay declined; LangGraph is the fallback
+  only if a true graph state machine is needed. `EVALUATION.md` §Right-sizing
+  item 13
 - `crystaldba/postgres-mcp` mounted as a real MCP server — only if an external
   MCP client (Claude Desktop, an IDE) becomes a second consumer of the bank
 - Tailscale access to `excise_bank` for DBeaver — follow

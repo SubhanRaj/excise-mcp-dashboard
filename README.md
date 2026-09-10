@@ -20,15 +20,17 @@ about the law, and an OpenWebUI-style chat window reaches both.
 [![FastAPI](https://img.shields.io/badge/FastAPI-Python%203.12-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-18-4169E1?logo=postgresql&logoColor=white)](https://www.postgresql.org)
 [![Ollama](https://img.shields.io/badge/Ollama-Qwen%202.5%20%2F%20Llama%203.1-000000)](https://ollama.com)
-[![Status](https://img.shields.io/badge/status-planning-blue)](ROADMAP.md)
+[![Status](https://img.shields.io/badge/status-Milestone%201-orange)](ROADMAP.md)
 
 </div>
 
 ---
 
-> **Planning stage.** This repository is documentation only — no application
-> code, no environment, no installs — until the design is approved. Everything
-> here is the blueprint a build session works from.
+> **Build stage — Milestone 1.** The design is approved and the build has
+> started. Milestone 0 (groundwork) is done, the `web/` Laravel skeleton is in
+> review, and `db/` holds the PostgreSQL data bank. `ROADMAP.md` tracks the
+> milestone position; the design docs below are what each build session works
+> from.
 
 ## What it does
 

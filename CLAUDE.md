@@ -5,8 +5,13 @@ Master rules for coding sessions on this repo. Read this, then `ARCHITECTURE.md`
 (`DATA_PIPELINE.md`, `MCP_ENGINES.md`, `SECURITY.md`). `ROADMAP.md` has the
 milestone checklist and the current position in it.
 
-Status: **blueprint only.** No application code, no `composer create-project`,
-no virtualenv, no package installs until the owner approves Phase 4.
+Status: **Phase 4 approved; build underway.** Milestone 0 (groundwork) and the
+database half of Milestone 1 are done — the `web/` Laravel skeleton is in
+review (PR #1), the on-box infra is provisioned, and `db/` holds the
+PostgreSQL data bank (schema, `analytics.*` views, roles, reference seed). Work
+follows the `ROADMAP.md` milestone order. Still no dependency install —
+`composer create-project`, a venv, `pip`/`npm` add — outside what the current
+milestone's `OPERATOR_SETUP.md` section sanctions.
 
 ## What this project is
 
@@ -76,7 +81,10 @@ pattern: Apache vhost on a private port, one named Cloudflare Tunnel, systemd
   `systemctl` beyond `--user`, any service restart: write the exact commands in
   the relevant doc and stop. Do not work around it with a copy-elsewhere hack.
 
-## Repository layout (planned, Phase 4+)
+## Repository layout
+
+`web/` and `db/` exist; `orchestrator/`, `etl/`, `deploy/`, and
+`OPERATOR_SETUP.md`'s later sections arrive with their milestones.
 
 ```
 excise-mcp-dashboard/
@@ -122,6 +130,21 @@ consumer appears.
   `web/`'s MariaDB.** The orchestrator already has a read-only Postgres
   connection; retrieval is one more `SELECT`. Keeps all model-facing data in
   one place behind one read-only role.
+- **Multiple models, one orchestrator, no agent framework.** The build already
+  runs more than one local model: `qwen2.5-coder:7b` plans and writes SQL and
+  plot scripts, `llama3.1:8b` converses and summarises, and the
+  `config/models.php` registry lets an admin add Gemma or another allowed tag
+  and pick it per request. That is the multi-model need met — a config
+  registry, a per-task default, and a validated picker. A multi-agent
+  framework (CrewAI, AutoGen, Semantic Kernel, LangGraph) is declined: it adds
+  a heavy dependency with default outbound telemetry against the no-egress
+  rule, assumes cheap parallel API fan-out that one local Ollama with
+  `OLLAMA_MAX_LOADED_MODELS=1` cannot give, and replaces a bounded, logged
+  tool loop with an unbounded delegation graph over the same guard and sandbox
+  surface. If a decompose-run-synthesise "research" mode is ever needed, it is
+  a sequential loop inside the existing orchestrator with a step cap, reusing
+  the one Ollama client and the existing tools. `EVALUATION.md` §Right-sizing
+  item 13, `MCP_ENGINES.md` §Structured-output loop.
 
 ## Laravel conventions (`web/`)
 
@@ -446,6 +469,12 @@ trees; `vendor/bin/pint --dirty` on `web/`. All green before commit.
 - NO new dependency where an installed one or a few lines of stdlib do the job.
 - NO speculative abstraction — one engine implemented until a second is
   actually needed (`EVALUATION.md` §Right-sizing).
+- NO multi-agent framework (CrewAI / AutoGen / Semantic Kernel / LangGraph /
+  …). The chat loop is a bounded in-orchestrator tool loop (cap 4 calls/turn);
+  multi-*model* routing is the config registry + per-task default, not a
+  framework (`EVALUATION.md` §Right-sizing item 13, `MCP_ENGINES.md`
+  §Structured-output loop).
 - NO committing `.env`, service-account JSON, OAuth client secret, `cert.pem`,
   tunnel credentials.
-- NO `composer create-project` / venv / installs before Phase 4 approval.
+- NO dependency install (`composer create-project`, venv, `pip` / `npm` add)
+  outside what the current milestone's `OPERATOR_SETUP.md` section sanctions.
