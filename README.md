@@ -43,6 +43,10 @@ about the law, and an OpenWebUI-style chat window reaches both.
   model, with a picker for which pulled model answers. It calls the same SQL,
   retrieval, and charting tools mid-conversation, so the data and the law are
   both reachable without leaving the chat.
+- **Saved analyses and reports** — pin a result, refresh it as new data lands
+  to see the trend, group saved analyses and notes into a report, and export
+  the report as PDF, XLSX, or a ZIP bundle stamped with the data vintage. The
+  data bank stays raw data only; these outputs live in the app.
 
 ## How a question is answered
 

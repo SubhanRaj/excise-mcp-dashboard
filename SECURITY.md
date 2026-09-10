@@ -102,6 +102,11 @@ Defense in depth, not the primary control. Parse with `sqlglot`; reject unless:
   `setval`, anything in `pg_catalog` write helpers);
 - a `LIMIT` is present — inject `LIMIT :row_limit` if the LLM omitted it.
 
+On acceptance the guard also returns the set of `analytics.*` views the
+statement reads; the pipeline records it on `queries.tables_used` so an ETL
+completion can refresh the saved analyses that depend on those views
+(`DATA_PIPELINE.md` §Output store).
+
 A rejection returns the reason to the planner for exactly one re-plan, then a
 typed `SQL rejected` error to the user. This applies to model-authored SQL from
 both `/query` and the chat's `run_sql_query` tool. `search_knowledge` does not

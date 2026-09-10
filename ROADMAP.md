@@ -12,7 +12,9 @@ Scope note: Milestones 1, 2, 5, and 6 build the reduced design from
 `EVALUATION.md` §Right-sizing — one Python engine, direct read-only `asyncpg`,
 explicit tool selection, Postgres FTS before vectors, native Livewire chat.
 Milestone 3 adds the knowledge base. Milestone 4 adds a second engine behind
-the same interface. MATLAB and Mathematica stay documented and unbuilt.
+the same interface. Milestone 7 adds the output store — saved analyses,
+reports, and exports — and is post-MVP. MATLAB and Mathematica stay documented
+and unbuilt.
 
 ---
 
@@ -350,6 +352,53 @@ verified by trying to break it, the representative question set (numbers + law
 
 ---
 
+## Milestone 7 — Output store: saved analyses, reports, exports
+
+Post-MVP. `DATA_PIPELINE.md` §Output store has the design.
+
+- [ ] Migrations: `saved_analyses` (ULID; `user_id`, `query_id`, `title`,
+      `notes`, `recipe` JSON, `visibility`, `auto_refresh`, `schedule`,
+      `pinned_at`), `analysis_runs` (`saved_analysis_id`, `query_id`, `ran_at`,
+      `trigger`, `headline`), `reports` (ULID), `report_blocks`
+      (`report_id`, `position`, `type`, `saved_analysis_id`, `run_ref`, `body`),
+      `report_exports` (`report_id`, `format`, `file_path`, `generated_at`,
+      `etl_epoch`)
+- [ ] `queries.tables_used` — the SQL guard records the `analytics.*` views a
+      statement references, so an ETL completion can fan out to the saved
+      analyses that depend on them
+- [ ] Artifact disk `web/storage/app/artifacts/<query-ulid>/` on
+      `ReadWritePaths`; a systemd `--user` timer sweeps unsaved runs older than
+      `ARTIFACT_TTL_DAYS` (default 30), skipping any run a `saved_analyses` row
+      pins
+- [ ] Livewire: a "Save" action on a result; a "Saved analyses" screen (list,
+      refresh, `Sparkline` of `headline` across `analysis_runs`, open a run);
+      pin latest vs a fixed run
+- [ ] `RefreshAnalysis` job — re-runs a saved analysis's `recipe` through
+      `/query`, writes an `analysis_runs` row + artifacts. Triggers: a Refresh
+      button, a per-row cron (systemd `--user` timer), and an ETL-completion
+      listener for `auto_refresh` rows
+- [ ] Livewire `Report` builder: ordered blocks (analysis / heading / text /
+      image), reorder, per-block `run_ref` (`latest` / pinned), visibility,
+      a shared read-only link on a ULID
+- [ ] Exports: chart (PNG/SVG/PDF/`plotly.json`); result (CSV/XLSX via the
+      sibling `ExportService`); report (print-view Blade -> `laravel-dompdf`
+      PDF, DejaVu Sans; XLSX workbook, one sheet per analysis block; ZIP
+      bundle), each stamped with `etl_epoch`. `report_exports` caches the last
+      per `(report_id, format)`
+- [ ] Result cache keyed on normalized SQL + `etl_epoch` — a repeat question
+      on unchanged data skips the model and the DB
+- [ ] Tests: save creates the row set; refresh appends an `analysis_runs` row
+      and new artifacts; the sweeper spares a pinned run; an ETL completion
+      queues only the `auto_refresh` analyses whose `tables_used` intersect;
+      report PDF/XLSX/ZIP render with the right blocks and vintage; a shared
+      report link is read-only and respects `visibility`
+
+**Done when:** an analyst can save a result, refresh it as new data lands and
+see the trend, assemble saved analyses into a report, and export the report as
+PDF / XLSX / ZIP with the data vintage on it.
+
+---
+
 ## Backlog (not scheduled)
 
 - `pgvector` semantic retrieval — pulled in by Milestone 6's quality check if
@@ -367,11 +416,12 @@ verified by trying to break it, the representative question set (numbers + law
   MCP client (Claude Desktop, an IDE) becomes a second consumer of the bank
 - Tailscale access to `excise_bank` for DBeaver — follow
   `infra-notes/postgres-tailscale-remote-access.md`, named read-only role only
-- Result caching keyed on normalized SQL + the ETL run id
-- Scheduled / "saved" questions that re-run on a timer and post a chart
 - `drive.file` scope instead of `drive.readonly` if the broad-read grant
   becomes a concern
+- PPTX export for reports — needs a slide library; the Milestone 7 PDF and
+  print view cover "make a presentation" until editable slides are asked for
 - Publish into the public stats dashboard — a reviewed hand-off from this tool
-  to `upexcise-stats-dashboard`: an approved analysis, chart, or derived series
-  becomes a published spotlight or dataset there. Needs an export contract and
-  an admin review step; not started until this tool is in daily use
+  to `upexcise-stats-dashboard`: an approved saved analysis, chart, or derived
+  series becomes a published spotlight or dataset there. Needs an export
+  contract and an admin review step; not started until this tool is in daily
+  use (Milestone 7's `saved_analyses` + `report_exports` are the source side)

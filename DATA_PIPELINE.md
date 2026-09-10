@@ -595,3 +595,90 @@ decision and the RAM cost.
 
 Same `etl.ingestion_runs` / `etl.quarantine` bookkeeping and advisory lock as
 the data-table sources.
+
+---
+
+## Output store
+
+Two data planes, kept apart:
+
+- **Raw data — PostgreSQL** (`analytics.*` + `kb.*`), fed by ETL from Google
+  Sheets / Drive / Docs, Excel, and CSV. Read-only to the AI path. This is the
+  data bank; nothing the model or the app produces is written back to it.
+- **Outputs — `web/`'s MariaDB + the `local` disk.** Every chart, table
+  preview, summary, and the SQL that produced it is an app artifact owned by a
+  user, with its own ACL, history, and exports. The orchestrator generates
+  them and hands them to `web/`; `web/` owns their lifecycle.
+
+The one path from an output back toward the public data plane is the reviewed
+hand-off to `upexcise-stats-dashboard` (`ROADMAP.md` backlog), never a direct
+write.
+
+### What a run produces
+
+One `/query` or chat `make_chart` call yields:
+
+| Piece | Stored as |
+|---|---|
+| the question + generated SQL + engine + model + timings + status | a `queries` row (chat: the `message` + `message_tool_calls` rows) |
+| interactive chart | `chart.plotly.json` on the `local` disk, referenced by a `chart_artifacts` row |
+| static chart | `chart.{png,svg,pdf}` on the `local` disk, same row |
+| table | `rows_preview` inline for the pane; full rows re-fetched on export, not stored |
+| written summary | text column on the `queries` / `messages` row |
+
+Files land under `web/storage/app/artifacts/<query-ulid>/` (on the Apache
+`ReadWritePaths` list). A run that nobody saves is swept after
+`ARTIFACT_TTL_DAYS` (default 30) by a systemd `--user` timer, the same pattern
+as the sandbox scratch sweeper (`SECURITY.md` §2). A run referenced by a
+`saved_analyses` row is never swept.
+
+### Saved analyses — freeze and re-run
+
+A user pins a run into a `saved_analyses` row (ULID): `user_id`, `query_id`
+(the run it froze), `title`, `notes`, `recipe` JSON (the question, resolved
+filters, `engine`, `model`, and the `analytics.*` views the SQL touched),
+`visibility` (`private` / `team`), `pinned_at`.
+
+The `recipe` makes it reproducible. "Refresh" re-runs it against current data
+and writes an `analysis_runs` row: `saved_analysis_id`, `query_id` (the new
+run), `ran_at`, `trigger` (`manual` / `schedule` / `etl`), `headline` (the
+single figure the chart is about, for the trend sparkline). Triggers:
+
+- **manual** — a Refresh button on the saved analysis.
+- **schedule** — a cron expression on the row; a systemd timer calls the same
+  job (`ROADMAP.md` backlog "scheduled questions").
+- **etl** — the SQL guard records referenced views on `queries.tables_used`;
+  when an `etl.ingestion_runs` row completes for one of them, matching saved
+  analyses with `auto_refresh = true` are queued.
+
+`analysis_runs` is the trend history: same question, successive data vintages.
+A saved analysis shows a `Sparkline` (reuse `~/Sites/upexcise-stats-dashboard`
+`app/Support/Sparkline.php`) of `headline` across its runs, and points at
+either the latest run or a pinned one.
+
+### Reports — assemble a presentation
+
+A `reports` row (ULID): `user_id`, `title`, `description`, `visibility`,
+`published_at`. Ordered `report_blocks`: `report_id`, `position`, `type`
+(`analysis` / `heading` / `text` / `image`), `saved_analysis_id` +
+`run_ref` (`latest` or a pinned `analysis_runs.id`) for analysis blocks,
+`body` Markdown for text blocks. A report is the "presentation" — a document
+of charts, tables, and narration that either tracks live data (`run_ref =
+latest`) or is frozen to a point in time.
+
+### Export
+
+| Scope | Formats | Built from |
+|---|---|---|
+| one chart | PNG / SVG / PDF (artifact files), `plotly.json` (re-embeddable) | the stored files |
+| one result | CSV / XLSX of the full rows | re-run the stored SQL, stream through the sibling `ExportService` (`openspout`) |
+| saved analysis | the chart + a `recipe.json` (reproducible) | the row + files |
+| report | one **PDF** (a print-view Blade → `barryvdh/laravel-dompdf`, DejaVu Sans for `₹` + Devanagari, the sibling `AnnualReport` shape); **XLSX** workbook, one sheet of rows per analysis block; **ZIP** bundle of the PDF + per-block CSVs + `plotly.json` + recipes | the blocks, resolved at export time; `etl_epoch` stamped on the output so the data vintage is on the page |
+
+PPTX is deferred — it needs a new library; the PDF and the print view cover
+"make a presentation" until a real need for editable slides appears.
+
+`report_exports` caches the last export per `(report_id, format)`:
+`file_path` under `web/storage/app/report-exports/<report-ulid>/`,
+`generated_at`, `etl_epoch`. Regenerated on demand or when a block's
+underlying run changes.

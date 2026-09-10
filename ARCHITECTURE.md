@@ -12,7 +12,7 @@ Cloudflare Tunnel, sharing one PostgreSQL data bank.
 | `etl/` | Python 3.12 CLI, run by cron / systemd timers | — | Google API (ingestion only) | Sheets / Drive / Docs / Excel / CSV -> Postgres data tables; pdf-markdown-pipeline verified docs + admin `.md` uploads + Google Docs -> `kb.*` |
 | PostgreSQL 18 | system service | 5432 | `127.0.0.1` (+ Tailscale later if needed) | The excise data bank (`analytics.*`) and the knowledge base (`kb.*`) — read-only for the AI path |
 | Ollama | system service | 11434 | `127.0.0.1` | Local LLM inference + embeddings, CPU-only |
-| MariaDB | system service | 3306 | `127.0.0.1` | `web/` operational store — sessions, users, ledger, chat history, `kb_uploads`, `google_connections`, queue |
+| MariaDB | system service | 3306 | `127.0.0.1` | `web/` operational store — sessions, users, ledger, chat history, output artifacts (`saved_analyses`, `analysis_runs`, `reports`), `kb_uploads`, `google_connections`, queue |
 
 ### Request path for one question
 
@@ -67,6 +67,26 @@ fallback if SSE behaves badly through the tunnel.
    `message_tool_calls`; a chart is stored as a `chart_artifacts` row.
 5. Cited knowledge chunks render with a link to `docsrepo.exciseup.in`; SQL
    the model ran renders as an inline, copyable card.
+
+### Output artifact lifecycle
+
+The data bank (PostgreSQL) holds raw data only. Everything the model produces —
+charts, table previews, summaries, the generated SQL — is an app artifact in
+`web/`'s MariaDB plus files on the `local` disk, never written back to
+Postgres.
+
+1. A `/query` or chat `make_chart` run writes a `queries` / `message` row and
+   `chart.{plotly.json,png,svg,pdf}` under
+   `web/storage/app/artifacts/<query-ulid>/`.
+2. An unsaved run's files are swept after `ARTIFACT_TTL_DAYS`.
+3. A user pins a run into `saved_analyses` (with a `recipe` to re-run it).
+   "Refresh" — manual, scheduled, or fired by a matching `etl.ingestion_runs`
+   completion — writes an `analysis_runs` row; the history is the trend.
+4. `reports` order `saved_analyses` and Markdown blocks into a presentation
+   that tracks live data or is frozen to a point in time.
+5. Export: a chart as PNG/SVG/PDF/`plotly.json`; a result as CSV/XLSX; a report
+   as a dompdf PDF, an XLSX workbook, or a ZIP bundle, each stamped with the
+   ETL data vintage. `DATA_PIPELINE.md` §Output store.
 
 ### Knowledge ingestion path
 

@@ -191,6 +191,16 @@ the 11/12 + Livewire 3 named in the original brief.
   a job (`RunExciseQuery`), not in the web worker. `--timeout` on the queue
   worker must exceed the orchestrator's own request timeout — follow the
   `--timeout=1900` reasoning in `laravel-apps-deploy.md`.
+- **Output store**: the data bank (Postgres) is raw data only; charts, tables,
+  summaries, and the generated SQL are app artifacts in MariaDB + the `local`
+  disk, never written back to Postgres. A run's files sweep after
+  `ARTIFACT_TTL_DAYS` unless a `saved_analyses` row pins it. A saved analysis
+  carries a `recipe` to re-run; each refresh (manual / scheduled / ETL-fired)
+  adds an `analysis_runs` row — that history is the trend, shown with the
+  sibling `Sparkline`. `reports` order saved analyses + Markdown blocks into a
+  presentation. Export a chart (PNG/SVG/PDF/`plotly.json`), a result
+  (CSV/XLSX via the sibling `ExportService`), or a report (dompdf PDF / XLSX /
+  ZIP bundle, stamped with the ETL vintage). `DATA_PIPELINE.md` §Output store.
 - **Tailwind + Alpine**: Tailwind Play CDN and Chart.js / Plotly from jsDelivr,
   same as the siblings. Add every CDN host to the CSP. Chart.js line colours
   follow `design-guidelines.md` §Charts (single series `#4a2bc2`, multi-series
