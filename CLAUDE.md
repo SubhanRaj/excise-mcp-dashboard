@@ -130,11 +130,15 @@ Match the sibling apps — `~/Sites/upexcise-stats-dashboard`,
 Laravel tutorials. Those apps are **Laravel 13 / Livewire 4 / PHP 8.5**, not
 the 11/12 + Livewire 3 named in the original brief.
 
-- **Livewire-first for interactive screens** (the chat panel, the chart
-  canvas, the query ledger). Plain controllers + Blade for anything static or
-  purely CRUD, matching `pdf-markdown-pipeline`'s admin area.
-- **Full-page Livewire components** for routed pages; link internal navigation
-  with `wire:navigate`. Downloads and cross-app links stay plain.
+- **Livewire for every screen**, CRUD and admin included — the sibling apps
+  (`upexcise-stats-dashboard`, `UP-excise-mailer`, `excise-budget-tracker`) are
+  built on Livewire end to end. Full-page Livewire components back every routed
+  page, and internal navigation goes through `wire:navigate` so moving between
+  pages is an AJAX swap with no full reload.
+- **Plain controllers** stay for the routes with nothing to render as a live
+  component: the `/health` check, the Fortify email-OTP auth flow (ported from
+  `upexcise-stats-dashboard`), file and report downloads, the Google OAuth
+  redirect and callback, and cross-app links.
 - **Route-model binding on a slug or ULID, never the numeric id.** Query rows
   in the ledger get a ULID (`conversations`, `messages`, `chart_artifacts`).
 - **Clean path segments over query strings**, except where a value must be
