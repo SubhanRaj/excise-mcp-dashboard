@@ -105,7 +105,8 @@ by the Milestone 1 work — run this after they exist):
 cd ~/Sites/excise-mcp-dashboard/db
 sudo -u postgres createdb excise_bank
 
-# roles first — you will be prompted for three passwords via -v
+# roles first — pass the three passwords via -v, each wrapped in single quotes
+# so psql substitutes them as SQL string literals
 sudo -u postgres psql -d excise_bank \
   -v owner_pw="'CHANGE_ME_owner'" \
   -v etl_pw="'CHANGE_ME_etl'" \
@@ -114,9 +115,17 @@ sudo -u postgres psql -d excise_bank \
 
 sudo -u postgres psql -d excise_bank -f schema.sql
 sudo -u postgres psql -d excise_bank -f analytics_views.sql
-sudo -u postgres psql -d excise_bank -f kb_indexes.sql       # Milestone 3
 sudo -u postgres psql -d excise_bank -f seed_reference.sql
+
+# db/kb_indexes.sql is added at Milestone 3 (kb FTS/GIN indexes). Apply it then:
+# sudo -u postgres psql -d excise_bank -f kb_indexes.sql
 ```
+
+`roles.sql` creates the three roles, reassigns `excise_bank` and its schemas to
+`excise_owner`, and sets the read-only role's session guards. `schema.sql`,
+`analytics_views.sql`, and `seed_reference.sql` each `SET ROLE excise_owner` so
+every table and view is owned by `excise_owner` and the read-only / ETL grants
+apply automatically.
 
 Put the three passwords into the app env files (not into git):
 `orchestrator/.env` gets `ro_pw` (as `DATABASE_URL_READONLY`), `etl/.env` gets
@@ -126,14 +135,16 @@ Verify the read-only role is actually read-only:
 
 ```bash
 PGPASSWORD='CHANGE_ME_ro' psql -h 127.0.0.1 -U excise_ro -d excise_bank -c \
-  "select count(*) from analytics.revenues;"          # works
+  "select count(*) from analytics.districts;"         # works (75 after seeding)
 PGPASSWORD='CHANGE_ME_ro' psql -h 127.0.0.1 -U excise_ro -d excise_bank -c \
-  "create table x(i int);"                            # ERROR: permission denied
+  "create table x(i int);"                            # ERROR: permission denied for schema public
 PGPASSWORD='CHANGE_ME_ro' psql -h 127.0.0.1 -U excise_ro -d excise_bank -c \
   "insert into kb.documents(origin,origin_ref,title,content_sha256) values('x','x','x','x');"
-                                                       # ERROR: permission denied / read-only transaction
+                                                       # ERROR: cannot execute INSERT in a read-only transaction
 PGPASSWORD='CHANGE_ME_ro' psql -h 127.0.0.1 -U excise_ro -d excise_bank -c \
-  "select * from public.revenues;"                    # ERROR: permission denied for schema public
+  "select * from public.revenues;"                    # ERROR: permission denied for table revenues
+PGPASSWORD='CHANGE_ME_ro' psql -h 127.0.0.1 -U excise_ro -d excise_bank -c \
+  "select * from etl.ingestion_runs;"                 # ERROR: permission denied for schema etl
 ```
 
 **Create the read-only MariaDB user for the pdf-markdown-pipeline sync**
