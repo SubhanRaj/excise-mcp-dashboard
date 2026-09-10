@@ -272,6 +272,51 @@ sudo -u postgres psql -d excise_bank -c "\dx"          # 'vector' listed
 
 ---
 
+## §web/ skeleton (Milestone 5)
+
+**Create the operational MariaDB database and its scoped user.** `web/` uses
+MariaDB only — `excise_mcp_dashboard_local`, user name = database name, never
+root (the fleet `db:provision` convention). The database keeps the
+`excise_mcp_dashboard` slug even though the product name is "Excise Data
+Visualization".
+
+`php artisan db:provision` is the normal path, but it needs a privileged MySQL
+account (this box's `root` is `unix_socket`-auth, so it needs `sudo`), and it
+derives the database name from `APP_NAME` — which here would give
+`excise_data_visualization_local`, the wrong slug. So provision by hand:
+
+```bash
+sudo mariadb <<'SQL'
+CREATE DATABASE IF NOT EXISTS excise_mcp_dashboard_local
+  CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER IF NOT EXISTS 'excise_mcp_dashboard_local'@'127.0.0.1'
+  IDENTIFIED BY 'CHANGE_ME_web_db';
+GRANT ALL PRIVILEGES ON excise_mcp_dashboard_local.*
+  TO 'excise_mcp_dashboard_local'@'127.0.0.1';
+FLUSH PRIVILEGES;
+SQL
+```
+
+Put `CHANGE_ME_web_db` into `web/.env` as `DB_PASSWORD` (perms `600`, not
+committed). `DB_DATABASE` and `DB_USERNAME` are already
+`excise_mcp_dashboard_local` in `.env.example`. Then run the migrations as your
+user:
+
+```bash
+cd ~/Sites/excise-mcp-dashboard/web
+php artisan migrate
+```
+
+Verify:
+
+```bash
+mariadb -h127.0.0.1 -u excise_mcp_dashboard_local -p'CHANGE_ME_web_db' \
+  -e "SHOW TABLES FROM excise_mcp_dashboard_local;"    # migrations, users, sessions, cache, jobs
+curl -s http://127.0.0.1:8084/health                   # {"app":"Excise Data Visualization","status":"ok"}
+```
+
+---
+
 ## §Apache vhost (Milestone 5)
 
 `web/` deploys behind Apache on `127.0.0.1:8084`, same pattern as the four
@@ -416,5 +461,6 @@ systemctl --user restart excise-orchestrator
 | Sandbox launch route (`systemd-run` or sudoers) | §Sandbox | 2 |
 | `apt install octave` | §Octave | 4 |
 | `apt install postgresql-18-pgvector` | §pgvector | 6 (conditional) |
+| Create `excise_mcp_dashboard_local` MariaDB DB + user | §web/ skeleton | 5 |
 | Apache vhost + `ReadWritePaths` | §Apache | 5 |
 | `cloudflared tunnel` + systemd unit | §Tunnel | 6 |

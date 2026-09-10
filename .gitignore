@@ -14,14 +14,13 @@
 .ruff_cache/
 .pytest_cache/
 
-# laravel (web/ lands in Phase 4)
+# laravel (web/)
+# Runtime dirs, app keys, and the local .env are ignored in-tree: web/.gitignore
+# plus Laravel's per-directory storage/**/.gitignore and bootstrap/cache/.gitignore
+# keep the folder skeleton while dropping their contents. A blanket web/storage/
+# rule here would also drop those structure files and break a fresh clone.
 web/vendor/
 web/node_modules/
-web/storage/*.key
-web/storage/framework/
-web/storage/logs/
-web/bootstrap/cache/*.php
-web/.phpunit.result.cache
 
 # scratch / artifacts
 /var/tmp/excise-charts/
