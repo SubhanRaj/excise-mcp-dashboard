@@ -79,6 +79,14 @@ ollama list                          # both models listed
 ollama ps                            # empty until first use; should show 100% CPU when loaded
 ```
 
+Optional, for the Milestone 6 model bake-off — pull Gemma to include it in the
+picker and the comparison (`EVALUATION.md` §2 Published benchmarks):
+
+```bash
+ollama pull gemma2:9b-instruct-q4_K_M     # ~5.8 GB; 8K context
+# gemma3:12b needs more RAM — check headroom first
+```
+
 Embedding model — **only pull this at Milestone 6 if the retrieval quality
 check says FTS is missing sections** (`EVALUATION.md` §2b):
 

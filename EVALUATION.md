@@ -78,6 +78,50 @@ tasks are **SQL from a schema** and **short Matplotlib/Plotly scripts**.
 | Qwen 2.5 Coder 14B | ~9 GB | ~2.5 GB | ~11–12 GB | Too tight — will swap under concurrent Postgres + plot load |
 | Qwen 2.5 32B / Llama 3.1 70B | 20–40 GB | — | — | Not possible |
 
+### Published benchmarks
+
+Instruct-model scores for the two things this tool generates — code (SQL is a
+code task; the plot scripts are Python) — plus math, general knowledge, and
+instruction-following. Percentages are pass@1 / accuracy.
+
+| Benchmark | Measures | Qwen2.5-7B-Inst | Qwen2.5-Coder-7B-Inst | Llama3.1-8B-Inst | Gemma2-9B-IT |
+|---|---|---|---|---|---|
+| HumanEval | Python codegen | 84.8 | 88.4 | 72.6 | 68.9 |
+| MBPP | Python codegen | 79.2 | 83.5 | 69.6 | 74.9 |
+| MultiPL-E | codegen, many languages | 70.4 | — | 50.7 | 53.4 |
+| LiveCodeBench 23.05–24.09 | recent, contamination-resistant code | 28.7 | — | 8.3 | 18.9 |
+| MMLU-Pro | general knowledge | 56.3 | — | 48.3 | 52.1 |
+| MATH | multi-step math | 75.5 | — | 51.9 | 44.3 |
+| GSM8K | grade-school math | 91.6 | — | 84.5 | 76.7 |
+| IFEval (strict) | following instructions | 71.2 | — | 75.9 | 70.1 |
+| Context window | — | 128K | 128K | 128K | **8K** |
+| Licence | — | Apache-2.0 | Apache-2.0 | Llama 3.1 Community | Gemma |
+
+Caveat: the cross-model numbers here come from the Qwen 2.5 release, which ran
+all three under one harness. Each vendor's own report differs, sometimes by
+10+ points — trust the ranking more than the absolute values, and re-measure
+against the representative question set in `ROADMAP.md` Milestone 6 before
+fixing the defaults.
+
+Reading for this workload:
+
+- **SQL and plot scripts -> `qwen2.5-coder:7b`.** Top HumanEval / MBPP /
+  MultiPL-E in the sub-10B open field; LiveCodeBench shows the lead holds on
+  unseen problems.
+- **Chat and result narration -> `llama3.1:8b`.** Best instruction-following of
+  the four (IFEval 75.9) and the largest fine-tuning ecosystem.
+- **Gemma 2 9B** trails on code and math, and its **8K context** is tight once
+  the schema card and few-shot examples are in the prompt; footprint is larger
+  (~7–8 GB vs ~6–7). Keep it selectable for plain conversation, not as a
+  default. Gemma 3 (12B, 128K context) is the Google option to test instead,
+  but 12B Q4 pushes the RAM budget (§Sizing math).
+
+Sources: [Qwen2.5-LLM blog](https://qwenlm.github.io/blog/qwen2.5-llm/),
+[Qwen2.5-Coder family blog](https://qwenlm.github.io/blog/qwen2.5-coder-family/),
+[Qwen2.5-Coder Technical Report](https://arxiv.org/abs/2409.12186),
+[The Llama 3 Herd of Models](https://arxiv.org/abs/2407.21783),
+[Gemma 2 Technical Report](https://arxiv.org/abs/2408.00118).
+
 ### Recommendation
 
 - **Primary: `qwen2.5-coder:7b-instruct` (Q4_K_M).** Best structured-output and
@@ -90,8 +134,18 @@ tasks are **SQL from a schema** and **short Matplotlib/Plotly scripts**.
   conversational chat turns, the summary of results, and as a second opinion
   if Qwen's SQL is malformed twice. Comparable footprint. Both Qwen and Llama
   3.1 support Ollama tool-calling, which the chat loop needs.
-- Keep both pulled; the orchestrator selects per task (SQL/plot -> Qwen,
-  chat/narration -> Llama). Neither is DeepSeek-derived.
+- Keep both pulled; the orchestrator selects per task by default (SQL/plot ->
+  Qwen, chat/narration -> Llama). Neither is DeepSeek-derived.
+- **Model registry + UI picker.** The allowed models are a config registry
+  (`key`, `label`, `role`, Ollama tag), the same pattern as
+  `~/Sites/pdf-markdown-pipeline`'s `config/ocr.php` and its "Run OCR" dropdown.
+  The chat composer shows a picker over the registry entries that `/health`
+  confirms are pulled; the choice rides on the `/chat` call as `model` and is
+  validated server-side against the registry. The one-shot analytical form
+  keeps an advanced `model` override alongside `engine`. Default follows the
+  task; switching mid-session costs a reload (`OLLAMA_MAX_LOADED_MODELS=1`),
+  surfaced in the UI. Adding Gemma to the picker is one registry line plus
+  `ollama pull gemma2:9b-instruct-q4_K_M` (~5.8 GB).
 - **Embedding model (only if `KB_EMBEDDINGS_ENABLED`)**:
   `nomic-embed-text` (768-dim, ~275 MB) or `bge-m3` (1024-dim, ~600 MB,
   better on mixed English/Hindi). Adds its footprint on top of whichever LLM

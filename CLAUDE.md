@@ -167,6 +167,15 @@ the 11/12 + Livewire 3 named in the original brief.
   `docsrepo.exciseup.in`, the chart. History persists in `conversations` /
   `messages` / `message_tool_calls`. No streaming LLM logic in PHP — `web/`
   reads the orchestrator's `/chat` SSE and relays it.
+- **Model picker**: a `config/models.php` registry (`key`, `label`, `role`,
+  Ollama tag), mirroring `~/Sites/pdf-markdown-pipeline`'s `config/ocr.php` and
+  its "Run OCR" dropdown. The chat composer shows a dropdown of the registry
+  entries the orchestrator `/health` reports as pulled; the choice is sent as
+  `model` on the `/chat` call and re-validated there. The one-shot form carries
+  the same override in an advanced control next to `engine`. Default follows
+  the task (coder model for SQL/plot, chat model for conversation); a
+  mid-conversation switch costs a model reload
+  (`OLLAMA_MAX_LOADED_MODELS=1`) and the UI says so. `EVALUATION.md` §2.
 - **Google connect**: `laravel/socialite` + the Google provider with the
   Drive/Sheets/Docs read-only scopes and `access_type=offline` +
   `prompt=consent` for a refresh token. A `google_connections` row per user,
@@ -302,6 +311,9 @@ End with the co-author trailer the session is configured for.
   a tool call in the stream (`run_sql_query`, `search_knowledge`,
   `make_chart`) is persisted and rendered; conversation history loads and
   resumes.
+- Model picker: the dropdown lists only registry models the mocked `/health`
+  reports pulled; a chosen model rides on the `/chat` call as `model`; a value
+  outside the registry is refused.
 - Rate limiting on `ask` and on chat message submit.
 - Knowledge upload: a `.md` file uploads, is validated (extension, size, no
   path traversal), lands on the ingestion disk, and creates a pending
@@ -330,6 +342,9 @@ End with the co-author trailer the session is configured for.
   dir fails; a script that allocates past the memory cap is killed.
 - Ollama client: a malformed structured output triggers exactly one retry then
   a typed error.
+- Model selection: a `model` in `OLLAMA_ALLOWED_MODELS` is used for that
+  request; one outside the set is rejected before any Ollama call; the chat
+  picker never changes which model plans `run_sql_query`.
 - Retrieval: a question retrieves the expected `kb.chunks` rows by FTS rank;
   an empty corpus returns no context and the answer path says so rather than
   hallucinating; with `pgvector` enabled, vector and FTS results merge and

@@ -40,8 +40,9 @@ about the law, and an OpenWebUI-style chat window reaches both.
   Questions about the law are answered from this corpus with citations back to
   the source.
 - **Chat window** — an OpenWebUI-style streaming conversation with the local
-  model. It calls the same SQL, retrieval, and charting tools mid-conversation,
-  so the data and the law are both reachable without leaving the chat.
+  model, with a picker for which pulled model answers. It calls the same SQL,
+  retrieval, and charting tools mid-conversation, so the data and the law are
+  both reachable without leaving the chat.
 
 ## How a question is answered
 

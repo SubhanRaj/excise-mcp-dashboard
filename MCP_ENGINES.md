@@ -70,7 +70,7 @@ orchestrator/
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
-| `GET` | `/health` | — | `{status, ollama, postgres, engines, kb_docs, embeddings}` — no auth |
+| `GET` | `/health` | — | `{status, ollama, postgres, engines, models, kb_docs, embeddings}` — no auth; `models` is the registry with a pulled/not-pulled flag each |
 | `POST` | `/query` | `QueryRequest` | streamed `Stage` lines then a final `QueryResponse` (chunked), or a typed error |
 | `GET` | `/query/{id}/status` | — | last `Stage` for a running query (poll fallback) |
 | `POST` | `/chat` | `ChatRequest` | `text/event-stream` — `token` / `tool_call` / `tool_result` / `chart` / `done` / `error` events |
@@ -88,6 +88,7 @@ class QueryRequest(BaseModel):
     question: str
     history: list[Turn] = []        # recent user/assistant turns, capped
     engine_hint: Literal["python"] | None = None   # analyst override; usually None
+    model: str | None = None       # registry key; None -> per-task default
     row_limit: int = 5000
 ```
 
@@ -102,6 +103,7 @@ class QueryResponse(BaseModel):
     chart: ChartArtifact | None      # plotly_json and/or file refs
     summary: str                     # short plain-language reading of the numbers
     engine: str
+    model: str                       # which model ran plan_sql / plan_plot
     timings_ms: dict[str, int]       # per stage
     stages: list[Stage]
 ```
@@ -177,8 +179,10 @@ a few recent turns is enough context for this task.
 ORCH_BEARER_TOKEN           shared secret with Laravel (required)
 DATABASE_URL_READONLY       postgres://excise_ro:...@127.0.0.1:5432/excise_bank
 OLLAMA_BASE_URL             http://127.0.0.1:11434
-OLLAMA_SQL_MODEL            qwen2.5-coder:7b-instruct-q4_K_M
-OLLAMA_CHAT_MODEL           llama3.1:8b-instruct-q4_K_M
+OLLAMA_SQL_MODEL            qwen2.5-coder:7b-instruct-q4_K_M   (default for plan_sql / plan_plot)
+OLLAMA_CHAT_MODEL           llama3.1:8b-instruct-q4_K_M         (default for chat / summarize)
+OLLAMA_ALLOWED_MODELS       qwen2.5-coder:7b-instruct-q4_K_M,llama3.1:8b-instruct-q4_K_M
+                            (registry the UI picker and the request `model` override are validated against)
 OLLAMA_EMBED_MODEL          nomic-embed-text            (only used when embeddings enabled)
 KB_EMBEDDINGS_ENABLED       false                       (FTS-only until flipped)
 KB_EMBED_DIM               768
@@ -207,7 +211,15 @@ class ChatRequest(BaseModel):
     conversation_id: str            # ULID from Laravel
     message: str
     history: list[ChatTurn] = []    # prior user/assistant/tool turns, capped by Laravel
+    model: str | None = None        # registry key from the chat model picker; None -> chat default
 ```
+
+`model` is a key from the model registry (`config.py`), not a free-form Ollama
+tag. An unknown key is rejected before any Ollama call. The registry is the
+same idea as `~/Sites/pdf-markdown-pipeline`'s `config/ocr.php`: `key`,
+`label`, `role` (`sql` / `chat` / `embed`), Ollama tag. `/health` reports
+which registry models are actually pulled, and the Livewire picker offers only
+those.
 
 ### SSE events
 
@@ -302,6 +314,12 @@ only if embeddings are enabled. `OLLAMA_MAX_LOADED_MODELS=1` still holds — the
 chat model and the coder model swap between a tool call and the reply. At this
 concurrency the reload cost is acceptable; if it is not, raise it to 2 and
 accept ~13 GB resident (`EVALUATION.md` §2 has the headroom math).
+
+That mapping is the default. A `model` on `ChatRequest` / `QueryRequest`
+(from the chat picker or the one-shot form's advanced control) overrides it
+for that turn, provided the key is in `OLLAMA_ALLOWED_MODELS`. `run_sql_query`
+planning inside a chat still uses the coder model regardless of the chat
+picker — the picker changes the conversational model, not the SQL planner.
 
 ## `IVisualizationEngine` — the adapter interface
 

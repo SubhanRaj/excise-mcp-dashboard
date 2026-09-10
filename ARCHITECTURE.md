@@ -37,7 +37,7 @@ Cloudflare Tunnel, sharing one PostgreSQL data bank.
       PNG/SVG/PDF;
    e. asks Ollama for a short plain-language summary of the numbers;
    f. returns `{sql, rows_preview, chart, summary, stages[], request_id}`.
-5. The job stores a `queries` row (prompt, SQL, timing, engine, status), a
+5. The job stores a `queries` row (prompt, SQL, timing, engine, model, status), a
    `chart_artifacts` row (files on the `local` disk), and streams `Complete`.
 6. The right pane renders the interactive chart, the data table, and the
    generated SQL. The ledger view lists every past query with its feedback

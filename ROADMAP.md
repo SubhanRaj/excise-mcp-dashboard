@@ -101,13 +101,16 @@ OAuth connection.
 
 - [ ] `orchestrator/` scaffold per `MCP_ENGINES.md` §Module layout; venv,
       pinned `requirements.txt` + `.lock`
-- [ ] `config.py` Settings; `auth.py` bearer-token dependency (constant-time)
+- [ ] `config.py` Settings incl. the model registry (`OLLAMA_ALLOWED_MODELS`,
+      per-role defaults); `auth.py` bearer-token dependency (constant-time)
 - [ ] `schemas.py`: `QueryRequest` / `QueryResponse` / `SqlPlan` / `PlotPlan` /
-      `Stage` / typed errors
+      `Stage` / typed errors (`QueryRequest.model` optional, registry-checked)
 - [ ] `sql/schema_card.py` renders `analytics.*` into a prompt schema card
 - [ ] `llm/client.py`: Ollama async client, `format=`-constrained structured
-      output, one-retry validation loop; `llm/prompts.py` (system prompt,
-      schema card slot, 6–10 few-shot NL->SQL examples)
+      output, one-retry validation loop, model resolved from the registry (a
+      request override falls back to the per-role default);
+      `llm/prompts.py` (system prompt, schema card slot, 6–10 few-shot NL->SQL
+      examples)
 - [ ] `sql/guard.py`: `sqlglot` single-read-only-SELECT parser with the full
       reject list from `SECURITY.md`; `LIMIT` injection
 - [ ] `sql/runner.py`: `asyncpg` pool on `DATABASE_URL_READONLY`,
@@ -121,8 +124,8 @@ OAuth connection.
       (`OPERATOR_SETUP.md` §Sandbox)
 - [ ] `pipeline.py`: the six stages, `Stage` events, per-stage timing
 - [ ] `main.py`: FastAPI app, lifespan (pool, `httpx`, ollama warmup),
-      `/health`, `/query` (chunked stage stream + final JSON),
-      `/query/{id}/status`
+      `/health` (incl. the model registry with a pulled flag each), `/query`
+      (chunked stage stream + final JSON), `/query/{id}/status`
 - [ ] `deploy/`: systemd `--user` unit `excise-orchestrator.service` on
       `127.0.0.1:8085`
 - [ ] Manual end-to-end from `curl`: a question -> SQL -> rows -> `chart.png` +
@@ -137,6 +140,8 @@ OAuth connection.
 - [ ] sandbox: past-wallclock killed; socket open fails; write outside
       `/scratch` fails; past-memory killed
 - [ ] Ollama client: malformed structured output -> one retry -> typed error
+- [ ] model selection: allowed `model` used; out-of-registry `model` rejected
+      pre-call; chat picker does not change the `run_sql_query` planner model
 - [ ] `ruff` / `ruff format --check` / `mypy --strict` green
 
 **Done when:** `POST /query` with a bearer token turns an excise question into
@@ -235,10 +240,10 @@ inert stubs.
       `livewire/update` skips route middleware (`SECURITY.md` §3)
 - [ ] RBAC trimmed to `Admin` / `Analyst`; `AppServiceProvider` rate limiters
       incl. `ask` and `chat`
-- [ ] Migrations: `conversations` (ULID), `messages`, `message_tool_calls`,
-      `queries` (prompt, sql, engine, row_count, timings JSON, status,
-      request_id), `chart_artifacts`, `query_feedback`, `kb_uploads`,
-      `google_connections`
+- [ ] Migrations: `conversations` (ULID), `messages` (incl. `model`),
+      `message_tool_calls`, `queries` (prompt, sql, engine, `model`, row_count,
+      timings JSON, status, request_id), `chart_artifacts`, `query_feedback`,
+      `kb_uploads`, `google_connections`
 - [ ] `RunExciseQuery` job (one-shot `/query`); queue worker systemd `--user`
       unit with `--timeout` above the orchestrator timeout
 - [ ] Livewire `Ask` component: split-view (chat left, canvas right, one
@@ -249,13 +254,14 @@ inert stubs.
       Alpine SSE reader appending assistant tokens; tool-call cards (SQL,
       cited knowledge snippets with `docsrepo.exciseup.in` links, chart);
       history persists and resumes; markdown/code render client-side,
-      sanitised
+      sanitised; model picker (`config/models.php` registry, offered entries
+      filtered by orchestrator `/health`, sent as `model`, server-validated)
 - [ ] Chart canvas: interactive `chart.plotly.json`; data table
       (`rows_preview`, paginated); generated SQL (collapsed, copyable); export
       PNG / SVG / PDF (artifact files) + CSV / XLSX (rows, reuse the sibling
       `ExportService`)
 - [ ] Query ledger view: every past `/query` with prompt, SQL, timing, engine,
-      status, thumbs + note; Admin sees all, Analyst sees own
+      model, status, thumbs + note; Admin sees all, Analyst sees own
 - [ ] Admin: user CRUD (ported); "Connected sources" (Google connect /
       disconnect, list Drive folders / Sheets / Docs, register as
       `source_registry` rows, show "reconnect needed"); "Knowledge base"
@@ -272,7 +278,8 @@ inert stubs.
 - [ ] `ask` flow: submit -> ledger rows; mocked orchestrator success -> chart
       artifact + ledger row; mocked error -> failed stage shown + ledger row
 - [ ] chat flow: streamed tokens; a tool call persisted and rendered; history
-      loads and resumes; `chat` rate limit
+      loads and resumes; `chat` rate limit; model picker lists only pulled
+      registry models and sends the choice as `model`
 - [ ] knowledge upload: valid `.md` accepted + `kb_uploads` row; non-`.md` /
       oversize rejected; path traversal blocked
 - [ ] Google OAuth: connect redirect scopes; callback stores encrypted token +
@@ -312,6 +319,11 @@ ledger / history and exportable.
       if sections are being missed, install `pgvector`
       (`OPERATOR_SETUP.md` §pgvector), pull the embed model, backfill, flip
       `KB_EMBEDDINGS_ENABLED`, re-measure
+- [ ] Model bake-off (optional): pull `gemma2:9b` (and/or `gemma3:12b` if RAM
+      allows), add them to `OLLAMA_ALLOWED_MODELS` / `config/models.php`, run
+      the representative question set across the shortlist, score SQL /
+      retrieval / chart correctness and latency, fix the defaults from the
+      result (`EVALUATION.md` §2 Published benchmarks)
 - [ ] Security headers / CSP review against the live site (no silently blocked
       CDN); `X-Robots-Tag: noindex` site-wide
 - [ ] Load reality check: several `/query` and `/chat` requests queued —

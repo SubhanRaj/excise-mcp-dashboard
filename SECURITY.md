@@ -360,6 +360,10 @@ firewall port is opened, and Apache binds `127.0.0.1:8084`. The orchestrator's
   never executed in the browser. Retrieved knowledge snippets are shown as
   quoted text with the source link, not rendered as live Markdown from an
   untrusted document.
+- Model picker: the `/chat` and `/query` `model` field is a key from
+  `config/models.php` / `OLLAMA_ALLOWED_MODELS`, not a free-form Ollama tag.
+  The orchestrator rejects any value outside that set before calling Ollama,
+  so the picker cannot be used to pull or run an arbitrary model.
 
 ## 4. Google OAuth
 
