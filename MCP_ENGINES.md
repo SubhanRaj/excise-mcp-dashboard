@@ -184,11 +184,15 @@ for attempt in (1, 2):
 
 - `format=` is Ollama's JSON-schema-constrained decoding — the model is forced
   toward valid shape, and Pydantic is the backstop.
-- No third-party "agent framework". The MCP client is: a schema, a `POST` to
+- No third-party "agent framework" — not CrewAI, AutoGen, Semantic Kernel,
+  LangGraph, or the like. The MCP client is: a schema, a `POST` to
   `/api/chat` or `/api/generate`, and this validation loop. Ollama's own
   tool-calling (`tools=[...]`) is used where a genuine multi-tool turn is
   needed; for the fixed SQL->plot->summarize sequence, direct structured calls
-  are simpler and more predictable.
+  are simpler and more predictable. Running more than one model is already the
+  design (the roles below, the `config/models.php` registry); a framework to
+  coordinate agents is a separate thing and is declined — `EVALUATION.md`
+  §Right-sizing item 13 has the reasoning and the conditions to revisit.
 - Model roles: `qwen2.5-coder:7b` for `plan_sql` and `plan_plot`,
   `llama3.1:8b` for `summarize`. Both pulled; `OLLAMA_MAX_LOADED_MODELS=1` so
   they swap — accept the reload cost at this concurrency (`EVALUATION.md` §2).
