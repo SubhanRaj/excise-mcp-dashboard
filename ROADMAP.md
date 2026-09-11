@@ -11,8 +11,8 @@ database (`db/`) is complete (schema, `analytics.*` views, the three roles,
 reference seed); the ETL core plumbing (`etl/` package, loader, normalize,
 quarantine, the csv/excel readers) is built and tested, waiting on the final
 NITI workbook layout to write its column maps; Google ingestion is not
-started. The `web/` skeleton, `db/` data bank, and `etl/` core are one PR
-(#4, `feat/etl-core -> dev`) ready to merge.
+started. The `web/` skeleton, `db/` data bank, and `etl/` core are merged
+into `dev`.
 
 Every `sudo` / install / external-console step is collected, copy-pasteable,
 in [`OPERATOR_SETUP.md`](OPERATOR_SETUP.md), grouped by the milestone that
