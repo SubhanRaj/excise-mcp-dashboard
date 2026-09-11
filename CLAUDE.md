@@ -145,6 +145,17 @@ consumer appears.
   a sequential loop inside the existing orchestrator with a step cap, reusing
   the one Ollama client and the existing tools. `EVALUATION.md` §Right-sizing
   item 13, `MCP_ENGINES.md` §Structured-output loop.
+- **Memory: the stores already in the design; the model never writes memory.**
+  The chat already has three memory spans — the in-process working set of
+  recent turns, the durable resumable transcript in `web/` MariaDB
+  (`conversations` / `messages` / `message_tool_calls`), and the `kb.*`
+  knowledge corpus retrieved by FTS. A per-analyst `user_memory` table (a
+  human-curated glossary and defaults, prepended to that user's chat prompt) is
+  the one worthwhile addition and is a table plus a `SELECT`. Agent-memory
+  frameworks (Letta/MemGPT, Mem0, Zep, cognee) are declined — a server or a
+  heavy dependency, some with default telemetry, built around self-editing
+  memory the model should not have. `EVALUATION.md` §Right-sizing item 14,
+  `MCP_ENGINES.md` §Memory.
 
 ## Laravel conventions (`web/`)
 
@@ -474,6 +485,10 @@ trees; `vendor/bin/pint --dirty` on `web/`. All green before commit.
   multi-*model* routing is the config registry + per-task default, not a
   framework (`EVALUATION.md` §Right-sizing item 13, `MCP_ENGINES.md`
   §Structured-output loop).
+- NO model-written memory and NO agent-memory framework (Letta/MemGPT / Mem0 /
+  Zep / cognee). Memory is the working set + the MariaDB transcript + `kb.*` +
+  a human-curated per-analyst `user_memory`; the model reads memory, never
+  writes it (`EVALUATION.md` §Right-sizing item 14, `MCP_ENGINES.md` §Memory).
 - NO committing `.env`, service-account JSON, OAuth client secret, `cert.pem`,
   tunnel credentials.
 - NO dependency install (`composer create-project`, venv, `pip` / `npm` add)

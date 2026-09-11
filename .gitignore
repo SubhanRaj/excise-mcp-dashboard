@@ -26,3 +26,8 @@ web/.phpunit.result.cache
 # scratch / artifacts
 /var/tmp/excise-charts/
 *.parquet
+
+# scripts_and_data/ — local operator scripts, DB dumps, source workbooks,
+# credentials; nothing committed but the README.
+/scripts_and_data/*
+!/scripts_and_data/README.md

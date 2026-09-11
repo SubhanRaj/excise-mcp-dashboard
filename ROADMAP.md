@@ -473,6 +473,12 @@ PDF / XLSX / ZIP with the data vintage on it.
   (CrewAI, AutoGen, Semantic Kernel) stay declined; LangGraph is the fallback
   only if a true graph state machine is needed. `EVALUATION.md` §Right-sizing
   item 13
+- Per-analyst memory — a `user_memory` table in `web/`'s MariaDB (short
+  human-curated facts and defaults: a term glossary, a home district, a
+  default FY window), edited on a screen and prepended to that analyst's chat
+  system prompt. The model reads it, never writes it. Agent-memory frameworks
+  (Letta/MemGPT, Mem0, Zep) stay declined. `EVALUATION.md` §Right-sizing
+  item 14, `MCP_ENGINES.md` §Memory
 - `crystaldba/postgres-mcp` mounted as a real MCP server — only if an external
   MCP client (Claude Desktop, an IDE) becomes a second consumer of the bank
 - Tailscale access to `excise_bank` for DBeaver — follow
