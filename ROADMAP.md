@@ -1,8 +1,18 @@
 # ROADMAP.md — excise-mcp-dashboard
 
 Phased build. Each milestone is a checklist with a stated "done when" gate.
-Nothing here is built yet — this repo is documentation only until the owner
-replies `Approved. Proceed to Phase 4.`
+
+**Position:** Phase 4 is approved. Milestone 0 — approval given, PostgreSQL
+running, `excise_bank` created, the sandbox user and scratch dir in place,
+MariaDB migrated, both LLM models pulled (`qwen2.5-coder:7b-instruct-q4_K_M`,
+`llama3.1:8b-instruct-q4_K_M`); the Cloudflare and Google-consent decisions
+are the owner's remaining M0 items. Milestone 1 is in progress — the
+database (`db/`) is complete (schema, `analytics.*` views, the three roles,
+reference seed); the ETL core plumbing (`etl/` package, loader, normalize,
+quarantine, the csv/excel readers) is built and tested, waiting on the final
+NITI workbook layout to write its column maps; Google ingestion is not
+started. The `web/` skeleton, `db/` data bank, and `etl/` core are one PR
+(#4, `feat/etl-core -> dev`) ready to merge.
 
 Every `sudo` / install / external-console step is collected, copy-pasteable,
 in [`OPERATOR_SETUP.md`](OPERATOR_SETUP.md), grouped by the milestone that
@@ -43,10 +53,10 @@ flowchart LR
 
 ## Milestone 0 — Approval and groundwork (no code)
 
-- [ ] Owner reviews all docs and replies `Approved. Proceed to Phase 4.`
-- [ ] Owner runs `OPERATOR_SETUP.md` §0 — start PostgreSQL, create the sandbox
+- [x] Owner reviews all docs and replies `Approved. Proceed to Phase 4.`
+- [x] Owner runs `OPERATOR_SETUP.md` §0 — start PostgreSQL, create the sandbox
       user and scratch dir, confirm `bwrap` works unprivileged
-- [ ] Owner runs `OPERATOR_SETUP.md` §Models — `ollama pull` for the SQL model
+- [x] Owner runs `OPERATOR_SETUP.md` §Models — `ollama pull` for the SQL model
       and the chat model
 - [ ] Owner decides the Cloudflare hostname (`analytics.exciseup.in` unless
       another `*.exciseup.in` is preferred)
@@ -62,15 +72,18 @@ pulled, the sandbox user exists.
 ## Milestone 1 — Data bank, ETL, and Google ingestion
 
 ### Database (`db/`)
-- [ ] `db/schema.sql` — the PostgreSQL schema from `DATA_PIPELINE.md`
+- [x] `db/schema.sql` — the PostgreSQL schema from `DATA_PIPELINE.md`
       (dimensions, fact tables, shops split, reference tables, the `etl`
-      schema, the `kb` schema)
-- [ ] `db/analytics_views.sql` — the `analytics.*` published-only views
-- [ ] `db/roles.sql` — `excise_owner` / `excise_etl` / `excise_ro` from
+      schema, the `kb` schema); `set_updated_at()` trigger on every
+      `updated_at` table; fact-table and lookup indexes
+- [x] `db/analytics_views.sql` — the `analytics.*` published-only views
+- [x] `db/roles.sql` — `excise_owner` / `excise_etl` / `excise_ro` from
       `SECURITY.md` §1 (grants cover `analytics.*` and `kb.*`)
-- [ ] `db/seed_reference.sql` — `zones` / `divisions` / `districts` /
-      `financial_years` / `license_categories`, seeded from the sibling
-      dashboard's seeders and contact-list JSON
+- [x] `db/seed_reference.sql` — `zones` (5) / `divisions` (18) / `districts`
+      (75) / `financial_years` (FY2014-15..FY2025-26) / `license_categories`,
+      seeded from `~/Sites/UP-excise-mailer`'s contact-list JSON;
+      `ON CONFLICT DO NOTHING` throughout
+- [x] `db/README.md` — script purpose, apply order, roles
 - [ ] Owner runs `OPERATOR_SETUP.md` §Data bank — `createdb`, apply the four
       scripts, create the `excise_mcp_kb_ro` read-only MariaDB user for the
       pdf-markdown-pipeline sync
@@ -78,13 +91,13 @@ pulled, the sandbox user exists.
       `kb.documents`, and **cannot** `INSERT` anywhere or read `public.*`
 
 ### ETL core (`etl/`)
-- [ ] `etl/` package: `config.py` (pydantic-settings), `db.py` (writer pool on
+- [x] `etl/` package: `config.py` (pydantic-settings), `db.py` (writer pool on
       `excise_etl`), `run.py` (`etl sync` CLI), `loader.py` (upsert on natural
-      key), `quarantine.py`, `normalize.py` (port note-row / district /
-      money logic from `~/Sites/upexcise-stats-dashboard`'s `ImportExciseData.php`)
-- [ ] `etl.source_registry` / `etl.ingestion_runs` / `etl.quarantine` writing
+      key), `quarantine.py`, `normalize.py` (district / FY / money / volume
+      rules per `DATA_PIPELINE.md` §Normalization rules)
+- [x] `etl.source_registry` / `etl.ingestion_runs` / `etl.quarantine` writing
       on every run; Postgres advisory lock so timers cannot overlap
-- [ ] `etl/sources/excel.py`, `etl/sources/csv.py`
+- [x] `etl/sources/excel.py`, `etl/sources/csv.py`
 - [ ] Excel adapter loads the NITI submission workbooks from
       `~/mentor_portal_db/UP Excise Data Collection/` and reconciles counts
       against the sibling's verified import (75 districts; 900 rows/series on
@@ -109,11 +122,13 @@ pulled, the sandbox user exists.
 
 ### Tests
 - [ ] `etl/tests/`: each source adapter parses a fixture to the normalized
-      shape; re-running a fixture changes no counts; a malformed row is
-      quarantined and counted; district-alias and FY parsing; money
-      normalization; both Google auth modes against a mocked API; token
+      shape (done for `csv`/`excel`, against synthetic fixtures — no real
+      NITI file to fixture yet); re-running a fixture changes no counts
+      (done for `csv`); a malformed row is quarantined and counted; FY and
+      money/volume normalization (done); district-alias resolution against a
+      live database; both Google auth modes against a mocked API; token
       refresh and revocation paths
-- [ ] `ruff`, `ruff format --check`, `mypy --strict` green on `etl/`
+- [x] `ruff`, `ruff format --check`, `mypy --strict` green on `etl/`
 
 **Done when:** `etl sync --source niti_full` populates `excise_bank`, counts
 match the sibling's verified import, `analytics.*` returns only published
@@ -457,6 +472,19 @@ PDF / XLSX / ZIP with the data vintage on it.
   prompt library is wanted (`EVALUATION.md` §2c)
 - `prism-php/prism` — only if LLM orchestration ever moves into `web/` and the
   Python orchestrator is retired
+- Multi-step "research" mode — a sequential `plan -> run each sub-task with the
+  existing tools -> synthesise` loop inside the orchestrator, one Ollama
+  client, a step cap. Only if a real question set needs decompose-run-
+  synthesise that the bounded tool loop cannot express. Multi-agent frameworks
+  (CrewAI, AutoGen, Semantic Kernel) stay declined; LangGraph is the fallback
+  only if a true graph state machine is needed. `EVALUATION.md` §Right-sizing
+  item 13
+- Per-analyst memory — a `user_memory` table in `web/`'s MariaDB (short
+  human-curated facts and defaults: a term glossary, a home district, a
+  default FY window), edited on a screen and prepended to that analyst's chat
+  system prompt. The model reads it, never writes it. Agent-memory frameworks
+  (Letta/MemGPT, Mem0, Zep) stay declined. `EVALUATION.md` §Right-sizing
+  item 14, `MCP_ENGINES.md` §Memory
 - `crystaldba/postgres-mcp` mounted as a real MCP server — only if an external
   MCP client (Claude Desktop, an IDE) becomes a second consumer of the bank
 - Tailscale access to `excise_bank` for DBeaver — follow

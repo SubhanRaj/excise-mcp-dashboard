@@ -383,6 +383,60 @@ From `~/Sites/upexcise-stats-dashboard`, `~/Sites/UP-excise-mailer`,
 | Cloudflare Workers + D1 + separate scraper worker split | `~/Projects/chinese-intel-pipeline` | Pattern reference for a two-service repo; not this stack |
 | Tailscale-scoped Postgres remote access, per-node share, per-user read-only role | `infra-notes/postgres-tailscale-remote-access.md` | The read-only-role SQL there is the starting point for `db/` grants |
 
+### Reference repos — the wider fleet
+
+The rows above draw mainly on `~/Sites/upexcise-stats-dashboard`. These repos are
+the reference for the parts it does not cover. Each was read for this inventory;
+the "best reference for" column is what that reading confirmed.
+
+| Repo | Stack | Best reference for |
+|---|---|---|
+| `~/Sites/pla` | Laravel 13, PHP `^8.5`, Fortify `^1.37`, Tailwind 4, Pest | Closest match to this project's target stack. Its `composer.json` `require` / `require-dev` and `scripts` blocks are the baseline for `web/`. `SECURITY.md` is a standing "Security Posture" checklist — login/2FA, sessions & cookies, passwords, privileges, audit logging, file uploads, input/output escaping, CSRF/headers/transport, public endpoints & rate limiting, dependencies, regression coverage — and is the section layout this repo's `SECURITY.md` tracks against. `AUTH_ROLLING_SESSION.md` documents the 7-day sliding session plus `!Auth::viaRemember()` OTP-skip the auth port carries over. |
+| `~/Sites/Amber-Publishers` | Laravel 13, Livewire 4, Pest | `pint.json` (`{"preset":"laravel","exclude":[...]}`), the fleet Pint config. `Route::domain()` plus a `RestrictToRootDomain` middleware serve one install on a root domain and a subdomain with the auth and admin routes locked to the root host. `FormRequest` `mimes:` upload validation is content-sniffed, stores a `uniqid()` filename, and serves through the `storage:link` symlink so an uploaded file is never proxied through PHP. Its `SECURITY.md` "Fixed from the legacy site" list catalogues the bug classes this fleet designs out: committed SMTP/DB credentials, string-interpolated SQL, unthrottled session auth, unrestricted uploads. |
+| `~/Sites/UP-excise-mailer` | Laravel 13, PHP 8.5, Livewire 4 | Per-row credentials held in the database under Laravel's `encrypted` cast (`APP_KEY`-derived, no new secret) with `#[Hidden]` so they never serialise into JSON or array output — the pattern for Google OAuth refresh tokens in `SECURITY.md` §Google OAuth. Dual-key rate limiters in `AppServiceProvider`: `login` caps 5/min per email+IP and 10/min per IP, plus `two-factor` and a 60/min `mutations` bucket. The `database` queue runs `queue:work --tries=3 --timeout=1900` under systemd, `--timeout` set above the orchestrator's own request timeout. |
+| `~/Sites/excise-budget-tracker` | Laravel 13, PHP 8.5, Livewire 4 | The Cleave.js `currency-input` component (listed above). Its M9 "post-exposure hardening" pass is the `.env` checklist for a box that becomes internet-reachable: `APP_ENV=production` and `APP_DEBUG=false` set together, `SESSION_ENCRYPT=true`, `SESSION_SECURE_COOKIE=true`, `SESSION_SAME_SITE=strict`, `Fortify::ignoreRoutes()` called from `register()` so `/register` and `/reset-password` are not reachable, and dev-only MCP/debug packages removed before exposure. |
+| `~/Sites/pdf-markdown-pipeline` | Laravel 13, PHP 8.4, MariaDB | `config/ocr.php` and its "Run OCR Extraction" dropdown are the registry-plus-picker pattern for `config/models.php` and the chat model picker (§2). CRUD admin screens are plain controllers, no Livewire. The `documents` table (`visibility`, `status='verified'`, `document_type`, `language`, `rule_set` / `section`) with Markdown on the `public` disk is the knowledge-base source (listed under "Directly reusable — data"). `pipeline/health` (`DocumentController::pipelineHealth()`, `is_admin`-gated) reads load average, memory, and CPU temperature straight from `/proc` and `/sys`, each read wrapped so a missing path degrades to null — the model for a richer `/health` later. Its `SECURITY.md` is the house standard for shelling out to a tool safely: `Process` facade with array-form arguments only, private-disk temp directories, a `finally` cleanup block. |
+| `~/Projects/excise-revenue-recovery-portal` | Next.js 16, Cloudflare Workers, D1 | The stack does not transfer; the audit findings and threat model do. Findings already fixed on an excise portal: a login brute-forceable because a public prefix constant shrank the search space, no security response headers, an unthrottled magic-link endpoint, a demo credential hash shipped in the client bundle, and destructive admin routes gated by "any admin" where the sibling route is owner-only. `AUTH_ROLLING_SESSION.md` records that the rolling-session pattern is deliberately absent here. |
+| `~/Projects/pac-recovery-portal` | Next.js, Cloudflare Workers, D1 | The append-only audit-log design: every login and lock/unlock writes one row, and any action touching more than one table uses `db.batch()` so a partial write cannot leave related rows inconsistent — informs `activity_logs` immutability. Its `SECURITY.md` is a compact checklist covering session and cookie flags, PII kept out of the repo, per-IP and per-user rate limiting, server-side recomputation of every client-influenced value, and generic 500 bodies that never carry internal detail. |
+| `~/Projects/up-excise-spatial-revenue-optimizer` | Next.js, Cloudflare Workers, D1, monorepo | The Excel ingest → validate → geocode → store pipeline for 75 DEO uploads is the shape `etl/`'s Excel branch follows (Milestone 1). Email addresses and CUG numbers are stored only as SHA-256 hashes and the source PII sheets are gitignored. A `SUPERADMIN_EMAIL_HASH` env var configures the superadmin bypass. The `packages/` split is a monorepo layout reference. |
+
+### Security patterns — consult once per milestone
+
+Four `SECURITY.md` files in the fleet already work through the threat model this
+project shares — an internal government tool, public through a tunnel, holding
+departmental data and running generated code:
+
+- `~/Sites/pla/SECURITY.md` — the standing "Security Posture" checklist format.
+- `~/Sites/pdf-markdown-pipeline/SECURITY.md` — eight audit passes, strongest on
+  safe subprocess invocation and storage-disk isolation.
+- `~/Projects/excise-revenue-recovery-portal/SECURITY.md` — an audit report of
+  findings already fixed on an excise portal.
+- `~/Projects/pac-recovery-portal/SECURITY.md` — a session, PII, rate-limit, and
+  trust-boundary checklist plus the append-only ledger.
+
+The baseline they establish, applied by the Milestone 5 and 6 sessions and not
+re-derived there:
+
+- Session and cookie hardening: `SESSION_ENCRYPT=true` (the session row holds the
+  login OTP), `SESSION_SECURE_COOKIE=true` over HTTPS, `SESSION_SAME_SITE=strict`,
+  `http_only` on, a 7-day sliding lifetime.
+- Security response headers on every response through one middleware:
+  `X-Frame-Options`, `X-Content-Type-Options: nosniff`, `Referrer-Policy`,
+  `Permissions-Policy`, a wildcard-free `Content-Security-Policy` naming exactly
+  the origins the app loads, HSTS over HTTPS only, `X-Robots-Tag: noindex`.
+- Rate limiting on every auth, magic-link, and expensive endpoint, keyed on both
+  a per-identity and a per-IP bucket and checked before the database is queried.
+- No secret in a client bundle, a log line, or the repo: `APP_DEBUG=false` with
+  `APP_ENV=production` so an exception cannot render resolved config; per-row
+  credentials under the `encrypted` cast; `.env` at `600`.
+- Destructive admin routes carry an explicit owner or privilege check inside the
+  action. Route middleware and a hidden UI link do not gate them on their own;
+  every `create` / `edit` / `destroy` that no `FormRequest` covers re-checks
+  authorization as its first line (`SECURITY.md` §3).
+- Audit rows are append-only: written after the response, with logging failures
+  swallowed so they cannot break the request, and row data that never includes
+  tokens or full result sets.
+
 ### Not found — must be built fresh
 
 - **No FastAPI / uvicorn / Python microservice anywhere** in `~/Sites` or
@@ -496,6 +550,64 @@ Recommendations, each reversible:
     re-read the conversation list, recent messages, and an opened saved
     analysis or report offline, with a "last synced" marker; a question typed
     offline queues and sends on reconnect. Backlog / Milestone 7, not the MVP.
+
+13. **Multiple models, no multi-agent framework.** The build already runs more
+    than one local model: `qwen2.5-coder:7b` for `plan_sql` / `plan_plot`,
+    `llama3.1:8b` for chat and `summarize`, both in `OLLAMA_ALLOWED_MODELS`,
+    with a `config/models.php` registry so an admin can add Gemma or another
+    allowed tag and pick it per request (§2). That covers task-appropriate
+    model use — a registry, a per-task default, a validated picker, and the
+    rule that the chat picker never changes which model plans `run_sql_query`.
+
+    CrewAI, AutoGen, Semantic Kernel, and similar multi-agent frameworks are
+    declined:
+
+    - **Egress.** Several ship usage telemetry to their own endpoint by
+      default and assume a hosted API backend. "No document, prompt,
+      embedding, or query leaves the box" makes a phone-home default a
+      non-starter, and re-auditing it on every upgrade is standing work.
+    - **Dependency weight.** They pull large trees (their own LLM abstraction,
+      often langchain-adjacent) for what the chat loop already is: a loop over
+      the Ollama client, a tool dispatch table, and a call counter, living in
+      `orchestrator/app/chat/` with no parallel implementation.
+    - **One local Ollama.** These frameworks get their speed from parallel API
+      fan-out. Against one server that serialises requests and reloads on a
+      model switch (`OLLAMA_MAX_LOADED_MODELS=1`), "N agents" is N sequential
+      calls plus orchestration overhead plus role-scaffold prompt bloat —
+      slower and heavier for the same answer.
+    - **Auditability.** The path is deliberately bounded: one guarded
+      read-only `SELECT`, a sandboxed script, a hard cap of 4 tool calls per
+      turn, a request-id on every log line. Autonomous delegation loops add
+      nondeterminism and an unbounded call graph over the same guard and
+      sandbox surface — more places model-authored SQL or a script can
+      originate, not fewer.
+
+    If a genuine decompose-run-synthesise "research" mode is ever needed, build
+    it as a sequential `plan -> for each sub-task: reuse the existing tools ->
+    synthesise` loop inside the orchestrator, one Ollama client, a step cap
+    like the tool-call cap. If that ever needs a real graph state machine,
+    LangGraph is the least-bad candidate — a control-flow library over your own
+    model calls, no forced agent personas, telemetry off-able — and is
+    evaluated then, not now. Revisit the framework question only when a
+    concrete workload needs true parallel model work *and* the box has the RAM
+    to hold more than one model loaded.
+
+14. **Memory: the stores already in the design; no agent-memory framework.**
+    The chat has three memory spans already (`MCP_ENGINES.md` §Memory): the
+    in-process working set of recent turns, the durable resumable transcript
+    in `web/` MariaDB (`conversations` / `messages` / `message_tool_calls`),
+    and the knowledge corpus in Postgres `kb.*` retrieved by FTS. The one
+    addition worth making is a small per-analyst `user_memory` table — a
+    human-curated glossary and defaults, prepended to that user's chat prompt —
+    which is a table plus a `SELECT`, the same shape as KB retrieval.
+
+    Letta/MemGPT, Mem0, Zep, and cognee are declined: each is a server or a
+    heavy dependency, several ship default outbound telemetry, and their
+    headline feature — an agent that edits its own long-term memory and
+    extracts facts from conversations — is a liability in a departmental
+    analytics tool, not a feature. Keep memory human-curated and the model
+    read-only against it. No rolling-summary chain either until real
+    transcripts overflow the working set.
 
 The full four-engine, MCP-server, heuristic-router design stays documented in
 `ARCHITECTURE.md` and `MCP_ENGINES.md` as the target shape if requirements grow.

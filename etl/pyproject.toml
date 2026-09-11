@@ -1,0 +1,24 @@
+[project]
+name = "excise-etl"
+version = "0.1.0"
+requires-python = ">=3.12"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["etl"]
+
+[[tool.mypy.overrides]]
+module = "asyncpg.*"
+ignore_missing_imports = true  # asyncpg ships no py.typed marker; no stub package exists
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

@@ -105,7 +105,8 @@ by the Milestone 1 work — run this after they exist):
 cd ~/Sites/excise-mcp-dashboard/db
 sudo -u postgres createdb excise_bank
 
-# roles first — you will be prompted for three passwords via -v
+# roles first — pass the three passwords via -v, each wrapped in single quotes
+# so psql substitutes them as SQL string literals
 sudo -u postgres psql -d excise_bank \
   -v owner_pw="'CHANGE_ME_owner'" \
   -v etl_pw="'CHANGE_ME_etl'" \
@@ -114,9 +115,17 @@ sudo -u postgres psql -d excise_bank \
 
 sudo -u postgres psql -d excise_bank -f schema.sql
 sudo -u postgres psql -d excise_bank -f analytics_views.sql
-sudo -u postgres psql -d excise_bank -f kb_indexes.sql       # Milestone 3
 sudo -u postgres psql -d excise_bank -f seed_reference.sql
+
+# db/kb_indexes.sql is added at Milestone 3 (kb FTS/GIN indexes). Apply it then:
+# sudo -u postgres psql -d excise_bank -f kb_indexes.sql
 ```
+
+`roles.sql` creates the three roles, reassigns `excise_bank` and its schemas to
+`excise_owner`, and sets the read-only role's session guards. `schema.sql`,
+`analytics_views.sql`, and `seed_reference.sql` each `SET ROLE excise_owner` so
+every table and view is owned by `excise_owner` and the read-only / ETL grants
+apply automatically.
 
 Put the three passwords into the app env files (not into git):
 `orchestrator/.env` gets `ro_pw` (as `DATABASE_URL_READONLY`), `etl/.env` gets
@@ -126,14 +135,16 @@ Verify the read-only role is actually read-only:
 
 ```bash
 PGPASSWORD='CHANGE_ME_ro' psql -h 127.0.0.1 -U excise_ro -d excise_bank -c \
-  "select count(*) from analytics.revenues;"          # works
+  "select count(*) from analytics.districts;"         # works (75 after seeding)
 PGPASSWORD='CHANGE_ME_ro' psql -h 127.0.0.1 -U excise_ro -d excise_bank -c \
-  "create table x(i int);"                            # ERROR: permission denied
+  "create table x(i int);"                            # ERROR: permission denied for schema public
 PGPASSWORD='CHANGE_ME_ro' psql -h 127.0.0.1 -U excise_ro -d excise_bank -c \
   "insert into kb.documents(origin,origin_ref,title,content_sha256) values('x','x','x','x');"
-                                                       # ERROR: permission denied / read-only transaction
+                                                       # ERROR: cannot execute INSERT in a read-only transaction
 PGPASSWORD='CHANGE_ME_ro' psql -h 127.0.0.1 -U excise_ro -d excise_bank -c \
-  "select * from public.revenues;"                    # ERROR: permission denied for schema public
+  "select * from public.revenues;"                    # ERROR: permission denied for table revenues
+PGPASSWORD='CHANGE_ME_ro' psql -h 127.0.0.1 -U excise_ro -d excise_bank -c \
+  "select * from etl.ingestion_runs;"                 # ERROR: permission denied for schema etl
 ```
 
 **Create the read-only MariaDB user for the pdf-markdown-pipeline sync**
@@ -162,6 +173,26 @@ Verify:
 ```bash
 mariadb -h127.0.0.1 -u excise_mcp_kb_ro -p'CHANGE_ME_kb_ro' \
   -e "SELECT visibility,status,COUNT(*) FROM pdf_markdown_pipeline_local.documents GROUP BY 1,2;"
+```
+
+---
+
+## §ETL package (Milestone 1)
+
+```bash
+cd ~/Sites/excise-mcp-dashboard/etl
+python3.12 -m venv .venv
+.venv/bin/pip install -r requirements-dev.txt
+cp .env.example .env && chmod 600 .env
+# fill in DATABASE_URL_ETL with the etl_pw set in db/roles.sql
+```
+
+Verify:
+
+```bash
+.venv/bin/ruff check . && .venv/bin/ruff format --check .
+.venv/bin/mypy .
+.venv/bin/pytest
 ```
 
 ---
@@ -268,6 +299,51 @@ Verify:
 
 ```bash
 sudo -u postgres psql -d excise_bank -c "\dx"          # 'vector' listed
+```
+
+---
+
+## §web/ skeleton (Milestone 5)
+
+**Create the operational MariaDB database and its scoped user.** `web/` uses
+MariaDB only — `excise_mcp_dashboard_local`, user name = database name, never
+root (the fleet `db:provision` convention). The database keeps the
+`excise_mcp_dashboard` slug even though the product name is "Excise Data
+Visualization".
+
+`php artisan db:provision` is the normal path, but it needs a privileged MySQL
+account (this box's `root` is `unix_socket`-auth, so it needs `sudo`), and it
+derives the database name from `APP_NAME` — which here would give
+`excise_data_visualization_local`, the wrong slug. So provision by hand:
+
+```bash
+sudo mariadb <<'SQL'
+CREATE DATABASE IF NOT EXISTS excise_mcp_dashboard_local
+  CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER IF NOT EXISTS 'excise_mcp_dashboard_local'@'127.0.0.1'
+  IDENTIFIED BY 'CHANGE_ME_web_db';
+GRANT ALL PRIVILEGES ON excise_mcp_dashboard_local.*
+  TO 'excise_mcp_dashboard_local'@'127.0.0.1';
+FLUSH PRIVILEGES;
+SQL
+```
+
+Put `CHANGE_ME_web_db` into `web/.env` as `DB_PASSWORD` (perms `600`, not
+committed). `DB_DATABASE` and `DB_USERNAME` are already
+`excise_mcp_dashboard_local` in `.env.example`. Then run the migrations as your
+user:
+
+```bash
+cd ~/Sites/excise-mcp-dashboard/web
+php artisan migrate
+```
+
+Verify:
+
+```bash
+mariadb -h127.0.0.1 -u excise_mcp_dashboard_local -p'CHANGE_ME_web_db' \
+  -e "SHOW TABLES FROM excise_mcp_dashboard_local;"    # migrations, users, sessions, cache, jobs
+curl -s http://127.0.0.1:8084/health                   # {"app":"Excise Data Visualization","status":"ok"}
 ```
 
 ---
@@ -416,5 +492,6 @@ systemctl --user restart excise-orchestrator
 | Sandbox launch route (`systemd-run` or sudoers) | §Sandbox | 2 |
 | `apt install octave` | §Octave | 4 |
 | `apt install postgresql-18-pgvector` | §pgvector | 6 (conditional) |
+| Create `excise_mcp_dashboard_local` MariaDB DB + user | §web/ skeleton | 5 |
 | Apache vhost + `ReadWritePaths` | §Apache | 5 |
 | `cloudflared tunnel` + systemd unit | §Tunnel | 6 |
