@@ -58,8 +58,7 @@ flowchart LR
       user and scratch dir, confirm `bwrap` works unprivileged
 - [x] Owner runs `OPERATOR_SETUP.md` §Models — `ollama pull` for the SQL model
       and the chat model
-- [ ] Owner decides the Cloudflare hostname (`analytics.exciseup.in` unless
-      another `*.exciseup.in` is preferred)
+- [x] Owner decides the Cloudflare hostname — `analytics.exciseup.in`
 - [ ] Owner decides the Google consent-screen type (Internal vs External —
       `OPERATOR_SETUP.md` §Google Cloud has the trade-off) and whether the
       Google connect feature is in scope for the first build at all
@@ -353,10 +352,13 @@ ledger / history and exportable.
 
 ## Milestone 6 — Perimeter, hardening, end-to-end
 
-- [ ] Owner runs `OPERATOR_SETUP.md` §Tunnel — create the tunnel, route DNS
+- [x] Owner runs `OPERATOR_SETUP.md` §Tunnel — create the tunnel, route DNS
       for the chosen `*.exciseup.in` subdomain, write the config, enable the
-      systemd `--user` unit; register the Google `redirect_uri` against that
-      hostname
+      systemd `--user` unit (done ahead of schedule — `analytics.exciseup.in`
+      resolves to the tunnel and the unit is enabled for boot; it 502s until
+      the Milestone 5 Apache vhost exists). Registering the Google
+      `redirect_uri` against this hostname is still open, pending §Google
+      Cloud
 - [ ] Confirm every route except `/health` redirects an unauthenticated
       request to `/login`, and the tunnel is the only inbound path (no open
       firewall port, Apache bound to `127.0.0.1`)

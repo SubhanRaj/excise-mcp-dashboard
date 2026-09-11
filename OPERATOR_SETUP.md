@@ -199,19 +199,50 @@ Verify:
 
 ## §Google Cloud (Milestone 1, only if the Google connect feature is in scope)
 
+**Google Cloud Console, not Firebase.** Everything below —
+the project, the OAuth consent screen, enabling Drive/Sheets/Docs, the OAuth
+client — is Google Cloud Console (<https://console.cloud.google.com>), the
+same console Google API access always goes through. Firebase is a different
+product layer on top of a GCP project (Firestore, Firebase Auth, Hosting,
+Cloud Functions, push notifications) — this app uses none of it: its own
+Fortify + email-OTP auth is already the login, and its data stores are
+Postgres and MariaDB, not Firestore. A Firebase project would just be a
+second console pointed at the same underlying GCP project for no benefit.
+Skip Firebase entirely and work in Cloud Console.
+
 In <https://console.cloud.google.com>:
 
 1. **Create a project** — e.g. `excise-mcp-dashboard`.
-2. **OAuth consent screen** — App type:
-   - **Internal** if the department has a Google Workspace and the analysts
-     are in it. This is the recommended choice — the restricted
-     `drive.readonly` scope then needs no Google verification or CASA
-     assessment.
-   - **External** only if Internal is impossible. Then either keep under 100
-     test users (no verification) or budget for Google's app-verification +
-     CASA security assessment before wider rollout. Alternative: request only
-     `drive.file` (user-picked files) instead of `drive.readonly` — not a
-     restricted scope.
+2. **OAuth consent screen** — App type. This is the one real decision here,
+   and it depends on one fact only the department knows: **do the analysts'
+   Google accounts belong to a Google Workspace the department controls?**
+   - **Internal** — only selectable if yes. The consent screen is then only
+     ever shown to accounts inside that Workspace, and Google's verification
+     process does not apply to Internal apps at all, regardless of scope.
+     This is the recommended choice: no verification queue, no assessment,
+     no review lag, and it stays true as more analysts are added — this is
+     the only path with no scaling cost.
+   - **External** — the only option if the analysts use ordinary consumer
+     Gmail accounts or a Workspace the department doesn't administer. Google
+     tiers OAuth scopes by sensitivity, and the tier decides what External
+     requires:
+     - `documents.readonly` and `spreadsheets.readonly` are **sensitive**
+       scopes — Google's standard app-verification review (ownership proof,
+       a demo video, a privacy policy URL) applies once past 100 test users.
+     - `drive.readonly` is a **restricted** scope — verification *plus* a
+       CASA (Cloud Application Security Assessment) security review, which
+       is slower and (past the free self-assessment tier) can cost real
+       money. Check Google's current CASA tiers/pricing before committing to
+       this scope under External.
+     - Under 100 users in "Testing" publish status needs no verification at
+       all — every analyst must be added as a test user by email, and Google
+       shows an "unverified app" warning on first consent. Workable for a
+       small pilot group, not a real ceiling to build on.
+     - **`drive.file` instead of `drive.readonly`** avoids the restricted
+       tier entirely — the trade-off is UX, not security: the analyst picks
+       each file via Google's file picker rather than the app browsing their
+       whole Drive. Worth it under External if Drive access (not just
+       Sheets/Docs) is actually needed.
 3. **Enable APIs** — Google Drive API, Google Sheets API, Google Docs API.
 4. **Credentials -> Create credentials -> OAuth client ID** — Application type
    "Web application":
