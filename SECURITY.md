@@ -316,12 +316,12 @@ Zero Trust layer.
 ### Tunnel
 
 The account's `~/.cloudflared/cert.pem` covers the `exciseup.in` zone only.
-Hostname: **`analytics.exciseup.in`**.
+Hostname: **`visualizer.exciseup.in`**.
 
 ```bash
 cloudflared tunnel create excise-mcp-dashboard
 # note the UUID it prints; a <uuid>.json credentials file lands in ~/.cloudflared/
-cloudflared tunnel route dns --overwrite-dns <uuid> analytics.exciseup.in
+cloudflared tunnel route dns --overwrite-dns <uuid> visualizer.exciseup.in
 ```
 
 Use `--overwrite-dns` and route by UUID, not by name — the route-by-name
@@ -334,7 +334,7 @@ tunnel: <uuid>
 credentials-file: /home/subhan/.cloudflared/<uuid>.json
 
 ingress:
-  - hostname: analytics.exciseup.in
+  - hostname: visualizer.exciseup.in
     service: http://127.0.0.1:8084
   - service: http_status:404
 ```
@@ -461,7 +461,7 @@ server-owned content.
 
 The Socialite redirect and callback routes are behind the app login like every
 other route — a stranger cannot reach `/google/connect`. The Google
-`redirect_uri` is `https://analytics.exciseup.in/google/callback`, registered
+`redirect_uri` is `https://visualizer.exciseup.in/google/callback`, registered
 in the Cloud project; it only resolves through the tunnel.
 
 ### Secrets

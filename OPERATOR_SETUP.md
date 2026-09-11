@@ -246,7 +246,7 @@ In <https://console.cloud.google.com>:
 3. **Enable APIs** — Google Drive API, Google Sheets API, Google Docs API.
 4. **Credentials -> Create credentials -> OAuth client ID** — Application type
    "Web application":
-   - Authorized redirect URI: `https://analytics.exciseup.in/google/callback`
+   - Authorized redirect URI: `https://visualizer.exciseup.in/google/callback`
      (add `http://localhost:8000/google/callback` too if you preview `web/`
      over `artisan serve` per `laravel-dev-preview-tailscale.md`).
    - Copy the **Client ID** and **Client secret** into `web/.env` as
@@ -387,7 +387,7 @@ sibling apps (`~/Sites/infra-notes/laravel-apps-deploy.md`).
 ```bash
 sudo tee /etc/apache2/sites-available/excise-mcp-dashboard.conf >/dev/null <<'EOF'
 <VirtualHost 127.0.0.1:8084>
-    ServerName analytics.exciseup.in
+    ServerName visualizer.exciseup.in
     DocumentRoot /home/subhan/Sites/excise-mcp-dashboard/web/public
 
     <Directory /home/subhan/Sites/excise-mcp-dashboard/web/public>
@@ -443,14 +443,14 @@ Run as your user (the account cert in `~/.cloudflared/cert.pem` covers
 cloudflared tunnel create excise-mcp-dashboard
 # note the UUID it prints; ~/.cloudflared/<uuid>.json is written
 
-cloudflared tunnel route dns --overwrite-dns <uuid> analytics.exciseup.in
+cloudflared tunnel route dns --overwrite-dns <uuid> visualizer.exciseup.in
 
 cat > ~/.cloudflared/excise-mcp-config.yml <<EOF
 tunnel: <uuid>
 credentials-file: /home/subhan/.cloudflared/<uuid>.json
 
 ingress:
-  - hostname: analytics.exciseup.in
+  - hostname: visualizer.exciseup.in
     service: http://127.0.0.1:8084
   - service: http_status:404
 EOF
@@ -480,7 +480,7 @@ Verify:
 
 ```bash
 systemctl --user status excise-mcp-dashboard-tunnel
-curl -s -o /dev/null -w '%{http_code}\n' https://analytics.exciseup.in/    # 302 to /login (the app's own auth)
+curl -s -o /dev/null -w '%{http_code}\n' https://visualizer.exciseup.in/    # 302 to /login (the app's own auth)
 ```
 
 The site is public on the subdomain; the app's Fortify email-OTP login is the

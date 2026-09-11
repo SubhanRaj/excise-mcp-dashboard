@@ -58,7 +58,7 @@ flowchart LR
       user and scratch dir, confirm `bwrap` works unprivileged
 - [x] Owner runs `OPERATOR_SETUP.md` §Models — `ollama pull` for the SQL model
       and the chat model
-- [x] Owner decides the Cloudflare hostname — `analytics.exciseup.in`
+- [x] Owner decides the Cloudflare hostname — `visualizer.exciseup.in`
 - [ ] Owner decides the Google consent-screen type (Internal vs External —
       `OPERATOR_SETUP.md` §Google Cloud has the trade-off) and whether the
       Google connect feature is in scope for the first build at all
@@ -354,7 +354,7 @@ ledger / history and exportable.
 
 - [x] Owner runs `OPERATOR_SETUP.md` §Tunnel — create the tunnel, route DNS
       for the chosen `*.exciseup.in` subdomain, write the config, enable the
-      systemd `--user` unit (done ahead of schedule — `analytics.exciseup.in`
+      systemd `--user` unit (done ahead of schedule — `visualizer.exciseup.in`
       resolves to the tunnel and the unit is enabled for boot; it 502s until
       the Milestone 5 Apache vhost exists). Registering the Google
       `redirect_uri` against this hostname is still open, pending §Google

@@ -298,7 +298,7 @@ firejail, so no install is required for the core sandbox.
 
 - `~/.cloudflared/cert.pem` is scoped to the **`exciseup.in`** zone only.
   `upexcise.in` is not on this account (documented failure in
-  `laravel-apps-deploy.md`). Use `analytics.exciseup.in` or
+  `laravel-apps-deploy.md`). Use `visualizer.exciseup.in` or
   `excise-mcp.exciseup.in`.
 - Tunnel pattern is established: one named tunnel per app, per-app config file
   in `~/.cloudflared/`, `credentials-file` pointing at the UUID JSON, one
@@ -317,7 +317,7 @@ firejail, so no install is required for the core sandbox.
   assessment; an **External** screen hits that process past 100 users. Decide
   this before Milestone 1 — `OPERATOR_SETUP.md` §Google Cloud. Fallback:
   `drive.file` (user-picked files only) is not restricted.
-- Redirect URI `https://analytics.exciseup.in/google/callback` (hostname not
+- Redirect URI `https://visualizer.exciseup.in/google/callback` (hostname not
   final) — only resolves through the tunnel, and the route is behind the app
   login.
 - Refresh tokens are `Crypt`-encrypted per user in `web/`'s MariaDB, never
