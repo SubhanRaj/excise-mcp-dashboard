@@ -3,10 +3,13 @@
 -- Run once by the operator as a cluster superuser, before schema.sql:
 --
 --   sudo -u postgres psql -d excise_bank \
---     -v owner_pw="'...'" -v etl_pw="'...'" -v ro_pw="'...'" \
+--     -v owner_pw="..." -v etl_pw="..." -v ro_pw="..." \
 --     -f roles.sql
 --
--- Passwords come from psql -v vars, never a literal in this file.
+-- Passwords come from psql -v vars, never a literal in this file. Pass the
+-- raw password only, no surrounding quotes — :'owner_pw' below already adds
+-- them; a value like -v owner_pw="'...'" double-quotes it and the literal
+-- quote characters end up baked into the password (hit this once for real).
 -- db:provision is MariaDB-only and is not used here.
 --
 -- | Role         | Rights                                          | Used by               |

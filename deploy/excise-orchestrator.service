@@ -1,0 +1,12 @@
+[Unit]
+Description=excise-mcp-dashboard orchestrator (FastAPI, loopback only)
+After=network.target postgresql.service
+
+[Service]
+WorkingDirectory=%h/Sites/excise-mcp-dashboard/orchestrator
+ExecStart=%h/Sites/excise-mcp-dashboard/orchestrator/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8085
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

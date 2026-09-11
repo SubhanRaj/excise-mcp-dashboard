@@ -96,6 +96,34 @@ ollama pull nomic-embed-text         # or: ollama pull bge-m3   (multilingual, l
 
 ---
 
+## §Ollama runtime settings (Milestone 0, applied late)
+
+`EVALUATION.md` §2 Runtime settings calls for three env vars on the Ollama
+service that were never actually applied — found because a model left loaded
+after a Milestone 2 orchestrator test was still sitting at ~5 GB resident
+several minutes later instead of unloading after the documented 30s:
+
+```bash
+sudo sed -i '/^Environment="PATH=/a\
+Environment="OLLAMA_KEEP_ALIVE=30s"\
+Environment="OLLAMA_NUM_PARALLEL=1"\
+Environment="OLLAMA_MAX_LOADED_MODELS=1"' /etc/systemd/system/ollama.service
+sudo systemctl daemon-reload
+sudo systemctl restart ollama
+```
+
+Verify:
+
+```bash
+systemctl show ollama.service -p Environment
+# Environment=PATH=... OLLAMA_KEEP_ALIVE=30s OLLAMA_NUM_PARALLEL=1 OLLAMA_MAX_LOADED_MODELS=1
+ollama list                                   # both models still there
+curl -s http://127.0.0.1:11434/api/generate -d '{"model":"llama3.1:8b-instruct-q4_K_M","prompt":"hi","stream":false}' >/dev/null
+ollama ps                                     # UNTIL should read ~30 seconds from now, not ~5 minutes
+```
+
+---
+
 ## §Data bank (Milestone 1)
 
 **Create the database and apply the SQL scripts** (they are written in `db/`
@@ -105,12 +133,14 @@ by the Milestone 1 work — run this after they exist):
 cd ~/Sites/excise-mcp-dashboard/db
 sudo -u postgres createdb excise_bank
 
-# roles first — pass the three passwords via -v, each wrapped in single quotes
-# so psql substitutes them as SQL string literals
+# roles first — pass the three RAW passwords via -v, no surrounding quotes:
+# roles.sql's :'owner_pw' already quotes them as SQL string literals, so a
+# value like "'CHANGE_ME_owner'" here double-quotes it and the literal quote
+# characters end up baked into the password (hit this once for real).
 sudo -u postgres psql -d excise_bank \
-  -v owner_pw="'CHANGE_ME_owner'" \
-  -v etl_pw="'CHANGE_ME_etl'" \
-  -v ro_pw="'CHANGE_ME_ro'" \
+  -v owner_pw="CHANGE_ME_owner" \
+  -v etl_pw="CHANGE_ME_etl" \
+  -v ro_pw="CHANGE_ME_ro" \
   -f roles.sql
 
 sudo -u postgres psql -d excise_bank -f schema.sql
@@ -262,6 +292,27 @@ In <https://console.cloud.google.com>:
 Verify: from `web/` (once Milestone 1's minimal Socialite wiring exists),
 visit `/google/connect`, complete consent, and confirm a `google_connections`
 row is written with an encrypted `refresh_token`.
+
+---
+
+## §orchestrator package (Milestone 2)
+
+```bash
+cd ~/Sites/excise-mcp-dashboard/orchestrator
+python3.12 -m venv .venv
+.venv/bin/pip install -r requirements-dev.txt
+cp .env.example .env && chmod 600 .env
+# fill in DATABASE_URL_READONLY with the ro_pw set in db/roles.sql (§Data bank)
+# and a real ORCH_BEARER_TOKEN — also put the same token in web/.env once web/ exists
+```
+
+Verify:
+
+```bash
+.venv/bin/ruff check . && .venv/bin/ruff format --check .
+.venv/bin/mypy
+.venv/bin/pytest
+```
 
 ---
 

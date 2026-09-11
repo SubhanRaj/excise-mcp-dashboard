@@ -83,11 +83,14 @@ pulled, the sandbox user exists.
       seeded from `~/Sites/UP-excise-mailer`'s contact-list JSON;
       `ON CONFLICT DO NOTHING` throughout
 - [x] `db/README.md` — script purpose, apply order, roles
-- [ ] Owner runs `OPERATOR_SETUP.md` §Data bank — `createdb`, apply the four
-      scripts, create the `excise_mcp_kb_ro` read-only MariaDB user for the
-      pdf-markdown-pipeline sync
-- [ ] Verify: `psql -U excise_ro` can `SELECT` from `analytics.revenues` and
-      `kb.documents`, and **cannot** `INSERT` anywhere or read `public.*`
+- [x] Owner runs `OPERATOR_SETUP.md` §Data bank — `createdb`, apply the four
+      scripts (`roles.sql`'s `-v` password-quoting bug found and fixed along
+      the way, see `db/roles.sql`'s header comment). The
+      `excise_mcp_kb_ro` read-only MariaDB user is Milestone 3-scoped and
+      still pending
+- [x] Verify: `psql -U excise_ro` can `SELECT` from `analytics.revenues` and
+      `kb.documents`, and **cannot** `INSERT` anywhere or read `public.*` —
+      confirmed live against `excise_bank`
 
 ### ETL core (`etl/`)
 - [x] `etl/` package: `config.py` (pydantic-settings), `db.py` (writer pool on
@@ -138,50 +141,68 @@ OAuth connection.
 
 ## Milestone 2 — Orchestrator: the one-shot analytical pipeline
 
-- [ ] `orchestrator/` scaffold per `MCP_ENGINES.md` §Module layout; venv,
+- [x] `orchestrator/` scaffold per `MCP_ENGINES.md` §Module layout; venv,
       pinned `requirements.txt` + `.lock`
-- [ ] `config.py` Settings incl. the model registry (`OLLAMA_ALLOWED_MODELS`,
+- [x] `config.py` Settings incl. the model registry (`OLLAMA_ALLOWED_MODELS`,
       per-role defaults); `auth.py` bearer-token dependency (constant-time)
-- [ ] `schemas.py`: `QueryRequest` / `QueryResponse` / `SqlPlan` / `PlotPlan` /
+- [x] `schemas.py`: `QueryRequest` / `QueryResponse` / `SqlPlan` / `PlotPlan` /
       `Stage` / typed errors (`QueryRequest.model` optional, registry-checked)
-- [ ] `sql/schema_card.py` renders `analytics.*` into a prompt schema card
-- [ ] `llm/client.py`: Ollama async client, `format=`-constrained structured
+- [x] `sql/schema_card.py` renders `analytics.*` into a prompt schema card
+- [x] `llm/client.py`: Ollama async client, `format=`-constrained structured
       output, one-retry validation loop, model resolved from the registry (a
       request override falls back to the per-role default);
       `llm/prompts.py` (system prompt, schema card slot, 6–10 few-shot NL->SQL
       examples)
-- [ ] `sql/guard.py`: `sqlglot` single-read-only-SELECT parser with the full
+- [x] `sql/guard.py`: `sqlglot` single-read-only-SELECT parser with the full
       reject list from `SECURITY.md`; `LIMIT` injection
-- [ ] `sql/runner.py`: `asyncpg` pool on `DATABASE_URL_READONLY`,
+- [x] `sql/runner.py`: `asyncpg` pool on `DATABASE_URL_READONLY`,
       `BEGIN READ ONLY` + `SET LOCAL` timeouts + `ROLLBACK`, row cap
-- [ ] `engines/base.py`: `IVisualizationEngine` Protocol, registry, errors
-- [ ] `engines/python_engine.py`: script harness (Parquet preamble), output
+- [x] `engines/base.py`: `IVisualizationEngine` Protocol, registry, errors
+- [x] `engines/python_engine.py`: script harness (Parquet preamble), output
       collection (`plotly.json` / `png` / `svg` / `pdf`), `is_available()`
-- [ ] `sandbox/bwrap.py`: the `bwrap` command from `SECURITY.md` §2, rlimits /
-      `systemd-run` cgroup caps, artifact copy-out, scratch cleanup; decide
-      `systemd-run` vs a scoped sudoers rule with the owner
-      (`OPERATOR_SETUP.md` §Sandbox)
-- [ ] `pipeline.py`: the six stages, `Stage` events, per-stage timing
-- [ ] `main.py`: FastAPI app, lifespan (pool, `httpx`, ollama warmup),
+- [x] `sandbox/bwrap.py`: the `bwrap` command from `SECURITY.md` §2,
+      `systemd-run` cgroup caps (`MemoryMax` + `MemorySwapMax=0` — swap alone
+      lets a script page around the cap instead of getting OOM-killed, found
+      live), artifact copy-out, scratch cleanup; decided `systemd-run` —
+      `--uid=excise-sandbox` behind `SANDBOX_UID_SWITCH_ENABLED` (still off:
+      `loginctl enable-linger excise-sandbox` is done, but `--uid=` from an
+      unprivileged session needs root/polkit regardless of linger — confirmed
+      live; the sudoers fallback in `SECURITY.md` §2 is the real path,
+      untried). `bwrap`'s own namespace/network/filesystem confinement is the
+      primary control either way and is fully active without the uid switch
+- [x] `pipeline.py`: the six stages, `Stage` events, per-stage timing
+- [x] `main.py`: FastAPI app, lifespan (pool, `httpx`, ollama warmup),
       `/health` (incl. the model registry with a pulled flag each), `/query`
       (chunked stage stream + final JSON), `/query/{id}/status`
-- [ ] `deploy/`: systemd `--user` unit `excise-orchestrator.service` on
+- [x] `deploy/`: systemd `--user` unit `excise-orchestrator.service` on
       `127.0.0.1:8085`
-- [ ] Manual end-to-end from `curl`: a question -> SQL -> rows -> `chart.png` +
-      `chart.plotly.json` -> a summary
+- [x] Manual end-to-end from `curl`: a question -> SQL -> rows -> `chart.plotly.json`
+      -> a summary — done against the live `excise_bank` and the real
+      `qwen2.5-coder`/`llama3.1` models ("How many districts are in each
+      zone?" -> a real `GROUP BY` over `analytics.districts`, 75 rows across 5
+      zones matching `seed_reference.sql`, a real sandboxed Plotly render, a
+      real narrated summary). `chart.png` (static export) is not yet part of
+      this: Plotly's static export needs `kaleido>=1.0`, which drives a real
+      headless Chrome instead of the old pure-binary renderer, and it fails to
+      launch inside the `bwrap` sandbox even with `/dev/shm` mounted
+      (`BrowserFailedError`) — `llm/prompts.py` asks the model for
+      `chart.plotly.json` only until this is debugged further; see the note in
+      `engines/python_engine.py`
 
 ### Tests
-- [ ] tool schemas round-trip; guard rejects non-SELECT / multi-statement /
-      cross-schema / volatile-fn; integration test: a write attempt fails
-      against real local Postgres via `excise_ro`
-- [ ] router: explicit `engine` picks the adapter; unknown/unavailable ->
+- [x] tool schemas round-trip; guard rejects non-SELECT / multi-statement /
+      cross-schema / volatile-fn; a write attempt fails against real local
+      Postgres via `excise_ro` (verified live: `CREATE TABLE`, `INSERT` into
+      `kb.*`, and a `public.*` / `etl.*` read all correctly refused)
+- [x] router: explicit `engine` picks the adapter; unknown/unavailable ->
       typed error; default `python`
-- [ ] sandbox: past-wallclock killed; socket open fails; write outside
+- [x] sandbox: past-wallclock killed; socket open fails; write outside
       `/scratch` fails; past-memory killed
-- [ ] Ollama client: malformed structured output -> one retry -> typed error
-- [ ] model selection: allowed `model` used; out-of-registry `model` rejected
+- [x] Ollama client: malformed structured output -> one retry -> typed error
+- [x] model selection: allowed `model` used; out-of-registry `model` rejected
       pre-call; chat picker does not change the `run_sql_query` planner model
-- [ ] `ruff` / `ruff format --check` / `mypy --strict` green
+      (chat itself is Milestone 5)
+- [x] `ruff` / `ruff format --check` / `mypy --strict` green
 
 **Done when:** `POST /query` with a bearer token turns an excise question into
 a validated read-only SQL run plus a sandboxed Python chart plus a summary,

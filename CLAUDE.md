@@ -5,13 +5,25 @@ Master rules for coding sessions on this repo. Read this, then `ARCHITECTURE.md`
 (`DATA_PIPELINE.md`, `MCP_ENGINES.md`, `SECURITY.md`). `ROADMAP.md` has the
 milestone checklist and the current position in it.
 
-Status: **Phase 4 approved; build underway.** Milestone 0 (groundwork) and the
-database half of Milestone 1 are done — the `web/` Laravel skeleton is in
-review (PR #1), the on-box infra is provisioned, and `db/` holds the
-PostgreSQL data bank (schema, `analytics.*` views, roles, reference seed). Work
-follows the `ROADMAP.md` milestone order. Still no dependency install —
-`composer create-project`, a venv, `pip`/`npm` add — outside what the current
-milestone's `OPERATOR_SETUP.md` section sanctions.
+Status: **Phase 4 approved; build underway.** Milestone 0, the database half
+of Milestone 1, and Milestone 2 (the orchestrator's one-shot pipeline) are
+done — the `web/` Laravel skeleton is merged, `excise_bank` is provisioned and
+role-verified live, and `orchestrator/`'s `/query` ran a real question
+end-to-end against real seed data (SQL -> Postgres -> a sandboxed Plotly
+render -> a narrated summary), tested green (`ruff` / `mypy --strict` /
+`pytest`, 32 tests including live `bwrap` runs). Static chart export
+(`chart.png` via `kaleido`) is a known gap — needs a headless Chrome the
+sandbox can't launch yet; see `engines/python_engine.py`. The `excise-sandbox`
+uid-separation layer is also still off (`bwrap`'s own confinement covers the
+same ground meanwhile) — `loginctl enable-linger excise-sandbox` turned out
+insufficient on its own; the sudoers fallback in `SECURITY.md` §2 is the
+untried real path. `OLLAMA_KEEP_ALIVE`/`OLLAMA_NUM_PARALLEL`/
+`OLLAMA_MAX_LOADED_MODELS` (`EVALUATION.md` §2) are now actually applied to
+the Ollama service, found missing after a loaded model sat resident well past
+its documented 30s. Work follows the `ROADMAP.md` milestone order; Milestone 3
+(knowledge base) is next. Dependency installs so far: `web/`'s Composer + npm
+set, `etl/`'s venv, `orchestrator/`'s venv — each the current milestone's
+`OPERATOR_SETUP.md` section at the time.
 
 ## What this project is
 
