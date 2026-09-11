@@ -316,12 +316,12 @@ Zero Trust layer.
 ### Tunnel
 
 The account's `~/.cloudflared/cert.pem` covers the `exciseup.in` zone only.
-Hostname: **`analytics.exciseup.in`**.
+Hostname: **`visualizer.exciseup.in`**.
 
 ```bash
 cloudflared tunnel create excise-mcp-dashboard
 # note the UUID it prints; a <uuid>.json credentials file lands in ~/.cloudflared/
-cloudflared tunnel route dns --overwrite-dns <uuid> analytics.exciseup.in
+cloudflared tunnel route dns --overwrite-dns <uuid> visualizer.exciseup.in
 ```
 
 Use `--overwrite-dns` and route by UUID, not by name — the route-by-name
@@ -334,7 +334,7 @@ tunnel: <uuid>
 credentials-file: /home/subhan/.cloudflared/<uuid>.json
 
 ingress:
-  - hostname: analytics.exciseup.in
+  - hostname: visualizer.exciseup.in
     service: http://127.0.0.1:8084
   - service: http_status:404
 ```
@@ -461,14 +461,14 @@ server-owned content.
 
 The Socialite redirect and callback routes are behind the app login like every
 other route — a stranger cannot reach `/google/connect`. The Google
-`redirect_uri` is `https://analytics.exciseup.in/google/callback`, registered
+`redirect_uri` is `https://visualizer.exciseup.in/google/callback`, registered
 in the Cloud project; it only resolves through the tunnel.
 
 ### Secrets
 
 | Secret | Location | Perms |
 |---|---|---|
-| `web/.env` `APP_KEY`, MariaDB creds, Resend key, `ORCH_BEARER_TOKEN`, `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | `web/.env` | `600`, not committed |
+| `web/.env` `APP_KEY`, MariaDB creds, Resend key, `ORCH_BEARER_TOKEN`, `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | `web/.env` | `664`, not committed (Apache/`www-data` reads it via the `subhan` group — `600` blocks it) |
 | `orchestrator/.env` `ORCH_BEARER_TOKEN`, `DATABASE_URL_READONLY` | `orchestrator/.env` | `600`, not committed |
 | `etl/.env` `DATABASE_URL_ETL`, `GOOGLE_APPLICATION_CREDENTIALS` path, KB MariaDB creds, (optionally `GOOGLE_CLIENT_ID`/`SECRET` if the ETL refreshes tokens directly) | `etl/.env` | `600`, not committed |
 | Postgres role passwords | set once via `db/roles.sql` with `psql -v`, then only in `orchestrator/.env` / `etl/.env` | — |

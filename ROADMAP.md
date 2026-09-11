@@ -4,11 +4,15 @@ Phased build. Each milestone is a checklist with a stated "done when" gate.
 
 **Position:** Phase 4 is approved. Milestone 0 — approval given, PostgreSQL
 running, `excise_bank` created, the sandbox user and scratch dir in place,
-MariaDB migrated; the model pull and the Cloudflare / Google-consent decisions
-are the owner's remaining M0 items. Milestone 1 is in progress — the database
-(`db/`) is complete (schema, `analytics.*` views, the three roles, reference
-seed); the ETL core and Google ingestion are not started. The `web/` skeleton
-is in review (PR #1).
+MariaDB migrated, both LLM models pulled (`qwen2.5-coder:7b-instruct-q4_K_M`,
+`llama3.1:8b-instruct-q4_K_M`); the Cloudflare and Google-consent decisions
+are the owner's remaining M0 items. Milestone 1 is in progress — the
+database (`db/`) is complete (schema, `analytics.*` views, the three roles,
+reference seed); the ETL core plumbing (`etl/` package, loader, normalize,
+quarantine, the csv/excel readers) is built and tested, waiting on the final
+NITI workbook layout to write its column maps; Google ingestion is not
+started. The `web/` skeleton, `db/` data bank, and `etl/` core are merged
+into `dev`.
 
 Every `sudo` / install / external-console step is collected, copy-pasteable,
 in [`OPERATOR_SETUP.md`](OPERATOR_SETUP.md), grouped by the milestone that
@@ -52,10 +56,9 @@ flowchart LR
 - [x] Owner reviews all docs and replies `Approved. Proceed to Phase 4.`
 - [x] Owner runs `OPERATOR_SETUP.md` §0 — start PostgreSQL, create the sandbox
       user and scratch dir, confirm `bwrap` works unprivileged
-- [ ] Owner runs `OPERATOR_SETUP.md` §Models — `ollama pull` for the SQL model
+- [x] Owner runs `OPERATOR_SETUP.md` §Models — `ollama pull` for the SQL model
       and the chat model
-- [ ] Owner decides the Cloudflare hostname (`analytics.exciseup.in` unless
-      another `*.exciseup.in` is preferred)
+- [x] Owner decides the Cloudflare hostname — `visualizer.exciseup.in`
 - [ ] Owner decides the Google consent-screen type (Internal vs External —
       `OPERATOR_SETUP.md` §Google Cloud has the trade-off) and whether the
       Google connect feature is in scope for the first build at all
@@ -87,13 +90,13 @@ pulled, the sandbox user exists.
       `kb.documents`, and **cannot** `INSERT` anywhere or read `public.*`
 
 ### ETL core (`etl/`)
-- [ ] `etl/` package: `config.py` (pydantic-settings), `db.py` (writer pool on
+- [x] `etl/` package: `config.py` (pydantic-settings), `db.py` (writer pool on
       `excise_etl`), `run.py` (`etl sync` CLI), `loader.py` (upsert on natural
-      key), `quarantine.py`, `normalize.py` (port note-row / district /
-      money logic from `~/Sites/upexcise-stats-dashboard`'s `ImportExciseData.php`)
-- [ ] `etl.source_registry` / `etl.ingestion_runs` / `etl.quarantine` writing
+      key), `quarantine.py`, `normalize.py` (district / FY / money / volume
+      rules per `DATA_PIPELINE.md` §Normalization rules)
+- [x] `etl.source_registry` / `etl.ingestion_runs` / `etl.quarantine` writing
       on every run; Postgres advisory lock so timers cannot overlap
-- [ ] `etl/sources/excel.py`, `etl/sources/csv.py`
+- [x] `etl/sources/excel.py`, `etl/sources/csv.py`
 - [ ] Excel adapter loads the NITI submission workbooks from
       `~/mentor_portal_db/UP Excise Data Collection/` and reconciles counts
       against the sibling's verified import (75 districts; 900 rows/series on
@@ -118,11 +121,13 @@ pulled, the sandbox user exists.
 
 ### Tests
 - [ ] `etl/tests/`: each source adapter parses a fixture to the normalized
-      shape; re-running a fixture changes no counts; a malformed row is
-      quarantined and counted; district-alias and FY parsing; money
-      normalization; both Google auth modes against a mocked API; token
+      shape (done for `csv`/`excel`, against synthetic fixtures — no real
+      NITI file to fixture yet); re-running a fixture changes no counts
+      (done for `csv`); a malformed row is quarantined and counted; FY and
+      money/volume normalization (done); district-alias resolution against a
+      live database; both Google auth modes against a mocked API; token
       refresh and revocation paths
-- [ ] `ruff`, `ruff format --check`, `mypy --strict` green on `etl/`
+- [x] `ruff`, `ruff format --check`, `mypy --strict` green on `etl/`
 
 **Done when:** `etl sync --source niti_full` populates `excise_bank`, counts
 match the sibling's verified import, `analytics.*` returns only published
@@ -315,9 +320,10 @@ inert stubs.
       `source_registry` rows, show "reconnect needed"); "Knowledge base"
       (upload `.md`, browse the ingested corpus, withdraw an upload); a
       read-only view of `etl.ingestion_runs` / `etl.quarantine`
-- [ ] `deploy/`: Apache vhost on `127.0.0.1:8084`, `DocumentRoot web/public`;
+- [x] `deploy/`: Apache vhost on `127.0.0.1:8084`, `DocumentRoot web/public`;
       owner runs `OPERATOR_SETUP.md` §Apache (append `ReadWritePaths`, incl.
-      the `kb-uploads` disk path)
+      the `kb-uploads` disk path) — done ahead of schedule via
+      `deploy/root-setup.sh`
 
 ### Tests
 - [ ] Auth suite (ported): login, wrong password, wrong/expired OTP, the auth
@@ -347,10 +353,14 @@ ledger / history and exportable.
 
 ## Milestone 6 — Perimeter, hardening, end-to-end
 
-- [ ] Owner runs `OPERATOR_SETUP.md` §Tunnel — create the tunnel, route DNS
+- [x] Owner runs `OPERATOR_SETUP.md` §Tunnel — create the tunnel, route DNS
       for the chosen `*.exciseup.in` subdomain, write the config, enable the
-      systemd `--user` unit; register the Google `redirect_uri` against that
-      hostname
+      systemd `--user` unit (done ahead of schedule, along with the
+      Milestone 5 Apache vhost — `visualizer.exciseup.in` resolves through
+      the tunnel to the live skeleton; `/health` returns 200, `/` and
+      `/login` wait on Milestone 5's actual routes/views). Registering the
+      Google `redirect_uri` against this hostname is still open, pending
+      §Google Cloud
 - [ ] Confirm every route except `/health` redirects an unauthenticated
       request to `/login`, and the tunnel is the only inbound path (no open
       firewall port, Apache bound to `127.0.0.1`)

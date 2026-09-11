@@ -177,25 +177,76 @@ mariadb -h127.0.0.1 -u excise_mcp_kb_ro -p'CHANGE_ME_kb_ro' \
 
 ---
 
+## §ETL package (Milestone 1)
+
+```bash
+cd ~/Sites/excise-mcp-dashboard/etl
+python3.12 -m venv .venv
+.venv/bin/pip install -r requirements-dev.txt
+cp .env.example .env && chmod 600 .env
+# fill in DATABASE_URL_ETL with the etl_pw set in db/roles.sql
+```
+
+Verify:
+
+```bash
+.venv/bin/ruff check . && .venv/bin/ruff format --check .
+.venv/bin/mypy .
+.venv/bin/pytest
+```
+
+---
+
 ## §Google Cloud (Milestone 1, only if the Google connect feature is in scope)
+
+**Google Cloud Console, not Firebase.** Everything below —
+the project, the OAuth consent screen, enabling Drive/Sheets/Docs, the OAuth
+client — is Google Cloud Console (<https://console.cloud.google.com>), the
+same console Google API access always goes through. Firebase is a different
+product layer on top of a GCP project (Firestore, Firebase Auth, Hosting,
+Cloud Functions, push notifications) — this app uses none of it: its own
+Fortify + email-OTP auth is already the login, and its data stores are
+Postgres and MariaDB, not Firestore. A Firebase project would just be a
+second console pointed at the same underlying GCP project for no benefit.
+Skip Firebase entirely and work in Cloud Console.
 
 In <https://console.cloud.google.com>:
 
 1. **Create a project** — e.g. `excise-mcp-dashboard`.
-2. **OAuth consent screen** — App type:
-   - **Internal** if the department has a Google Workspace and the analysts
-     are in it. This is the recommended choice — the restricted
-     `drive.readonly` scope then needs no Google verification or CASA
-     assessment.
-   - **External** only if Internal is impossible. Then either keep under 100
-     test users (no verification) or budget for Google's app-verification +
-     CASA security assessment before wider rollout. Alternative: request only
-     `drive.file` (user-picked files) instead of `drive.readonly` — not a
-     restricted scope.
+2. **OAuth consent screen** — App type. This is the one real decision here,
+   and it depends on one fact only the department knows: **do the analysts'
+   Google accounts belong to a Google Workspace the department controls?**
+   - **Internal** — only selectable if yes. The consent screen is then only
+     ever shown to accounts inside that Workspace, and Google's verification
+     process does not apply to Internal apps at all, regardless of scope.
+     This is the recommended choice: no verification queue, no assessment,
+     no review lag, and it stays true as more analysts are added — this is
+     the only path with no scaling cost.
+   - **External** — the only option if the analysts use ordinary consumer
+     Gmail accounts or a Workspace the department doesn't administer. Google
+     tiers OAuth scopes by sensitivity, and the tier decides what External
+     requires:
+     - `documents.readonly` and `spreadsheets.readonly` are **sensitive**
+       scopes — Google's standard app-verification review (ownership proof,
+       a demo video, a privacy policy URL) applies once past 100 test users.
+     - `drive.readonly` is a **restricted** scope — verification *plus* a
+       CASA (Cloud Application Security Assessment) security review, which
+       is slower and (past the free self-assessment tier) can cost real
+       money. Check Google's current CASA tiers/pricing before committing to
+       this scope under External.
+     - Under 100 users in "Testing" publish status needs no verification at
+       all — every analyst must be added as a test user by email, and Google
+       shows an "unverified app" warning on first consent. Workable for a
+       small pilot group, not a real ceiling to build on.
+     - **`drive.file` instead of `drive.readonly`** avoids the restricted
+       tier entirely — the trade-off is UX, not security: the analyst picks
+       each file via Google's file picker rather than the app browsing their
+       whole Drive. Worth it under External if Drive access (not just
+       Sheets/Docs) is actually needed.
 3. **Enable APIs** — Google Drive API, Google Sheets API, Google Docs API.
 4. **Credentials -> Create credentials -> OAuth client ID** — Application type
    "Web application":
-   - Authorized redirect URI: `https://analytics.exciseup.in/google/callback`
+   - Authorized redirect URI: `https://visualizer.exciseup.in/google/callback`
      (add `http://localhost:8000/google/callback` too if you preview `web/`
      over `artisan serve` per `laravel-dev-preview-tailscale.md`).
    - Copy the **Client ID** and **Client secret** into `web/.env` as
@@ -283,15 +334,71 @@ sudo -u postgres psql -d excise_bank -c "\dx"          # 'vector' listed
 
 ---
 
+## §web/ skeleton (Milestone 5)
+
+**Create the operational MariaDB database and its scoped user.** `web/` uses
+MariaDB only — `excise_mcp_dashboard_local`, user name = database name, never
+root (the fleet `db:provision` convention). The database keeps the
+`excise_mcp_dashboard` slug even though the product name is "Excise Data
+Visualization".
+
+`php artisan db:provision` is the normal path, but it needs a privileged MySQL
+account (this box's `root` is `unix_socket`-auth, so it needs `sudo`), and it
+derives the database name from `APP_NAME` — which here would give
+`excise_data_visualization_local`, the wrong slug. So provision by hand:
+
+```bash
+sudo mariadb <<'SQL'
+CREATE DATABASE IF NOT EXISTS excise_mcp_dashboard_local
+  CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER IF NOT EXISTS 'excise_mcp_dashboard_local'@'127.0.0.1'
+  IDENTIFIED BY 'CHANGE_ME_web_db';
+GRANT ALL PRIVILEGES ON excise_mcp_dashboard_local.*
+  TO 'excise_mcp_dashboard_local'@'127.0.0.1';
+FLUSH PRIVILEGES;
+SQL
+```
+
+Put `CHANGE_ME_web_db` into `web/.env` as `DB_PASSWORD` (perms `664`, not
+`600` — Apache/`www-data` needs group-read via the `subhan` group to serve
+this app at all, same as every sibling Laravel app's live `.env`; not
+committed). `DB_DATABASE` and `DB_USERNAME` are already
+`excise_mcp_dashboard_local` in `.env.example`. Then run the migrations as your
+user:
+
+```bash
+cd ~/Sites/excise-mcp-dashboard/web
+php artisan migrate
+```
+
+Verify:
+
+```bash
+mariadb -h127.0.0.1 -u excise_mcp_dashboard_local -p'CHANGE_ME_web_db' \
+  -e "SHOW TABLES FROM excise_mcp_dashboard_local;"    # migrations, users, sessions, cache, jobs
+curl -s http://127.0.0.1:8084/health                   # {"app":"Excise Data Visualization","status":"ok"}
+```
+
+---
+
 ## §Apache vhost (Milestone 5)
 
 `web/` deploys behind Apache on `127.0.0.1:8084`, same pattern as the four
-sibling apps (`~/Sites/infra-notes/laravel-apps-deploy.md`).
+sibling apps (`~/Sites/infra-notes/laravel-apps-deploy.md`). `deploy/root-setup.sh`
+does the whole thing (vhost, `Listen` line, `a2ensite`, the `ReadWritePaths`
+append, reload, and a local + tunnel curl check) and is idempotent — safe to
+re-run after moving the app or changing the vhost:
+
+```bash
+sudo bash ~/Sites/excise-mcp-dashboard/deploy/root-setup.sh
+```
+
+To do it by hand instead:
 
 ```bash
 sudo tee /etc/apache2/sites-available/excise-mcp-dashboard.conf >/dev/null <<'EOF'
 <VirtualHost 127.0.0.1:8084>
-    ServerName analytics.exciseup.in
+    ServerName visualizer.exciseup.in
     DocumentRoot /home/subhan/Sites/excise-mcp-dashboard/web/public
 
     <Directory /home/subhan/Sites/excise-mcp-dashboard/web/public>
@@ -315,26 +422,36 @@ sudo a2ensite excise-mcp-dashboard
 **Append this app's writable paths to the shared ProtectHome override —
 EDIT THE LINE IN PLACE, do not overwrite the file** (it holds every sibling
 app's paths; a full overwrite has broken a live site before —
-`laravel-apps-deploy.md`):
+`laravel-apps-deploy.md`). This `sed` targets only the `ReadWritePaths=`
+line and is a no-op if this app's paths are already there, so it's safe to
+re-run:
 
 ```bash
-sudo nano /etc/systemd/system/apache2.service.d/override.conf
-# on the existing ReadWritePaths= line, append (space-separated):
-#   /home/subhan/Sites/excise-mcp-dashboard/web/storage
-#   /home/subhan/Sites/excise-mcp-dashboard/web/bootstrap/cache
-#   /home/subhan/Sites/excise-mcp-dashboard/web/storage/app/kb-uploads
+sudo sed -i \
+  '/^ReadWritePaths=/{/excise-mcp-dashboard/!s#$# /home/subhan/Sites/excise-mcp-dashboard/web/storage /home/subhan/Sites/excise-mcp-dashboard/web/bootstrap/cache /home/subhan/Sites/excise-mcp-dashboard/web/storage/app/kb-uploads#}' \
+  /etc/systemd/system/apache2.service.d/override.conf
 
 sudo systemctl daemon-reload
 sudo apache2ctl configtest
 sudo systemctl restart apache2
 ```
 
+If `storage/framework/views/*.php` has compiled views from an `artisan`
+command run as your own user, Apache (`www-data`) can 500 on
+`touch(): Utime failed: Operation not permitted` trying to bump one it
+doesn't own (`laravel-apps-deploy.md`'s Blade view-cache gotcha, hit setting
+up this exact vhost) — run `cd web && php artisan view:clear` once to fix it,
+and again after any future `git pull`/branch switch on the live checkout.
+
 Verify:
 
 ```bash
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8084/        # 200 or a redirect to /login
+curl -s http://127.0.0.1:8084/health                                   # {"app":"Excise Data Visualization","status":"ok"}
 systemctl show apache2.service -p ReadWritePaths | tr ' ' '\n' | grep excise-mcp
 ```
+
+(`/` itself 404s until Milestone 5 adds a route there — the skeleton only
+defines `/health` plus Fortify's own routes.)
 
 ---
 
@@ -347,14 +464,14 @@ Run as your user (the account cert in `~/.cloudflared/cert.pem` covers
 cloudflared tunnel create excise-mcp-dashboard
 # note the UUID it prints; ~/.cloudflared/<uuid>.json is written
 
-cloudflared tunnel route dns --overwrite-dns <uuid> analytics.exciseup.in
+cloudflared tunnel route dns --overwrite-dns <uuid> visualizer.exciseup.in
 
 cat > ~/.cloudflared/excise-mcp-config.yml <<EOF
 tunnel: <uuid>
 credentials-file: /home/subhan/.cloudflared/<uuid>.json
 
 ingress:
-  - hostname: analytics.exciseup.in
+  - hostname: visualizer.exciseup.in
     service: http://127.0.0.1:8084
   - service: http_status:404
 EOF
@@ -384,7 +501,7 @@ Verify:
 
 ```bash
 systemctl --user status excise-mcp-dashboard-tunnel
-curl -s -o /dev/null -w '%{http_code}\n' https://analytics.exciseup.in/    # 302 to /login (the app's own auth)
+curl -s -o /dev/null -w '%{http_code}\n' https://visualizer.exciseup.in/    # 302 to /login (the app's own auth)
 ```
 
 The site is public on the subdomain; the app's Fortify email-OTP login is the
@@ -427,5 +544,6 @@ systemctl --user restart excise-orchestrator
 | Sandbox launch route (`systemd-run` or sudoers) | §Sandbox | 2 |
 | `apt install octave` | §Octave | 4 |
 | `apt install postgresql-18-pgvector` | §pgvector | 6 (conditional) |
+| Create `excise_mcp_dashboard_local` MariaDB DB + user | §web/ skeleton | 5 |
 | Apache vhost + `ReadWritePaths` | §Apache | 5 |
 | `cloudflared tunnel` + systemd unit | §Tunnel | 6 |
