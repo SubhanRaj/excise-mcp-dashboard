@@ -72,9 +72,14 @@ pattern: Apache vhost on a private port, one named Cloudflare Tunnel, systemd
   §Google OAuth.
 - **No secrets in `.env` for anything that can live elsewhere.** The
   Laravel↔orchestrator bearer token and the Postgres read-only password are the
-  two required secrets; both go in the respective `.env` files with `600`
-  perms, never committed. Google service-account JSON is referenced by path,
-  never inlined.
+  two required secrets; both go in the respective `.env` files, never
+  committed. Perms differ by who reads the file: `orchestrator/.env` and
+  `etl/.env` are read only by their own `subhan`-owned process, so `600`.
+  `web/.env` is read by Apache (`www-data`), which is a secondary member of
+  the `subhan` group on this box — `664` (group-read), matching every sibling
+  Laravel app's live `.env`, not `600` (`600` blocks Apache from reading it
+  at all — confirmed the hard way deploying this app's own vhost). Google
+  service-account JSON is referenced by path, never inlined.
 - **No new Cloudflare zone.** This box's `cert.pem` only covers `exciseup.in`.
   Use a subdomain of it.
 - **Claude has no passwordless sudo here.** Anything under `/etc`, any

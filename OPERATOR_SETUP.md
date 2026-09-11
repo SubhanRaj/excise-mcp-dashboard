@@ -359,7 +359,9 @@ FLUSH PRIVILEGES;
 SQL
 ```
 
-Put `CHANGE_ME_web_db` into `web/.env` as `DB_PASSWORD` (perms `600`, not
+Put `CHANGE_ME_web_db` into `web/.env` as `DB_PASSWORD` (perms `664`, not
+`600` — Apache/`www-data` needs group-read via the `subhan` group to serve
+this app at all, same as every sibling Laravel app's live `.env`; not
 committed). `DB_DATABASE` and `DB_USERNAME` are already
 `excise_mcp_dashboard_local` in `.env.example`. Then run the migrations as your
 user:
@@ -382,7 +384,16 @@ curl -s http://127.0.0.1:8084/health                   # {"app":"Excise Data Vis
 ## §Apache vhost (Milestone 5)
 
 `web/` deploys behind Apache on `127.0.0.1:8084`, same pattern as the four
-sibling apps (`~/Sites/infra-notes/laravel-apps-deploy.md`).
+sibling apps (`~/Sites/infra-notes/laravel-apps-deploy.md`). `deploy/root-setup.sh`
+does the whole thing (vhost, `Listen` line, `a2ensite`, the `ReadWritePaths`
+append, reload, and a local + tunnel curl check) and is idempotent — safe to
+re-run after moving the app or changing the vhost:
+
+```bash
+sudo bash ~/Sites/excise-mcp-dashboard/deploy/root-setup.sh
+```
+
+To do it by hand instead:
 
 ```bash
 sudo tee /etc/apache2/sites-available/excise-mcp-dashboard.conf >/dev/null <<'EOF'
@@ -425,12 +436,22 @@ sudo apache2ctl configtest
 sudo systemctl restart apache2
 ```
 
+If `storage/framework/views/*.php` has compiled views from an `artisan`
+command run as your own user, Apache (`www-data`) can 500 on
+`touch(): Utime failed: Operation not permitted` trying to bump one it
+doesn't own (`laravel-apps-deploy.md`'s Blade view-cache gotcha, hit setting
+up this exact vhost) — run `cd web && php artisan view:clear` once to fix it,
+and again after any future `git pull`/branch switch on the live checkout.
+
 Verify:
 
 ```bash
-curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8084/        # 200 or a redirect to /login
+curl -s http://127.0.0.1:8084/health                                   # {"app":"Excise Data Visualization","status":"ok"}
 systemctl show apache2.service -p ReadWritePaths | tr ' ' '\n' | grep excise-mcp
 ```
+
+(`/` itself 404s until Milestone 5 adds a route there — the skeleton only
+defines `/health` plus Fortify's own routes.)
 
 ---
 

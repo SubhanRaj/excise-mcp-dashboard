@@ -320,9 +320,10 @@ inert stubs.
       `source_registry` rows, show "reconnect needed"); "Knowledge base"
       (upload `.md`, browse the ingested corpus, withdraw an upload); a
       read-only view of `etl.ingestion_runs` / `etl.quarantine`
-- [ ] `deploy/`: Apache vhost on `127.0.0.1:8084`, `DocumentRoot web/public`;
+- [x] `deploy/`: Apache vhost on `127.0.0.1:8084`, `DocumentRoot web/public`;
       owner runs `OPERATOR_SETUP.md` §Apache (append `ReadWritePaths`, incl.
-      the `kb-uploads` disk path)
+      the `kb-uploads` disk path) — done ahead of schedule via
+      `deploy/root-setup.sh`
 
 ### Tests
 - [ ] Auth suite (ported): login, wrong password, wrong/expired OTP, the auth
@@ -354,11 +355,12 @@ ledger / history and exportable.
 
 - [x] Owner runs `OPERATOR_SETUP.md` §Tunnel — create the tunnel, route DNS
       for the chosen `*.exciseup.in` subdomain, write the config, enable the
-      systemd `--user` unit (done ahead of schedule — `visualizer.exciseup.in`
-      resolves to the tunnel and the unit is enabled for boot; it 502s until
-      the Milestone 5 Apache vhost exists). Registering the Google
-      `redirect_uri` against this hostname is still open, pending §Google
-      Cloud
+      systemd `--user` unit (done ahead of schedule, along with the
+      Milestone 5 Apache vhost — `visualizer.exciseup.in` resolves through
+      the tunnel to the live skeleton; `/health` returns 200, `/` and
+      `/login` wait on Milestone 5's actual routes/views). Registering the
+      Google `redirect_uri` against this hostname is still open, pending
+      §Google Cloud
 - [ ] Confirm every route except `/health` redirects an unauthenticated
       request to `/login`, and the tunnel is the only inbound path (no open
       firewall port, Apache bound to `127.0.0.1`)
