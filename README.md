@@ -27,8 +27,9 @@ about the law, and an OpenWebUI-style chat window reaches both.
 ---
 
 > **Build stage — Milestone 1.** The design is approved and the build has
-> started. Milestone 0 (groundwork) is done, the `web/` Laravel skeleton is in
-> review, and `db/` holds the PostgreSQL data bank. `ROADMAP.md` tracks the
+> started. Milestone 0 (groundwork) is done. `web/` holds the Laravel
+> skeleton, `db/` the PostgreSQL data bank, and `etl/` the ingestion core —
+> one PR away from `dev`. Google ingestion is next. `ROADMAP.md` tracks the
 > milestone position; the design docs below are what each build session works
 > from.
 

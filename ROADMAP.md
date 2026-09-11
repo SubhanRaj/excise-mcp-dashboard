@@ -4,14 +4,15 @@ Phased build. Each milestone is a checklist with a stated "done when" gate.
 
 **Position:** Phase 4 is approved. Milestone 0 — approval given, PostgreSQL
 running, `excise_bank` created, the sandbox user and scratch dir in place,
-MariaDB migrated; the model pull (in progress) and the Cloudflare /
-Google-consent decisions are the owner's remaining M0 items. Milestone 1 is
-in progress —
-the database (`db/`) is complete (schema, `analytics.*` views, the three
-roles, reference seed); the ETL core plumbing (`etl/` package, loader,
-normalize, quarantine, the csv/excel readers) is built and tested, waiting on
-the final NITI workbook layout to write its column maps; Google ingestion is
-not started. The `web/` skeleton is in review (PR #1).
+MariaDB migrated, both LLM models pulled (`qwen2.5-coder:7b-instruct-q4_K_M`,
+`llama3.1:8b-instruct-q4_K_M`); the Cloudflare and Google-consent decisions
+are the owner's remaining M0 items. Milestone 1 is in progress — the
+database (`db/`) is complete (schema, `analytics.*` views, the three roles,
+reference seed); the ETL core plumbing (`etl/` package, loader, normalize,
+quarantine, the csv/excel readers) is built and tested, waiting on the final
+NITI workbook layout to write its column maps; Google ingestion is not
+started. The `web/` skeleton, `db/` data bank, and `etl/` core are one PR
+(#4, `feat/etl-core -> dev`) ready to merge.
 
 Every `sudo` / install / external-console step is collected, copy-pasteable,
 in [`OPERATOR_SETUP.md`](OPERATOR_SETUP.md), grouped by the milestone that
@@ -55,7 +56,7 @@ flowchart LR
 - [x] Owner reviews all docs and replies `Approved. Proceed to Phase 4.`
 - [x] Owner runs `OPERATOR_SETUP.md` §0 — start PostgreSQL, create the sandbox
       user and scratch dir, confirm `bwrap` works unprivileged
-- [ ] Owner runs `OPERATOR_SETUP.md` §Models — `ollama pull` for the SQL model
+- [x] Owner runs `OPERATOR_SETUP.md` §Models — `ollama pull` for the SQL model
       and the chat model
 - [ ] Owner decides the Cloudflare hostname (`analytics.exciseup.in` unless
       another `*.exciseup.in` is preferred)
