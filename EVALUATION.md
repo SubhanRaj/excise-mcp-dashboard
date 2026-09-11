@@ -592,6 +592,23 @@ Recommendations, each reversible:
     concrete workload needs true parallel model work *and* the box has the RAM
     to hold more than one model loaded.
 
+14. **Memory: the stores already in the design; no agent-memory framework.**
+    The chat has three memory spans already (`MCP_ENGINES.md` §Memory): the
+    in-process working set of recent turns, the durable resumable transcript
+    in `web/` MariaDB (`conversations` / `messages` / `message_tool_calls`),
+    and the knowledge corpus in Postgres `kb.*` retrieved by FTS. The one
+    addition worth making is a small per-analyst `user_memory` table — a
+    human-curated glossary and defaults, prepended to that user's chat prompt —
+    which is a table plus a `SELECT`, the same shape as KB retrieval.
+
+    Letta/MemGPT, Mem0, Zep, and cognee are declined: each is a server or a
+    heavy dependency, several ship default outbound telemetry, and their
+    headline feature — an agent that edits its own long-term memory and
+    extracts facts from conversations — is a liability in a departmental
+    analytics tool, not a feature. Keep memory human-curated and the model
+    read-only against it. No rolling-summary chain either until real
+    transcripts overflow the working set.
+
 The full four-engine, MCP-server, heuristic-router design stays documented in
 `ARCHITECTURE.md` and `MCP_ENGINES.md` as the target shape if requirements grow.
 The recommendation is to build the reduced version first and let real use pull
