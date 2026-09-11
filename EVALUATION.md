@@ -497,6 +497,64 @@ Recommendations, each reversible:
     analysis or report offline, with a "last synced" marker; a question typed
     offline queues and sends on reconnect. Backlog / Milestone 7, not the MVP.
 
+13. **Multiple models, no multi-agent framework.** The build already runs more
+    than one local model: `qwen2.5-coder:7b` for `plan_sql` / `plan_plot`,
+    `llama3.1:8b` for chat and `summarize`, both in `OLLAMA_ALLOWED_MODELS`,
+    with a `config/models.php` registry so an admin can add Gemma or another
+    allowed tag and pick it per request (§2). That covers task-appropriate
+    model use — a registry, a per-task default, a validated picker, and the
+    rule that the chat picker never changes which model plans `run_sql_query`.
+
+    CrewAI, AutoGen, Semantic Kernel, and similar multi-agent frameworks are
+    declined:
+
+    - **Egress.** Several ship usage telemetry to their own endpoint by
+      default and assume a hosted API backend. "No document, prompt,
+      embedding, or query leaves the box" makes a phone-home default a
+      non-starter, and re-auditing it on every upgrade is standing work.
+    - **Dependency weight.** They pull large trees (their own LLM abstraction,
+      often langchain-adjacent) for what the chat loop already is: a loop over
+      the Ollama client, a tool dispatch table, and a call counter, living in
+      `orchestrator/app/chat/` with no parallel implementation.
+    - **One local Ollama.** These frameworks get their speed from parallel API
+      fan-out. Against one server that serialises requests and reloads on a
+      model switch (`OLLAMA_MAX_LOADED_MODELS=1`), "N agents" is N sequential
+      calls plus orchestration overhead plus role-scaffold prompt bloat —
+      slower and heavier for the same answer.
+    - **Auditability.** The path is deliberately bounded: one guarded
+      read-only `SELECT`, a sandboxed script, a hard cap of 4 tool calls per
+      turn, a request-id on every log line. Autonomous delegation loops add
+      nondeterminism and an unbounded call graph over the same guard and
+      sandbox surface — more places model-authored SQL or a script can
+      originate, not fewer.
+
+    If a genuine decompose-run-synthesise "research" mode is ever needed, build
+    it as a sequential `plan -> for each sub-task: reuse the existing tools ->
+    synthesise` loop inside the orchestrator, one Ollama client, a step cap
+    like the tool-call cap. If that ever needs a real graph state machine,
+    LangGraph is the least-bad candidate — a control-flow library over your own
+    model calls, no forced agent personas, telemetry off-able — and is
+    evaluated then, not now. Revisit the framework question only when a
+    concrete workload needs true parallel model work *and* the box has the RAM
+    to hold more than one model loaded.
+
+14. **Memory: the stores already in the design; no agent-memory framework.**
+    The chat has three memory spans already (`MCP_ENGINES.md` §Memory): the
+    in-process working set of recent turns, the durable resumable transcript
+    in `web/` MariaDB (`conversations` / `messages` / `message_tool_calls`),
+    and the knowledge corpus in Postgres `kb.*` retrieved by FTS. The one
+    addition worth making is a small per-analyst `user_memory` table — a
+    human-curated glossary and defaults, prepended to that user's chat prompt —
+    which is a table plus a `SELECT`, the same shape as KB retrieval.
+
+    Letta/MemGPT, Mem0, Zep, and cognee are declined: each is a server or a
+    heavy dependency, several ship default outbound telemetry, and their
+    headline feature — an agent that edits its own long-term memory and
+    extracts facts from conversations — is a liability in a departmental
+    analytics tool, not a feature. Keep memory human-curated and the model
+    read-only against it. No rolling-summary chain either until real
+    transcripts overflow the working set.
+
 The full four-engine, MCP-server, heuristic-router design stays documented in
 `ARCHITECTURE.md` and `MCP_ENGINES.md` as the target shape if requirements grow.
 The recommendation is to build the reduced version first and let real use pull

@@ -18,6 +18,10 @@ figures.
 
 ## PostgreSQL schema blueprint
 
+Implemented in `db/schema.sql`, `db/analytics_views.sql`, `db/roles.sql`, and
+`db/seed_reference.sql` (Milestone 1). This section is the design those scripts
+follow; `db/README.md` covers apply order and the roles.
+
 MariaDB -> PostgreSQL translation rules:
 
 - `utf8mb4` / `utf8mb4_unicode_ci` -> database `ENCODING 'UTF8'`,

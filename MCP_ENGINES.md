@@ -184,22 +184,75 @@ for attempt in (1, 2):
 
 - `format=` is Ollama's JSON-schema-constrained decoding — the model is forced
   toward valid shape, and Pydantic is the backstop.
-- No third-party "agent framework". The MCP client is: a schema, a `POST` to
+- No third-party "agent framework" — not CrewAI, AutoGen, Semantic Kernel,
+  LangGraph, or the like. The MCP client is: a schema, a `POST` to
   `/api/chat` or `/api/generate`, and this validation loop. Ollama's own
   tool-calling (`tools=[...]`) is used where a genuine multi-tool turn is
   needed; for the fixed SQL->plot->summarize sequence, direct structured calls
-  are simpler and more predictable.
+  are simpler and more predictable. Running more than one model is already the
+  design (the roles below, the `config/models.php` registry); a framework to
+  coordinate agents is a separate thing and is declined — `EVALUATION.md`
+  §Right-sizing item 13 has the reasoning and the conditions to revisit.
 - Model roles: `qwen2.5-coder:7b` for `plan_sql` and `plan_plot`,
   `llama3.1:8b` for `summarize`. Both pulled; `OLLAMA_MAX_LOADED_MODELS=1` so
   they swap — accept the reload cost at this concurrency (`EVALUATION.md` §2).
 
-### Conversation memory
+### Memory
 
-In-memory `dict[conversation_id, deque[Turn]]`, capped at the last 6 turns or
-~2k tokens, whichever is smaller. Evicted after 30 min idle. Laravel resends
-the trimmed history on each call as well, so an orchestrator restart loses
-nothing that matters. No vector store, no summary chain — the schema card plus
-a few recent turns is enough context for this task.
+Four stores, each a different span. Three are built; the fourth is a backlog
+item.
+
+| Store | Lives in | Span | Contents |
+|---|---|---|---|
+| Working set | orchestrator, in-process — `dict[conversation_id, deque[Turn]]` | one active conversation, evicted after 30 min idle | the last `CHAT_CONTEXT_TURNS` turns or ~2k tokens, whichever is smaller |
+| Transcript | `web/` MariaDB — `conversations` / `messages` / `message_tool_calls` | permanent, per user | every turn and tool call; a conversation reloads and resumes from here, and Laravel resends the trimmed tail on each `/chat` call, so an orchestrator restart loses nothing that matters |
+| Knowledge | Postgres `kb.*` | corpus-wide | UP Excise acts, rules, policies; FTS-retrieved per turn (`KB_RETRIEVE_K` chunks) when the question touches the law |
+| Per-analyst memory (backlog) | `web/` MariaDB — `user_memory` | permanent, per user | short human-curated facts and defaults — a term glossary (`revenue = excise_duty + license_fee`), a home district, a default FY window — prepended to that user's chat system prompt |
+
+```mermaid
+flowchart TD
+    classDef app fill:#059669,stroke:#047857,stroke-width:2px,color:#fff
+    classDef db fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#fff
+    classDef ai fill:#7c3aed,stroke:#6d28d9,stroke-width:2px,color:#fff
+
+    Turn["a chat turn<br/>user_id, conversation_id, message"]:::app
+
+    subgraph Assemble["orchestrator assembles the prompt"]
+        Recent["recent turns<br/>in-process deque — CHAT_CONTEXT_TURNS / ~2k tokens"]:::app
+        Card["schema card<br/>analytics.* shape, static"]:::app
+        KBhit["kb.chunks FTS hits<br/>KB_RETRIEVE_K, only when the turn needs the law"]:::app
+    end
+
+    Hist[("web/ MariaDB<br/>conversations / messages / message_tool_calls<br/>full transcript, resumable")]:::db
+    KB[("Postgres kb.*<br/>acts, rules, policies — FTS")]:::db
+    Prefs[("web/ MariaDB<br/>user_memory — per-analyst glossary + defaults<br/>human-curated, backlog")]:::db
+    Model(("local model<br/>qwen2.5-coder / llama3.1")):::ai
+
+    Hist -->|Laravel resends trimmed tail| Recent
+    KB --> KBhit
+    Prefs -. planned .-> Assemble
+    Turn --> Assemble
+    Recent --> Model
+    Card --> Model
+    KBhit --> Model
+    Model -->|reply + tool calls| Hist
+```
+
+No vector store over past turns and no rolling-summary chain — the schema card
+plus the recent tail is enough context here (`EVALUATION.md` §2). The
+transcript is durable and resumable on its own; retrieval over it is added only
+if real conversations start overflowing the working set.
+
+Per-analyst memory is human-curated by design: the analyst adds, edits, and
+forgets entries on a screen, and the model only reads it. Extracting "facts"
+from a conversation and storing them for the model to trust later is the one
+memory pattern this tool does not adopt — in a departmental analytics tool a
+wrong fact that becomes memory is worse than no memory.
+
+Agent-memory frameworks (Letta/MemGPT, Mem0, Zep, cognee) are declined for the
+same reasons as the agent frameworks above: a server or a heavy dependency,
+several with default outbound telemetry, built around autonomous self-editing
+memory this tool should not have. `EVALUATION.md` §Right-sizing item 14.
 
 ### Config (`config.py`)
 
