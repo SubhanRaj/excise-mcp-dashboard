@@ -411,14 +411,14 @@ sudo a2ensite excise-mcp-dashboard
 **Append this app's writable paths to the shared ProtectHome override —
 EDIT THE LINE IN PLACE, do not overwrite the file** (it holds every sibling
 app's paths; a full overwrite has broken a live site before —
-`laravel-apps-deploy.md`):
+`laravel-apps-deploy.md`). This `sed` targets only the `ReadWritePaths=`
+line and is a no-op if this app's paths are already there, so it's safe to
+re-run:
 
 ```bash
-sudo nano /etc/systemd/system/apache2.service.d/override.conf
-# on the existing ReadWritePaths= line, append (space-separated):
-#   /home/subhan/Sites/excise-mcp-dashboard/web/storage
-#   /home/subhan/Sites/excise-mcp-dashboard/web/bootstrap/cache
-#   /home/subhan/Sites/excise-mcp-dashboard/web/storage/app/kb-uploads
+sudo sed -i \
+  '/^ReadWritePaths=/{/excise-mcp-dashboard/!s#$# /home/subhan/Sites/excise-mcp-dashboard/web/storage /home/subhan/Sites/excise-mcp-dashboard/web/bootstrap/cache /home/subhan/Sites/excise-mcp-dashboard/web/storage/app/kb-uploads#}' \
+  /etc/systemd/system/apache2.service.d/override.conf
 
 sudo systemctl daemon-reload
 sudo apache2ctl configtest
