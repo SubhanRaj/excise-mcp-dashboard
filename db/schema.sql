@@ -227,7 +227,8 @@ CREATE TABLE IF NOT EXISTS policy_entries (
     published_at   TIMESTAMPTZ NULL,
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
-    deleted_at     TIMESTAMPTZ NULL
+    deleted_at     TIMESTAMPTZ NULL,
+    UNIQUE (source_ref)  -- policy text has no other stable natural key; the loader upserts on this
 );
 
 -- ---------------------------------------------------------------------------
@@ -264,6 +265,11 @@ CREATE TABLE IF NOT EXISTS etl.source_registry (        -- what to sync and how 
     schedule      TEXT NOT NULL,           -- cron expression
     enabled       BOOLEAN NOT NULL DEFAULT true,
     last_run_id   BIGINT REFERENCES etl.ingestion_runs(id)
+);
+
+CREATE TABLE IF NOT EXISTS etl.district_aliases (  -- known spelling variants, seeded as they turn up
+    alias         CITEXT NOT NULL PRIMARY KEY,
+    district_id   BIGINT NOT NULL REFERENCES districts(id)
 );
 
 -- ---------------------------------------------------------------------------

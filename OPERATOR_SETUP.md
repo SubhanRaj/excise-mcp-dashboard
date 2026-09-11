@@ -177,6 +177,26 @@ mariadb -h127.0.0.1 -u excise_mcp_kb_ro -p'CHANGE_ME_kb_ro' \
 
 ---
 
+## §ETL package (Milestone 1)
+
+```bash
+cd ~/Sites/excise-mcp-dashboard/etl
+python3.12 -m venv .venv
+.venv/bin/pip install -r requirements-dev.txt
+cp .env.example .env && chmod 600 .env
+# fill in DATABASE_URL_ETL with the etl_pw set in db/roles.sql
+```
+
+Verify:
+
+```bash
+.venv/bin/ruff check . && .venv/bin/ruff format --check .
+.venv/bin/mypy .
+.venv/bin/pytest
+```
+
+---
+
 ## §Google Cloud (Milestone 1, only if the Google connect feature is in scope)
 
 In <https://console.cloud.google.com>:
