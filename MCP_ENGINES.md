@@ -41,7 +41,7 @@ orchestrator/
     config.py          pydantic-settings Settings (one object)
     auth.py            bearer-token dependency
     schemas.py         Pydantic v2: QueryRequest/Response, SqlPlan, PlotPlan, Stage,
-                       ChatRequest, chat SSE events, tool schemas, errors
+                       ChatRequest, chat wire-event models, tool schemas, errors
     llm/
       client.py        Ollama async client, structured-output loop, retry, streaming
       prompts.py       system prompts, schema card, few-shot examples, chat system prompt
@@ -53,8 +53,9 @@ orchestrator/
       retrieve.py      FTS query over kb.chunks (+ pgvector path when enabled)
       embed.py         local Ollama embed model client (only when KB_EMBEDDINGS_ENABLED)
     chat/
-      loop.py          agentic tool-calling loop, streams SSE events
+      loop.py          agentic tool-calling loop, streams ndjson events
       tools.py         tool defs: run_sql_query, search_knowledge, make_chart
+      prompts.py       chat system prompt, tool JSON schemas for Ollama's `tools=`
     engines/
       base.py          IVisualizationEngine protocol + registry + errors
       python_engine.py implemented
@@ -75,8 +76,9 @@ orchestrator/
 | `GET` | `/health` | — | `{status, ollama, postgres, engines, models, kb_docs, embeddings}` — no auth; `models` is the registry with a pulled/not-pulled flag each |
 | `POST` | `/query` | `QueryRequest` | streamed `Stage` lines then a final `QueryResponse` (chunked), or a typed error |
 | `GET` | `/query/{id}/status` | — | last `Stage` for a running query (poll fallback) |
-| `POST` | `/chat` | `ChatRequest` | `text/event-stream` — `token` / `tool_call` / `tool_result` / `chart` / `done` / `error` events |
-| `POST` | `/kb/search` | `{query: str, k: int}` | `{chunks: [...]}` — retrieval only, no LLM (used by tests and the "cite sources" panel) |
+| `POST` | `/chat` | `ChatRequest` | streamed newline-delimited JSON (`application/x-ndjson`, matching `/query`) — `token` / `tool_call` / `tool_result` / `chart` / `done` / `error` lines |
+| `POST` | `/kb/search` | `{query: str, k: int}` | `{chunks: [...]}` — ranked FTS retrieval, no LLM (used by tests and the "cite sources" panel) |
+| `GET` | `/kb/documents` | — (paginated: `?page`) | `{documents: [...], total}` — unranked listing of `kb.documents` for the admin "browse the corpus" screen |
 
 Both `/query` and `/chat` require the bearer token. `/query` is the one-shot
 analytical form (question in, chart + table + SQL + summary out). `/chat` is
@@ -306,13 +308,16 @@ same idea as `~/Sites/pdf-markdown-pipeline`'s `config/ocr.php`: `key`,
 which registry models are actually pulled, and the Livewire picker offers only
 those.
 
-### SSE events
+### Streamed events
 
-`token` (assistant text delta), `tool_call` (`{name, arguments}` as the model
-emits it), `tool_result` (`{name, ok, summary}` — never the full row set),
-`chart` (`{plotly_json?, files}` when `make_chart` ran), `done`
-(`{message_id, tool_calls_count}`), `error` (`{stage, message}`). Laravel
-relays these to the browser and persists `messages` + `message_tool_calls`.
+One JSON object per line (`application/x-ndjson`, the same wire format
+`/query` already streams — not `text/event-stream`; `web/plan/webui.md` §9
+has the reasoning): `token` (assistant text delta), `tool_call` (`{name,
+arguments}` as the model emits it), `tool_result` (`{name, ok, summary}` —
+never the full row set), `chart` (`{plotly_json?, files}` when `make_chart`
+ran), `done` (`{message_id, tool_calls_count}`), `error` (`{stage,
+message}`). Laravel pipes these lines to the browser unmodified and persists
+`messages` + `message_tool_calls` as they arrive.
 
 ### Tools (`chat/tools.py`)
 
@@ -354,19 +359,19 @@ sequenceDiagram
     loop up to CHAT_MAX_TOOL_CALLS
         O->>M: stream a model turn
         M-->>O: token deltas
-        O-->>L: SSE token events
+        O-->>L: ndjson line: {"token": ...}
         L-->>B: append assistant text
         alt the turn made a tool call
-            O-->>L: SSE tool_call
+            O-->>L: ndjson line: {"tool_call": ...}
             O->>T: dispatch — same guard + read-only role + sandbox
             T-->>O: result (preview only, never the full row set)
-            O-->>L: SSE tool_result (+ chart if make_chart)
+            O-->>L: ndjson line: {"tool_result": ...} (+ {"chart": ...} if make_chart)
             O->>M: append the tool result and continue
         else no tool call
-            O-->>L: SSE done
+            O-->>L: ndjson line: {"done": ...}
         end
     end
-    Note over O: cap exceeded -> SSE error {stage: tool_loop}
+    Note over O: cap exceeded -> ndjson line: {"error": {stage: tool_loop}}
     L->>L: persist messages + message_tool_calls
 ```
 

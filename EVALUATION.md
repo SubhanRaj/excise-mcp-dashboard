@@ -217,7 +217,7 @@ The ask is an OpenWebUI-style chat window. Options weighed:
 | Approach | What it costs | Verdict |
 |---|---|---|
 | **Embed OpenWebUI** (Docker) behind a second subdomain, point its OpenAI endpoint at the orchestrator | `apt install docker` (absent), a second web app with its own SQLite/Postgres and its own auth/users to reconcile with the app login, a second tunnel, container updates | Rejected — a whole parallel app and Docker for a UI we can build |
-| **Native Livewire chat** against the orchestrator's `/chat` SSE stream | one more Livewire component + an Alpine SSE reader + `marked`/highlighter from the CDN already on the CSP | **Chosen** — reuses the auth, the layout system, the ledger, the deploy path |
+| **Native Livewire chat** against the orchestrator's `/chat` streamed ndjson response | one more Livewire component + a `fetch()`/`ReadableStream` reader + `marked`/highlighter from the CDN already on the CSP | **Chosen** — reuses the auth, the layout system, the ledger, the deploy path |
 | **Move LLM logic into PHP** with `prism-php/prism` (Ollama support, streaming, tool calls) | a capable package, but it duplicates the orchestrator's tool loop in a second language and splits the "who talks to Ollama" responsibility | Not now — noted as the path if the orchestrator is ever dropped |
 
 The orchestrator already is the MCP client and owns the SQL guard, the
@@ -344,7 +344,7 @@ From `~/Sites/upexcise-stats-dashboard`, `~/Sites/UP-excise-mailer`,
 | OTP-login + magic-link onboarding/reset auth | `upexcise-stats-dashboard/app/Http/Controllers/Auth/*`, `app/Mail/*`, Fortify wiring in `FortifyServiceProvider` | Port near-verbatim — internal-tool auth |
 | `SecurityHeaders` middleware (CSP, HSTS, `X-Frame-Options`, `X-Robots-Tag` noindex prefixes) | same, `app/Http/Middleware/SecurityHeaders.php` | Port; extend CSP with the FastAPI origin + Plotly/Chart.js CDN |
 | `LogMutation` middleware + `activity_logs` + `ActivityLog::record()` | same | Port as-is — audit every non-GET |
-| RBAC: flat `role` + `privileges` JSON + `designations` preset table | same, `app/Models/{User,Designation}.php` | Trim to `Admin` / `Analyst`; this tool has fewer surfaces |
+| RBAC: flat `role` + `privileges` JSON + `designation_id` + free-text `post` + `designations` preset table | same, `app/Models/{User,Designation}.php` | Trim to `Admin` / `Analyst` and four privileges; keep `designation_id`/`post`/`designations` at full shape — confirmed as the pattern four sibling apps converge on, not scope this tool should cut |
 | Rate-limiter definitions | `upexcise-stats-dashboard/app/Providers/AppServiceProvider.php` | Port `login`/`two-factor`/`password-reset`; add `ask`, `chat` |
 | IST display macro + auth-event audit listeners | same `AppServiceProvider.php` — `Carbon::macro('ist')` (store UTC, convert at display), `Login` / `Logout` -> `activity_logs` | Port both; every user-facing timestamp calls `->ist()` |
 | Cleave.js money input (`numeralThousandsGroupStyle: 'lakh'`, visible + hidden input, `wire:ignore`) | `excise-budget-tracker/resources/views/components/currency-input.blade.php` (cleave.js@1.6.0 from jsDelivr) | Reuse for the few money inputs (schedule config, report metadata); add jsDelivr `cleave.js` to the CSP |

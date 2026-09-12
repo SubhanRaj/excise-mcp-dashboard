@@ -24,8 +24,8 @@ timestamps are stored UTC and rendered in IST (`Asia/Kolkata`).
 1. Analyst signs in through the app's email-OTP login and types a question in
    the left pane.
 2. Livewire dispatches a `RunExciseQuery` job (Laravel queue, `database`
-   driver) and opens an SSE stream for stage updates. The web worker is not
-   blocked.
+   driver) and opens a `fetch()`-based poll of a plain route for stage
+   updates. The web worker is not blocked.
 3. The job calls `POST http://127.0.0.1:8085/query` on the orchestrator with a
    bearer token (shared secret) and the question plus recent conversation
    turns.
@@ -53,23 +53,30 @@ timestamps are stored UTC and rendered in IST (`Asia/Kolkata`).
 `Querying database -> Running analysis -> Rendering chart -> Complete`, plus a
 terminal `Failed: <stage>`. The orchestrator emits each transition on its
 response as it goes (chunked) or the job polls a `/query/{id}/status`
-endpoint; Laravel relays them to the browser over SSE, with `wire:poll` as the
-fallback if SSE behaves badly through the tunnel.
+endpoint; the job writes each stage onto its `queries` row, and a plain
+Laravel route the browser polls via `fetch()` reads that row for changes,
+with `wire:poll` as the fallback if the tunnel handles the fetch-based
+polling badly.
 
 ### Request path for a chat message
 
 1. Analyst opens the chat window, picks or starts a conversation, sends a
-   message. Livewire posts it and opens an SSE reader.
-2. `web/` calls `POST http://127.0.0.1:8085/chat` (bearer token) with the
-   message and the trimmed conversation history.
+   message. Livewire dispatches a `fetch()` `POST` to a plain route and reads
+   the response body incrementally via `ReadableStream` — not the browser's
+   native `EventSource`, which only issues `GET` and would put the message in
+   a query string.
+2. That route calls `POST http://127.0.0.1:8085/chat` (bearer token) with the
+   message and the trimmed conversation history, and pipes the orchestrator's
+   response straight through as it arrives.
 3. The orchestrator runs the tool loop (`MCP_ENGINES.md` §Chat and retrieval):
    the model streams text; when it needs data it calls `run_sql_query` (same
    guard + read-only run as the one-shot path), for the law it calls
    `search_knowledge` (FTS over `kb.chunks`, optionally vector), for a picture
    it calls `make_chart` (same `bwrap` sandbox). Each tool call and result is
-   an SSE event.
-4. `web/` relays the SSE stream to the browser and persists `messages` +
-   `message_tool_calls`; a chart is stored as a `chart_artifacts` row.
+   one line of the streamed newline-delimited JSON response (the same
+   `application/x-ndjson` format `/query` already uses).
+4. `web/` persists `messages` + `message_tool_calls` as lines arrive; a chart
+   is stored as a `chart_artifacts` row.
 5. Cited knowledge chunks render with a link to `docsrepo.exciseup.in`; SQL
    the model ran renders as an inline, copyable card.
 
@@ -316,7 +323,7 @@ flowchart TD
     CF <-->|reverse proxy| WebTier
     Ask -->|dispatch| Queue
     Queue -->|"/query bearer"| OneShot
-    Chat <-->|"/chat SSE bearer"| Loop
+    Chat <-->|"/chat ndjson bearer"| Loop
     Admin --- MDB
     Ask --- MDB
     Chat --- MDB
@@ -440,7 +447,7 @@ flowchart TD
     classDef ext fill:#d97706,stroke:#b45309,stroke-width:2px,color:#fff
 
     User(["Analyst"]):::client
-    Chat["Livewire Chat window<br/>SSE stream, markdown + code render, model picker"]:::app
+    Chat["Livewire Chat window<br/>fetch+ReadableStream (ndjson), markdown + code render, model picker"]:::app
     Orch["FastAPI orchestrator<br/>chat tool loop, model registry"]:::app
     Ollama(("Ollama<br/>chat + coder + embed, CPU")):::ai
 

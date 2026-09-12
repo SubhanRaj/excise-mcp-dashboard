@@ -45,11 +45,20 @@ namespace, so the engine uses gnuplot's own cairo terminals
 (`-dpngcairo`/`-dsvg`/`-dpdfcairo`) instead. `matlab_engine.py` /
 `wolfram_engine.py` are documented, unconfigured stubs behind
 `ENABLE_MATLAB` / `ENABLE_WOLFRAM` (default off). Work follows the
-`ROADMAP.md` milestone order; Milestone 5 (Laravel UI) is next — its design
-is still being decided by the owner, so treat its checklist as provisional
-until that session starts. Dependency installs so far: `web/`'s
-Composer + npm set, `etl/`'s venv (`+aiomysql`), `orchestrator/`'s venv — each
-the current milestone's `OPERATOR_SETUP.md` section at the time.
+`ROADMAP.md` milestone order; Milestone 5 (Laravel UI) is next — its full
+design is written up in `web/plan/webui.md` (reuse map, RBAC and data model,
+the Ask and Chat flows, the orchestrator `/chat` design, the model picker,
+a security checklist), so `ROADMAP.md`'s checklist for it now reflects real
+decisions rather than a draft. Two of those decisions correct this file:
+the chat stream is newline-delimited JSON (`application/x-ndjson`, matching
+`/query`'s existing wire format), not `text/event-stream` — every "SSE"
+reference below to `/chat`'s transport means that; and RBAC carries a
+`designations` preset table (`role` + `privileges` + `designation_id` +
+free-text `post`), the pattern four sibling Laravel apps converged on
+independently, not a bare `role`/`privileges` pair. Dependency installs so
+far: `web/`'s Composer + npm set, `etl/`'s venv (`+aiomysql`),
+`orchestrator/`'s venv — each the current milestone's `OPERATOR_SETUP.md`
+section at the time.
 
 ## What this project is
 
@@ -152,7 +161,7 @@ consumer appears.
 - **Chat window: native Livewire.** OpenWebUI is a separate Svelte app with
   its own database and needs Docker (absent). What is wanted is its UX —
   streaming, history, markdown/code rendering, a model picker — which Livewire
-  + Alpine + an SSE stream from the orchestrator cover. All LLM logic (chat
+  + Alpine + a streamed ndjson response from the orchestrator cover. All LLM logic (chat
   loop, tool calls, retrieval, SQL) stays in the Python orchestrator; `web/`
   renders and streams. If the LLM logic ever moves to PHP, `prism-php/prism`
   is the package to use, replacing the Python orchestrator rather than running
@@ -269,14 +278,16 @@ the 11/12 + Livewire 3 named in the original brief.
   and `chat` (per message) keyed by user id — start at 10/min, tune from the
   ledger.
 - **Chat UI**: a full-page Livewire `Chat` component. Conversation list in a
-  left rail, the active thread in the main pane, an Alpine-driven SSE reader
-  appending assistant token deltas. Markdown + fenced code render client-side
+  left rail, the active thread in the main pane, a `fetch()` + `ReadableStream`
+  reader (not `EventSource`, which is GET-only and would put the message in a
+  query string) parsing the orchestrator's ndjson lines and appending
+  assistant token deltas. Markdown + fenced code render client-side
   (`marked` + a highlighter from jsDelivr, on the CSP allowlist). Tool calls
   the model makes (`run_sql_query`, `search_knowledge`, `make_chart`) render
   as inline cards — the SQL, the retrieved snippets with links to
   `docsrepo.exciseup.in`, the chart. History persists in `conversations` /
   `messages` / `message_tool_calls`. No streaming LLM logic in PHP — `web/`
-  reads the orchestrator's `/chat` SSE and relays it.
+  reads the orchestrator's `/chat` ndjson stream and pipes it through.
 - **Model picker**: a `config/models.php` registry (`key`, `label`, `role`,
   Ollama tag), mirroring `~/Sites/pdf-markdown-pipeline`'s `config/ocr.php` and
   its "Run OCR" dropdown. The chat composer shows a dropdown of the registry
@@ -365,8 +376,9 @@ the 11/12 + Livewire 3 named in the original brief.
 - **Styling/UX**: split-view is a two-pane flex layout, chat left, canvas
   right, stacking to one column under `lg`. Streaming stage updates
   (`Querying database -> Running analysis -> Rendering chart -> Complete`) come
-  over SSE from a Laravel route that polls the job/orchestrator; fall back to
-  `wire:poll` if SSE behind the tunnel misbehaves.
+  from a plain Laravel route the browser polls via `fetch()`, which itself
+  polls the job's DB status; fall back to `wire:poll` if the tunnel handles
+  the fetch-based polling badly.
 
 ## Python conventions (`orchestrator/`, `etl/`)
 
@@ -405,9 +417,10 @@ to copy — this is the first. Set the house style here.
   web app renders `stage` in the UI.
 - **No broad `except Exception: pass`.** Catch what you can handle; let the rest
   surface to the request-id'd handler.
-- **Streaming** (`/chat`): FastAPI `StreamingResponse` yielding SSE events
-  (`token`, `tool_call`, `tool_result`, `done`, `error`). Generation is
-  cancellable — a client disconnect aborts the Ollama call and any in-flight
+- **Streaming** (`/chat`): FastAPI `StreamingResponse` yielding newline-delimited
+  JSON lines (`application/x-ndjson`, matching `/query`'s existing format, not
+  `text/event-stream`) — `token`, `tool_call`, `tool_result`, `done`, `error`.
+  Generation is cancellable — a client disconnect aborts the Ollama call and any in-flight
   tool.
 - **Tool loop**: the chat agent loop lives in `orchestrator/app/chat/`. Tools
   are the same primitives the one-shot pipeline uses (`sql/`, `kb/`,
@@ -467,7 +480,7 @@ End with the co-author trailer the session is configured for.
   `/login`.
 - Customization panel: a changed preference persists across reload (cookie +
   `users.ui_prefs`) and Reset restores defaults; timestamps render in IST.
-- The SSE/poll stage endpoint returns the stage sequence for a running job.
+- The stage-polling endpoint returns the stage sequence for a running job.
 
 **`orchestrator/` (pytest, `pytest-asyncio`):**
 - Every tool schema round-trips: model -> JSON Schema -> sample LLM payload ->
@@ -496,7 +509,7 @@ End with the co-author trailer the session is configured for.
   call routed through the same guard + read-only run + sandbox; a law question
   emits `search_knowledge`; a mixed question emits both; the loop terminates
   at a max tool-call count with a typed error.
-- Streaming: `/chat` yields SSE token deltas and tool-call events in order;
+- Streaming: `/chat` yields ndjson token-delta and tool-call lines in order;
   a client disconnect cancels the in-flight generation.
 
 **`etl/` (pytest):**

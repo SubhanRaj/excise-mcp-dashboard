@@ -320,6 +320,11 @@ inert stubs.
 
 ## Milestone 5 — Laravel UI: analytical form, chat window, admin
 
+Full design in `web/plan/webui.md` — reuse map, RBAC and data model, the Ask
+and Chat flows end to end, the orchestrator `/chat` design, the model picker,
+and a security checklist. This checklist tracks the same scope; the plan has
+the detail and the reasoning behind each decision below.
+
 - [ ] `web/` scaffold: Laravel 13 + Livewire 4 + Fortify, sibling dependency
       set + `laravel/socialite`; `php artisan db:provision` ->
       `excise_mcp_dashboard_local` (MariaDB, scoped user)
@@ -346,8 +351,12 @@ inert stubs.
       `LogMutation`, `HasPrivilege` / `IsAdmin`. Every Livewire write method
       re-checks its privilege — `livewire/update` skips route middleware
       (`SECURITY.md` §3)
-- [ ] RBAC trimmed to `Admin` / `Analyst`; `AppServiceProvider` rate limiters
-      incl. `ask` and `chat`; `Carbon::macro('ist')` and the `Login` /
+- [ ] RBAC: `role` (`Admin`/`Analyst`) + `privileges` JSON + `designation_id` +
+      free-text `post`, plus a `designations` preset table seeded with the
+      excise-specific rank names `excise-budget-tracker`/`UP-excise-mailer`
+      already seed — the pattern four sibling Laravel apps converged on
+      independently (`web/plan/webui.md` §6); `AppServiceProvider` rate
+      limiters incl. `ask` and `chat`; `Carbon::macro('ist')` and the `Login` /
       `Logout` -> `activity_logs` listeners ported from the sibling
 - [ ] Formatting: store UTC, render IST via `->ist()`; `₹` + `en-IN` grouping
       with a rupees / thousands / lakh / crore switcher on money figures;
@@ -359,18 +368,28 @@ inert stubs.
       `tables_used`, row_count, timings JSON, status, request_id),
       `chart_artifacts` (`spec` JSON + disk file paths), `query_feedback`,
       `kb_uploads`, `google_connections`, `users.ui_prefs` (JSON)
+- [ ] Orchestrator `orchestrator/app/chat/` (`tools.py`, `loop.py`,
+      `prompts.py`; `ChatRequest` + tool schemas in the existing root
+      `schemas.py`) and one new route, `POST /chat` — the bounded tool loop
+      over the existing `sql/`, `kb/`, `engines/` primitives, no parallel
+      implementation (`MCP_ENGINES.md` §Chat and retrieval,
+      `web/plan/webui.md` §9). Streams the same newline-delimited JSON
+      `/query` already uses, not `text/event-stream`
 - [ ] `RunExciseQuery` job (one-shot `/query`); queue worker systemd `--user`
       unit with `--timeout` above the orchestrator timeout
 - [ ] Livewire `Ask` component: split-view (chat left, canvas right, one
-      column under `lg`); submit -> job -> SSE stage stream
+      column under `lg`); submit -> job -> a plain route the browser polls via
+      `fetch()` for DB-status stage changes
       (`Querying database -> Running analysis -> Rendering chart -> Complete`),
       `wire:poll` fallback
-- [ ] Livewire `Chat` component: conversation list rail, active thread,
-      Alpine SSE reader appending assistant tokens; tool-call cards (SQL,
-      cited knowledge snippets with `docsrepo.exciseup.in` links, chart);
-      history persists and resumes; markdown/code render client-side,
-      sanitised; model picker (`config/models.php` registry, offered entries
-      filtered by orchestrator `/health`, sent as `model`, server-validated)
+- [ ] Livewire `Chat` component: conversation list rail, active thread, a
+      `fetch()` + `ReadableStream` reader (not `EventSource`, which is
+      GET-only and would put the message in a query string) appending
+      assistant tokens; tool-call cards (SQL, cited knowledge snippets with
+      `docsrepo.exciseup.in` links, chart); history persists and resumes;
+      markdown/code render client-side, sanitised; model picker
+      (`config/models.php` registry, offered entries filtered by orchestrator
+      `/health`, sent as `model`, server-validated)
 - [ ] Chart canvas: interactive `chart.plotly.json`; data table
       (`rows_preview`, paginated); generated SQL (collapsed, copyable); export
       PNG / SVG / PDF (artifact files) + CSV / XLSX (rows, reuse the sibling
@@ -380,8 +399,10 @@ inert stubs.
 - [ ] Admin: user CRUD (ported); "Connected sources" (Google connect /
       disconnect, list Drive folders / Sheets / Docs, register as
       `source_registry` rows, show "reconnect needed"); "Knowledge base"
-      (upload `.md`, browse the ingested corpus, withdraw an upload); a
-      read-only view of `etl.ingestion_runs` / `etl.quarantine`
+      (upload `.md`, browse the ingested corpus via a new orchestrator
+      `GET /kb/documents` — paginated, no ranking, alongside the existing
+      ranked `/kb/search` — withdraw an upload); a read-only view of
+      `etl.ingestion_runs` / `etl.quarantine`
 - [x] `deploy/`: Apache vhost on `127.0.0.1:8084`, `DocumentRoot web/public`;
       owner runs `OPERATOR_SETUP.md` §Apache (append `ReadWritePaths`, incl.
       the `kb-uploads` disk path) — done ahead of schedule via
@@ -400,7 +421,7 @@ inert stubs.
       oversize rejected; path traversal blocked
 - [ ] Google OAuth: connect redirect scopes; callback stores encrypted token +
       row; disconnect deletes it; a token never appears in a log or response
-- [ ] `SecurityHeaders` present; `activity_logs` on non-GET; SSE stage
+- [ ] `SecurityHeaders` present; `activity_logs` on non-GET; the stage-polling
       endpoint returns the sequence
 - [ ] customization panel: a pref change persists across reload (cookie +
       `users.ui_prefs`), Reset restores defaults, timestamps render IST

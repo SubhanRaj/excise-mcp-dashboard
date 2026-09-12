@@ -384,8 +384,15 @@ from the sibling. Rate limiters `login` / `two-factor` / `password-reset`
 ported (`AppServiceProvider`).
 
 Roles: `Admin` (manage users, see all ledgers, manage the ETL source registry)
-and `Analyst` (ask questions, see own ledger, export). RBAC copied and trimmed
-from the sibling.
+and `Analyst` (ask questions, see own ledger, export). The full shape —
+`role` + `privileges` JSON + `designation_id` (FK to a `designations` preset
+table) + a free-text `post` column — is ported from the pattern
+`excise-budget-tracker`, `UP-excise-mailer`, and `upexcise-stats-dashboard`
+converged on independently, trimmed to this app's two roles and four
+privileges (`web/plan/webui.md` §6 has the full design and the seeded
+designation data). A `designations.default_privileges` preset is copied onto
+`users.privileges` at account creation, not live-linked — editing a user's
+privileges afterward doesn't stay tied to their designation.
 
 The tunnel is the only inbound path — `cloudflared` dials out over loopback, no
 firewall port is opened, and Apache binds `127.0.0.1:8084`. The orchestrator's
@@ -395,7 +402,8 @@ firewall port is opened, and Apache binds `127.0.0.1:8084`. The orchestrator's
 
 - Port `SecurityHeaders` middleware: CSP allowing Tailwind Play CDN, jsDelivr
   (Chart.js / Plotly, the chat's `marked` + highlighter), Google Fonts, and
-  `connect-src 'self'` for the SSE endpoints; HSTS; `X-Frame-Options: DENY`;
+  `connect-src 'self'` for the streaming endpoints (`fetch()`-based, ndjson —
+  not `EventSource`, so no separate origin to allow); HSTS; `X-Frame-Options: DENY`;
   `X-Content-Type-Options: nosniff`; `Referrer-Policy: same-origin`;
   `X-Robots-Tag: noindex` on the whole site (this is not a public dashboard).
 - Port `LogMutation` — an `activity_logs` row for every non-GET authenticated
