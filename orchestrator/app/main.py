@@ -20,7 +20,10 @@ from app.auth import require_bearer_token
 from app.config import settings
 from app.engines.base import available as available_engines
 from app.engines.base import register
+from app.engines.matlab_engine import MatlabEngine
+from app.engines.octave_engine import OctaveEngine
 from app.engines.python_engine import PythonEngine
+from app.engines.wolfram_engine import WolframEngine
 from app.kb.retrieve import retrieve as kb_retrieve
 from app.llm.client import OllamaClient
 from app.pipeline import run_query
@@ -55,6 +58,11 @@ app_context: AppContext | None = None
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     global app_context
     register(PythonEngine())
+    register(OctaveEngine())
+    if settings.enable_matlab:
+        register(MatlabEngine())
+    if settings.enable_wolfram:
+        register(WolframEngine())
     http_client = httpx.AsyncClient()
     ollama = OllamaClient(settings.ollama_base_url, http_client)
     ctx = AppContext(http_client=http_client, ollama=ollama)

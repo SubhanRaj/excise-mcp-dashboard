@@ -31,11 +31,23 @@ written but not yet applied — needs `sudo -u postgres`, a pending
 `OPERATOR_SETUP.md` §Data bank step. What Milestone 3 leaves for later
 milestones: the admin `.md` upload screen and wiring `search_knowledge` into
 a chat tool loop (both need `web/`, Milestone 5+), and Google Docs/Drive into
-`kb.*` (waits on Milestone 1's Google ingestion, not started). Work follows
-the `ROADMAP.md` milestone order; Milestone 4 (second engine) and Milestone 5
-(Laravel UI) are next — M5's design is still being decided by the owner, so
-treat its checklist as provisional until that session starts. Dependency
-installs so far: `web/`'s
+`kb.*` (waits on Milestone 1's Google ingestion, not started). Milestone 4
+(the Octave engine) is done — `engines/octave_engine.py` runs `octave-cli`
+under the same `bwrap` sandbox as the Python engine, tested green (`ruff` /
+`mypy --strict` / `pytest`, 45 tests) including a live render against the real
+`octave-cli` on the box. That live run surfaced three gaps `MCP_ENGINES.md`
+now documents: GNU Octave has no `table`/`readtable`, so the query result
+hands off as generated Octave variables instead; a new figure doesn't inherit
+the `graphics_toolkit` global default, fixed by pinning
+`__graphics_toolkit__` on the figure object directly; and `print()`'s
+`-dpng`/`-dpdf` route through Ghostscript, which fails inside the sandbox
+namespace, so the engine uses gnuplot's own cairo terminals
+(`-dpngcairo`/`-dsvg`/`-dpdfcairo`) instead. `matlab_engine.py` /
+`wolfram_engine.py` are documented, unconfigured stubs behind
+`ENABLE_MATLAB` / `ENABLE_WOLFRAM` (default off). Work follows the
+`ROADMAP.md` milestone order; Milestone 5 (Laravel UI) is next — its design
+is still being decided by the owner, so treat its checklist as provisional
+until that session starts. Dependency installs so far: `web/`'s
 Composer + npm set, `etl/`'s venv (`+aiomysql`), `orchestrator/`'s venv — each
 the current milestone's `OPERATOR_SETUP.md` section at the time.
 

@@ -4,11 +4,13 @@
 
 import asyncio
 import getpass
+import re
 import shutil
 import sys
 from pathlib import Path
 from uuid import uuid4
 
+import pandas as pd
 import structlog
 
 from app.config import settings
@@ -20,6 +22,39 @@ logger = structlog.get_logger()
 # it actually has to kill the child; some report a bare 124. Treat either as
 # a timeout rather than a script crash.
 _TIMEOUT_EXIT_CODES = {124, 137}
+
+_ENGINE_SCRIPT_FILENAMES = {"python": "chart.py", "octave": "chart.m"}
+_ENGINE_DATA_FILENAMES = {"python": "data.parquet", "octave": "data.m"}
+
+
+def _octave_identifier(column: str) -> str:
+    ident = re.sub(r"\W", "_", column)
+    if not ident or ident[0].isdigit():
+        ident = f"col_{ident}"
+    return ident
+
+
+def _octave_data_script(data_path: Path) -> str:
+    """Renders the query result as plain Octave variable assignments, one per
+    column. GNU Octave has no `table` type and does not implement `readtable`
+    (confirmed against a live `octave-cli` render — it names that MATLAB
+    function outright as not implemented, and the `octave-io` package doesn't
+    add it either, only spreadsheet I/O) — each column becomes a numeric
+    column vector or a cell array of strings instead, named after its SQL
+    column alias.
+    """
+    df = pd.read_parquet(data_path)
+    lines: list[str] = []
+    for column in df.columns:
+        name = _octave_identifier(str(column))
+        series = df[column]
+        if pd.api.types.is_numeric_dtype(series):
+            values = ", ".join("NaN" if pd.isna(v) else repr(float(v)) for v in series)
+            lines.append(f"{name} = [{values}]';")
+        else:
+            values = ", ".join('"' + str(v).replace('"', '""') + '"' for v in series)
+            lines.append(f"{name} = {{{values}}}';")
+    return "\n".join(lines) + "\n"
 
 
 def _scratch_root() -> Path:
@@ -34,7 +69,7 @@ def _scratch_root() -> Path:
     return fallback
 
 
-def _build_command(*, run_dir: Path, venv_root: str, unit_name: str) -> list[str]:
+def _build_command(*, run_dir: Path, venv_root: str, unit_name: str, engine: str) -> list[str]:
     bwrap_cmd = [
         "bwrap",
         "--unshare-all",
@@ -47,6 +82,12 @@ def _build_command(*, run_dir: Path, venv_root: str, unit_name: str) -> list[str
         "--setenv",
         "HOME",
         "/scratch",
+        # `--clearenv` drops LANG along with everything else, leaving the C/POSIX
+        # locale — Ghostscript's iconv step (reached via Octave's gnuplot print
+        # path) fails outright without one. Harmless for the Python engine too.
+        "--setenv",
+        "LANG",
+        "C.utf8",
         "--setenv",
         "MPLBACKEND",
         "Agg",
@@ -85,24 +126,33 @@ def _build_command(*, run_dir: Path, venv_root: str, unit_name: str) -> list[str
         bwrap_cmd += ["--ro-bind", "/lib64", "/lib64"]
     if Path("/etc/alternatives").exists():
         bwrap_cmd += ["--ro-bind", "/etc/alternatives", "/etc/alternatives"]
-    if Path("/opt/google/chrome").exists():
-        # kaleido>=1.0 (plotly static image export) drives a real Chrome via
-        # choreographer instead of the old pure-binary renderer — the box's
-        # system Chrome, otherwise outside every other bind mount here.
-        bwrap_cmd += ["--ro-bind", "/opt/google/chrome", "/opt/google/chrome"]
-    # `venv_root/bin/python` is a symlink to the pyenv-managed interpreter
-    # outside the venv (pyenv installs venvs with symlinked, not copied,
-    # binaries) — bind that real target too so the symlink resolves. Python's
-    # own venv detection keys off the invoked path (venv_root/bin/python,
-    # bound below), not this target, so site-packages still resolve to the
-    # venv.
-    real_python_home = str(Path(sys.executable).resolve().parents[1])
-    if real_python_home not in {venv_root, "/usr"} and Path(real_python_home).exists():
-        bwrap_cmd += ["--ro-bind", real_python_home, real_python_home]
+    if engine == "python":
+        if Path("/opt/google/chrome").exists():
+            # kaleido>=1.0 (plotly static image export) drives a real Chrome via
+            # choreographer instead of the old pure-binary renderer — the box's
+            # system Chrome, otherwise outside every other bind mount here.
+            bwrap_cmd += ["--ro-bind", "/opt/google/chrome", "/opt/google/chrome"]
+        # `venv_root/bin/python` is a symlink to the pyenv-managed interpreter
+        # outside the venv (pyenv installs venvs with symlinked, not copied,
+        # binaries) — bind that real target too so the symlink resolves. Python's
+        # own venv detection keys off the invoked path (venv_root/bin/python,
+        # bound below), not this target, so site-packages still resolve to the
+        # venv.
+        real_python_home = str(Path(sys.executable).resolve().parents[1])
+        if real_python_home not in {venv_root, "/usr"} and Path(real_python_home).exists():
+            bwrap_cmd += ["--ro-bind", real_python_home, real_python_home]
+        bwrap_cmd += ["--ro-bind", venv_root, venv_root]
+    elif engine == "octave" and Path("/etc/fonts").exists():
+        # ponytail: octave's `print()` goes through gnuplot's pngcairo/svg/pdfcairo
+        # terminals, which call fontconfig for text layout — fontconfig needs
+        # /etc/fonts to find its config and font sources (font files themselves
+        # are under /usr/share/fonts, already covered by the /usr bind above).
+        # Unverified against a real octave-cli render (not installed on this box
+        # yet, OPERATOR_SETUP.md §Octave) — if a live run still fails to find a
+        # font, that's the upgrade path: bind /var/cache/fontconfig too, or check
+        # `fc-list` inside the sandbox.
+        bwrap_cmd += ["--ro-bind", "/etc/fonts", "/etc/fonts"]
     bwrap_cmd += [
-        "--ro-bind",
-        venv_root,
-        venv_root,
         "--proc",
         "/proc",
         "--dev",
@@ -119,8 +169,11 @@ def _build_command(*, run_dir: Path, venv_root: str, unit_name: str) -> list[str
         "--cap-drop",
         "ALL",
         "--",
-        f"{venv_root}/bin/python",
-        "/scratch/chart.py",
+        *(
+            [f"{venv_root}/bin/python", "/scratch/chart.py"]
+            if engine == "python"
+            else ["octave-cli", "--no-gui", "--norc", "--eval", "source('/scratch/chart.m')"]
+        ),
     ]
 
     timeout_cmd = ["timeout", "--signal=KILL", str(settings.sandbox_wallclock_seconds), *bwrap_cmd]
@@ -163,17 +216,27 @@ def _build_command(*, run_dir: Path, venv_root: str, unit_name: str) -> list[str
     ]
 
 
-async def run_in_sandbox(*, script: str, data_path: Path) -> tuple[Path, str]:
-    """Writes `script` + copies data_path into a fresh scratch dir, runs it
+async def run_in_sandbox(
+    *, script: str, data_path: Path, engine: str = "python"
+) -> tuple[Path, str]:
+    """Writes `script` + hands off data_path into a fresh scratch dir, runs it
     under bwrap, returns (scratch_dir, stdout_tail). Raises SandboxTimeoutError
     / SandboxViolationError. The caller collects declared outputs from
     scratch_dir and is responsible for removing it afterward (cleanup_scratch).
+
+    `data_path` is always the Parquet file the pipeline wrote from the SQL
+    result. For `engine="python"` it's copied in as-is; for `engine="octave"`
+    it's converted to a generated `.m` variable-assignment file instead, since
+    Octave has no Parquet or Excel-table reader (`_octave_data_script`).
     """
     run_id = uuid4().hex
     run_dir = _scratch_root() / run_id
     run_dir.mkdir(mode=0o700, parents=True)
-    (run_dir / "chart.py").write_text(script)
-    shutil.copy(data_path, run_dir / "data.parquet")
+    (run_dir / _ENGINE_SCRIPT_FILENAMES[engine]).write_text(script)
+    if engine == "octave":
+        (run_dir / _ENGINE_DATA_FILENAMES[engine]).write_text(_octave_data_script(data_path))
+    else:
+        shutil.copy(data_path, run_dir / _ENGINE_DATA_FILENAMES[engine])
     (run_dir / "tmp").mkdir(mode=0o700)
     (run_dir / ".mpl").mkdir(mode=0o700)
 
@@ -183,7 +246,7 @@ async def run_in_sandbox(*, script: str, data_path: Path) -> tuple[Path, str]:
         )
 
     unit_name = f"excise-sandbox-{run_id}.scope"
-    cmd = _build_command(run_dir=run_dir, venv_root=sys.prefix, unit_name=unit_name)
+    cmd = _build_command(run_dir=run_dir, venv_root=sys.prefix, unit_name=unit_name, engine=engine)
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
     )

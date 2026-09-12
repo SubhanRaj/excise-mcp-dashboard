@@ -16,7 +16,7 @@ class QueryRequest(BaseModel):
     conversation_id: str
     question: str
     history: list[Turn] = Field(default_factory=list)
-    engine_hint: Literal["python"] | None = None
+    engine_hint: Literal["python", "octave"] | None = None
     model: str | None = None
     row_limit: int = 5000
 

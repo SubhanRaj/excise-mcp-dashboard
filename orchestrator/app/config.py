@@ -39,6 +39,13 @@ class Settings(BaseSettings):
     query_row_limit_default: int = 5000
     statement_timeout: str = "10s"
 
+    # MCP_ENGINES.md §3/§4 — both engines are documented stubs with no MATLAB
+    # licence / matlab-mcp-server or Wolfram Engine installed on this box.
+    # is_available() is always False regardless of this flag; it only gates
+    # whether main.py registers the stub at all.
+    enable_matlab: bool = False
+    enable_wolfram: bool = False
+
     @property
     def allowed_models(self) -> list[str]:
         return [m.strip() for m in self.ollama_allowed_models.split(",") if m.strip()]

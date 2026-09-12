@@ -77,27 +77,64 @@ def build_sql_prompt(question: str, schema_card: str, history: list[Turn]) -> st
     )
 
 
-PLOT_SYSTEM_PROMPT = """You are writing a short Python script to chart a SQL
-result for a UP Excise analyst. A pandas DataFrame `df` is already loaded and
-an `OUT` directory path is already set — do not read any other file, do not
-open a socket, do not import anything beyond pandas/numpy/matplotlib/seaborn/
-plotly (already imported as pd/np/plt/sns/go/px if you need them).
+PLOT_SYSTEM_PROMPT = """You are choosing a charting engine and writing a short
+script to chart a SQL result for a UP Excise analyst. Do not read any file
+other than the data already loaded for you, do not open a socket, do not
+import or use anything beyond what your chosen engine's line below says is
+already loaded.
 
-Build a Plotly figure and call `fig.write_json(f"{OUT}/chart.plotly.json")`.
-That is the only output to produce right now — do not call `fig.write_image`
-or `plt.savefig`, and set `outputs` to `["plotly_json"]` only. Only write
-`chart.plotly.json`, only into OUT. Pick chart types that make sense for
-excise data: a line for a trend over financial years, a bar for a comparison
-across districts/categories.
+Pick the "engine" that best fits the outputs you want, then write "script"
+as a script for that engine only — do not mix syntax from the other engine.
+Pick chart types that make sense for excise data: a line for a trend over
+financial years, a bar for a comparison across districts/categories.
 """
 
+# MCP_ENGINES.md §Routing — one line per engine, no heuristic beyond this: the
+# LLM reads these and picks. Only engines actually in the live registry are
+# ever listed, so an unavailable engine (octave not installed, matlab/wolfram
+# stubs) is never offered.
+_ENGINE_CAPABILITIES = {
+    "python": (
+        "python: a pandas DataFrame `df` is already loaded, `OUT` is the output "
+        "directory. Interactive and static output. For an interactive chart, "
+        'build a Plotly figure and call `fig.write_json(f"{OUT}/chart.plotly.json")` '
+        'with outputs=["plotly_json"]. For a static chart, call `fig.write_image(...)` '
+        'or `plt.savefig(...)` into OUT with outputs=["png"|"svg"|"pdf"].'
+    ),
+    "octave": (
+        "octave: each result column is already loaded as a plain variable "
+        "named after its column alias (a numeric column vector, or a cell "
+        "array of strings for text) — no `table`/`readtable`, Octave doesn't "
+        "have it. `OUT` is the output directory, and a figure is already open "
+        "(invisible, non-interactive) — call a plotting function like "
+        "`plot`/`bar`/`histogram` directly, do not create a new figure. "
+        "Static output only, no interactive chart — use Octave's `print()` "
+        'with a cairo device: `print(fullfile(OUT, "chart.png"), '
+        "'-dpngcairo')`, `-dsvg` for chart.svg, `-dpdfcairo` for chart.pdf. "
+        "Never `-dpng` or `-dpdf` (they fail in this sandbox) and never set "
+        'outputs to "plotly_json".'
+    ),
+}
 
-def build_plot_prompt(question: str, columns: list[str], dtypes: list[str], row_count: int) -> str:
+
+def build_plot_prompt(
+    question: str,
+    columns: list[str],
+    dtypes: list[str],
+    row_count: int,
+    available_engines: list[str],
+) -> str:
     columns_block = "\n".join(f"  {c}: {d}" for c, d in zip(columns, dtypes, strict=True))
+    capability_block = "\n".join(
+        f"- {_ENGINE_CAPABILITIES[name]}"
+        for name in available_engines
+        if name in _ENGINE_CAPABILITIES
+    )
     return (
         f"{PLOT_SYSTEM_PROMPT}\n\n"
+        f"Available engines:\n{capability_block}\n\n"
         f"The question was: {question}\n\n"
-        f"df has {row_count} rows and these columns:\n{columns_block}\n\n"
+        f"The data has {row_count} rows and these columns:\n{columns_block}\n\n"
         "Return only the JSON the schema asks for, no prose, no markdown fence."
     )
 

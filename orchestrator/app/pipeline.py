@@ -53,6 +53,16 @@ def _json_safe_rows(rows: list[dict[str, object]]) -> list[dict[str, object]]:
     return [{k: _json_safe(v) for k, v in row.items()} for row in rows]
 
 
+def _resolve_outputs(requested: list[str], supported: frozenset[str]) -> list[str]:
+    """Drops any output the chosen engine can't produce (e.g. a stale
+    `plotly_json` request against Octave). Falls back to a static chart
+    (`png`, in every engine's supported_outputs) rather than rendering
+    nothing when the LLM's plan doesn't match the engine it picked.
+    """
+    kept = [o for o in requested if o in supported]
+    return kept or ["png"]
+
+
 def _write_parquet(df: pd.DataFrame, request_id: str) -> Path:
     fd, path_str = tempfile.mkstemp(prefix=f"excise-{request_id}-", suffix=".parquet")
     os.close(fd)
@@ -112,28 +122,30 @@ async def run_query(
     chart: ChartArtifact | None = None
     engine_used = "python"
     if row_count > 0:
+        avail = available_engines()
         t0 = time.monotonic()
         plot_prompt = build_plot_prompt(
-            request.question, list(df.columns), [str(t) for t in df.dtypes], row_count
+            request.question, list(df.columns), [str(t) for t in df.dtypes], row_count, avail
         )
         plot_plan = await ollama.generate_structured(
             model=sql_model, prompt=plot_prompt, response_model=PlotPlan, stage="plan_plot"
         )
         engine_used = request.engine_hint or (
-            plot_plan.engine if plot_plan.engine in available_engines() else "python"
+            plot_plan.engine if plot_plan.engine in avail else "python"
         )
         timings_ms["plan_plot"] = int((time.monotonic() - t0) * 1000)
         await emit(Stage(name="plan_plot", status="ok", ms=timings_ms["plan_plot"]))
 
         t0 = time.monotonic()
         engine = get_engine(engine_used)
+        outputs = _resolve_outputs([str(o) for o in plot_plan.outputs], engine.supported_outputs)
         data_path = _write_parquet(df, request_id)
         try:
             render_result = await engine.render(
                 RenderRequest(
                     script=plot_plan.script,
                     data_path=data_path,
-                    outputs=[str(o) for o in plot_plan.outputs],
+                    outputs=outputs,
                     title=plot_plan.title,
                     scratch_dir=data_path.parent,
                 )

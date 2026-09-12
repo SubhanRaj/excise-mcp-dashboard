@@ -15,11 +15,13 @@ real seed data. Milestone 3's retrieval plumbing is done — the
 pdf-markdown-pipeline sync, the chunker, and Postgres FTS via `/kb/search`,
 tested live against the real corpus (334 rows); the admin upload screen,
 Google Docs/Drive into `kb.*`, and wiring `search_knowledge` into a chat loop
-wait on `web/` (M5) and the rest of Google ingestion (M1). The `web/`
-skeleton, `db/` data bank, `etl/` core, and `orchestrator/`'s pipeline +
-knowledge base are merged into `dev`. **Next up: Milestone 4 (second engine)
-and Milestone 5 (Laravel UI)** — M5's detailed design is still being decided
-by the owner, so its checklist below may still change before work starts.
+wait on `web/` (M5) and the rest of Google ingestion (M1). Milestone 4 (the
+Octave engine) is done, tested live against a real `octave-cli` render in the
+sandbox. The `web/` skeleton, `db/` data bank, `etl/` core, and
+`orchestrator/`'s pipeline + knowledge base + second engine are merged into
+`dev`. **Next up: Milestone 5 (Laravel UI)** — its detailed design is still
+being decided by the owner, so its checklist below may still change before
+work starts.
 
 Every `sudo` / install / external-console step is collected, copy-pasteable,
 in [`OPERATOR_SETUP.md`](OPERATOR_SETUP.md), grouped by the milestone that
@@ -290,23 +292,28 @@ turning on `pgvector` is a config flag plus a backfill (not a rebuild).
 
 ## Milestone 4 — Second engine (GNU Octave); proprietary adapters stubbed
 
-- [ ] Owner runs `OPERATOR_SETUP.md` §Octave (`sudo apt install octave`)
-- [ ] `engines/octave_engine.py`: CSV hand-off, `octave-cli --no-gui --norc`
-      under the same sandbox, `print()` to `chart.{png,svg,pdf}`,
+- [x] Owner runs `OPERATOR_SETUP.md` §Octave (`sudo apt install octave`)
+- [x] `engines/octave_engine.py`: generated `.m` variable hand-off (Octave has
+      no `readtable`), `octave-cli --no-gui --norc` under the same sandbox,
+      `print()` to `chart.{png,svg,pdf}` via gnuplot's cairo terminals,
       `supported_outputs = {"png","svg","pdf"}`, `is_available()`
-- [ ] `sandbox/bwrap.py` gains an Octave profile
-- [ ] Router prompt gains one capability line for `octave`; the chat
-      `make_chart` tool can target it too
-- [ ] Tests: an `.m` script renders a PNG in the sandbox; unavailable Octave
-      is skipped cleanly; pipeline falls back to a static chart when a
-      no-Plotly-JSON engine is chosen
-- [ ] `engines/matlab_engine.py` and `engines/wolfram_engine.py` as documented
+- [x] `sandbox/bwrap.py` gains an Octave profile (script/data filenames, the
+      `octave-cli` command line, a `LANG` for Ghostscript's iconv step, and a
+      conditional `/etc/fonts` bind for gnuplot's text rendering)
+- [x] Router prompt gains one capability line for `octave` — the chat
+      `make_chart` tool has nothing to target yet, since the chat tool loop
+      itself is still Milestone 5+ (Milestone 3 above has the same deferral
+      for `search_knowledge`)
+- [x] Tests: an `.m` script renders a PNG in the sandbox (live, against a real
+      `octave-cli`); unavailable Octave is skipped cleanly; pipeline falls
+      back to a static chart when a no-Plotly-JSON engine is chosen
+- [x] `engines/matlab_engine.py` and `engines/wolfram_engine.py` as documented
       stubs raising `EngineUnavailable("not configured")`, behind
       `ENABLE_MATLAB` / `ENABLE_WOLFRAM` (default off), integration notes from
       `MCP_ENGINES.md` in the docstrings. No dependency added.
 
-**Done when:** the model can choose `python` or `octave` from both the
-one-shot path and the chat, both run in the sandbox, proprietary adapters are
+**Done when:** the model can choose `python` or `octave` from the one-shot
+path, both run in the sandbox, proprietary adapters are
 inert stubs.
 
 ---

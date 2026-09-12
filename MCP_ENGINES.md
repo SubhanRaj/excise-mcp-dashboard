@@ -57,8 +57,10 @@ orchestrator/
       tools.py         tool defs: run_sql_query, search_knowledge, make_chart
     engines/
       base.py          IVisualizationEngine protocol + registry + errors
-      python_engine.py the one implemented engine
-      octave_engine.py Milestone 4
+      python_engine.py implemented
+      octave_engine.py implemented
+      matlab_engine.py  documented stub, behind ENABLE_MATLAB (default off)
+      wolfram_engine.py documented stub, behind ENABLE_WOLFRAM (default off)
     sandbox/
       bwrap.py         build + run the bubblewrap command, collect artifacts
     pipeline.py        the one-shot analytical flow: orchestrates stages, emits Stage events
@@ -541,26 +543,42 @@ Contract every engine keeps:
   `stdout_tail`; wall-clock -> `SandboxTimeout`; `MemoryError` / OOM-kill ->
   `SandboxViolation` (rlimit); no `chart.*` produced -> `RenderEmpty`.
 
-### 2. GNU Octave — `octave_engine.py` — Milestone 4, only if needed
+### 2. GNU Octave — `octave_engine.py` — implemented
 
 [octave.org](https://octave.org) — open-source, MATLAB-compatible `.m` syntax.
 
-- **Availability**: `octave-cli --version` exits 0. **Not installed on the box
-  now** — needs `sudo apt install octave` (root; give the command, do not work
-  around). `is_available()` returns false until then, and the router simply
-  never offers it.
+- **Availability**: `octave-cli --version` exits 0 (`OPERATOR_SETUP.md`
+  §Octave installs it). `is_available()` returns false without it, and the
+  router simply never offers it.
 - **Execution**: sandbox runs `octave-cli --no-gui --norc --eval
-  "source('/scratch/chart.m')"` with `HOME=/scratch`.
-- **Data hand-off**: the engine writes the result as CSV (`/scratch/data.csv`)
-  alongside Parquet; the Octave preamble does `T = readtable('/scratch/data.csv');`.
-- **Outputs**: Octave's `print()` to `chart.png` / `chart.svg` / `chart.pdf`
-  via the `gnuplot` or `qt` toolkit (`qt` needs no X with
-  `graphics_toolkit("gnuplot")` — use gnuplot headless). No interactive JSON —
-  `supported_outputs = {"png", "svg", "pdf"}`; the pipeline falls back to a
-  static chart when the chosen engine can't do Plotly JSON.
-- **When to add it**: a real `.m` analysis script arrives that is not
-  trivially portable to NumPy/SciPy. Until then it is a false choice for the
-  LLM and stays unregistered.
+  "source('/scratch/chart.m')"` with `HOME=/scratch` and `LANG=C.utf8` —
+  `bwrap`'s `--clearenv` drops locale along with everything else, and
+  Ghostscript's iconv step (see below) fails outright without one.
+- **Data hand-off**: GNU Octave has no `table` type and does not implement
+  `readtable` — it names that MATLAB function outright as not yet
+  implemented, and the `octave-io` package doesn't add it either, only
+  spreadsheet I/O. The engine writes the query result as a generated `.m`
+  file instead (`/scratch/data.m`, alongside the Parquet the Python engine
+  uses): each column becomes a plain Octave variable, a numeric column
+  vector or a cell array of strings, named after its SQL column alias. The
+  Octave preamble does `source('/scratch/data.m');`.
+- **Figure setup**: a new `figure()` does not inherit the
+  `graphics_toolkit("gnuplot")` global default — it silently falls back to
+  `fltk`, which needs a real display and fails `print()` with "requires
+  visible figure" in the sandbox's headless namespace. The preamble creates
+  the one figure the script draws into and sets `__graphics_toolkit__` on
+  that figure object directly, so the LLM-written body only calls a plotting
+  function (`plot`/`bar`/...) and never creates its own figure.
+- **Outputs**: Octave's `print()` to `chart.png` / `chart.svg` / `chart.pdf`,
+  using gnuplot's own cairo terminals — `-dpngcairo`, `-dsvg`, `-dpdfcairo`.
+  `-dpng` and `-dpdf` route through Ghostscript in Octave's gnuplot toolkit,
+  and that Ghostscript step fails inside the sandbox namespace with a plain
+  `EPERM` on its own output file (not a bwrap bind-mount gap — plain file
+  writes and gnuplot's own terminals both work in the same sandbox); the
+  cairo terminals write the file directly and never reach Ghostscript. No
+  interactive JSON — `supported_outputs = {"png", "svg", "pdf"}`; the
+  pipeline falls back to a static chart when the chosen engine can't do
+  Plotly JSON.
 
 ### 3. MATLAB via `matlab-mcp-server` — Milestone 4, behind a config flag,
      currently blocked

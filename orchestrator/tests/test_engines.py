@@ -3,7 +3,9 @@
 import pytest
 
 from app.engines import base as engines_base
+from app.engines.matlab_engine import MatlabEngine
 from app.engines.python_engine import PythonEngine
+from app.engines.wolfram_engine import WolframEngine
 from app.schemas import EngineUnavailableError
 
 
@@ -50,3 +52,17 @@ def test_available_lists_only_available_engines() -> None:
     engines_base.register(PythonEngine())
     engines_base.register(_UnavailableEngine())  # type: ignore[arg-type]
     assert engines_base.available() == ["python"]
+
+
+async def test_matlab_stub_is_unavailable_and_raises_on_render() -> None:
+    engine = MatlabEngine()
+    assert engine.is_available() is False
+    with pytest.raises(EngineUnavailableError):
+        await engine.render(object())  # type: ignore[arg-type]
+
+
+async def test_wolfram_stub_is_unavailable_and_raises_on_render() -> None:
+    engine = WolframEngine()
+    assert engine.is_available() is False
+    with pytest.raises(EngineUnavailableError):
+        await engine.render(object())  # type: ignore[arg-type]
