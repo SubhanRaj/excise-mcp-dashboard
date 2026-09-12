@@ -513,8 +513,7 @@ no new schema file.
 `make_chart`. No parallel implementation of any of these — the same guard,
 the same read-only role, the same sandbox.
 
-`schemas.py` (new models, alongside the existing ones in the root
-`schemas.py`):
+The new models to add to the root `schemas.py`:
 
 ```python
 class ChatTurn(BaseModel):
