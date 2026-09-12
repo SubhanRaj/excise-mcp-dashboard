@@ -6,13 +6,20 @@ Phased build. Each milestone is a checklist with a stated "done when" gate.
 running, `excise_bank` created, the sandbox user and scratch dir in place,
 MariaDB migrated, both LLM models pulled (`qwen2.5-coder:7b-instruct-q4_K_M`,
 `llama3.1:8b-instruct-q4_K_M`); the Cloudflare and Google-consent decisions
-are the owner's remaining M0 items. Milestone 1 is in progress — the
-database (`db/`) is complete (schema, `analytics.*` views, the three roles,
-reference seed); the ETL core plumbing (`etl/` package, loader, normalize,
-quarantine, the csv/excel readers) is built and tested, waiting on the final
-NITI workbook layout to write its column maps; Google ingestion is not
-started. The `web/` skeleton, `db/` data bank, and `etl/` core are merged
-into `dev`.
+are the owner's remaining M0 items. Milestone 1's database half (`db/` —
+schema, `analytics.*` views, the three roles, reference seed) and ETL core
+plumbing (loader, normalize, quarantine, the csv/excel readers) are done;
+the NITI workbook column maps and Google ingestion are not started. Milestone
+2 (the orchestrator's one-shot `/query` pipeline) is done, tested live against
+real seed data. Milestone 3's retrieval plumbing is done — the
+pdf-markdown-pipeline sync, the chunker, and Postgres FTS via `/kb/search`,
+tested live against the real corpus (334 rows); the admin upload screen,
+Google Docs/Drive into `kb.*`, and wiring `search_knowledge` into a chat loop
+wait on `web/` (M5) and the rest of Google ingestion (M1). The `web/`
+skeleton, `db/` data bank, `etl/` core, and `orchestrator/`'s pipeline +
+knowledge base are merged into `dev`. **Next up: Milestone 4 (second engine)
+and Milestone 5 (Laravel UI)** — M5's detailed design is still being decided
+by the owner, so its checklist below may still change before work starts.
 
 Every `sudo` / install / external-console step is collected, copy-pasteable,
 in [`OPERATOR_SETUP.md`](OPERATOR_SETUP.md), grouped by the milestone that

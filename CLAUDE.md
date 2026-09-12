@@ -32,8 +32,10 @@ written but not yet applied — needs `sudo -u postgres`, a pending
 milestones: the admin `.md` upload screen and wiring `search_knowledge` into
 a chat tool loop (both need `web/`, Milestone 5+), and Google Docs/Drive into
 `kb.*` (waits on Milestone 1's Google ingestion, not started). Work follows
-the `ROADMAP.md` milestone order; Milestone 4 (second engine) or the rest of
-Milestone 1's Google ingestion is next. Dependency installs so far: `web/`'s
+the `ROADMAP.md` milestone order; Milestone 4 (second engine) and Milestone 5
+(Laravel UI) are next — M5's design is still being decided by the owner, so
+treat its checklist as provisional until that session starts. Dependency
+installs so far: `web/`'s
 Composer + npm set, `etl/`'s venv (`+aiomysql`), `orchestrator/`'s venv — each
 the current milestone's `OPERATOR_SETUP.md` section at the time.
 
