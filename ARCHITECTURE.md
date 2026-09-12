@@ -163,14 +163,14 @@ output from the LLM.
 
 ### Not in the first build
 
-Octave / MATLAB / Mathematica engines, an MCP server in front of Postgres, a
+MATLAB / Mathematica engines, an MCP server in front of Postgres, a
 complexity-based routing heuristic, `pgvector` semantic retrieval, an embedded
 OpenWebUI, and Power BI access (Diagram 5). The interfaces accommodate all of
 them; `EVALUATION.md` §Right-sizing explains why they wait. `ROADMAP.md`
-Milestone 3 builds the knowledge base on Postgres FTS; Milestone 4 adds Octave
-behind the same `IVisualizationEngine`; `pgvector` is a config flag plus a
-backfill if the Milestone 6 quality check calls for it; Power BI Desktop
-access is a new read-only role away, toggled on when an officer asks.
+Milestone 3 built the knowledge base on Postgres FTS; Milestone 4 built the
+Octave engine behind the same `IVisualizationEngine`; `pgvector` is a config
+flag plus a backfill if the Milestone 6 quality check calls for it; Power BI
+Desktop access is a new read-only role away, toggled on when an officer asks.
 
 ## Component diagrams
 
@@ -253,9 +253,10 @@ flowchart TD
 
 > Implementation note: the first build wires `Web -> FastAPI -> Ollama`,
 > `FastAPI -> PG` (direct `asyncpg`, read-only role, no separate
-> `postgres-mcp-server` process), and `Adapter -> PyEngine` only. The Octave,
-> MATLAB, and Wolfram paths and the standalone Postgres MCP server are drawn
-> here as the target shape; see `EVALUATION.md` §Right-sizing and `ROADMAP.md`.
+> `postgres-mcp-server` process), and `Adapter -> PyEngine` plus
+> `Adapter -> OctaveEngine`. The MATLAB and Wolfram paths and the standalone
+> Postgres MCP server are drawn here as the target shape; see
+> `EVALUATION.md` §Right-sizing and `ROADMAP.md`.
 
 ### Diagram 1U (updated): system flow as this repo specifies it
 
@@ -304,7 +305,7 @@ flowchart TD
             EtlKB["kb sources<br/>pdf-pipeline / uploads / Docs"]:::app
         end
 
-        OctEng["engines/octave_engine.py<br/>Milestone 4"]:::off
+        OctEng["engines/octave_engine.py<br/>octave-cli, gnuplot cairo terminals"]:::viz
         MatEng["matlab / wolfram adapters<br/>stub, flag-off"]:::off
     end
 
@@ -348,8 +349,8 @@ flowchart TD
     OneShot -.->|"sql + rows + chart + summary"| WebTier
 ```
 
-> Grey dashed nodes (Octave, MATLAB, Wolfram) are not in the first build.
-> Everything else is covered by the `ROADMAP.md` milestones.
+> Grey dashed nodes (MATLAB, Wolfram) are not in the first build. Everything
+> else is covered by the `ROADMAP.md` milestones.
 
 ### Diagram 2 (as supplied in the brief): execution security & read-only sandbox
 
@@ -393,7 +394,7 @@ flowchart LR
 
     subgraph Gen["LLM output — untrusted"]
         SQL["Generated SQL<br/>from /query or the chat run_sql_query tool"]:::gen
-        Script["Generated plot script<br/>Python today, Octave later"]:::gen
+        Script["Generated plot script<br/>Python or Octave"]:::gen
         Q["User question text<br/>for knowledge search"]:::gen
     end
 

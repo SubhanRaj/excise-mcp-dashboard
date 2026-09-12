@@ -374,7 +374,7 @@ inert stubs.
 - [ ] Chart canvas: interactive `chart.plotly.json`; data table
       (`rows_preview`, paginated); generated SQL (collapsed, copyable); export
       PNG / SVG / PDF (artifact files) + CSV / XLSX (rows, reuse the sibling
-      `ExportService`)
+      `ExportService`, `openspout`)
 - [ ] Query ledger view: every past `/query` with prompt, SQL, timing, engine,
       model, status, thumbs + note; Admin sees all, Analyst sees own
 - [ ] Admin: user CRUD (ported); "Connected sources" (Google connect /
@@ -501,7 +501,7 @@ Post-MVP. `DATA_PIPELINE.md` §Output store has the design.
       image), reorder, per-block `run_ref` (`latest` / pinned), visibility,
       a shared read-only link on a ULID
 - [ ] Exports: chart (PNG/SVG/PDF/`plotly.json`); result (CSV/XLSX via the
-      sibling `ExportService`); report (print-view Blade -> `laravel-dompdf`
+      sibling `ExportService`, `openspout`); report (print-view Blade -> `laravel-dompdf`
       PDF, DejaVu Sans; XLSX workbook, one sheet per analysis block; ZIP
       bundle), each stamped with `etl_epoch`. `report_exports` caches the last
       per `(report_id, format)`

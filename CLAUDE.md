@@ -199,6 +199,16 @@ consumer appears.
   heavy dependency, some with default telemetry, built around self-editing
   memory the model should not have. `EVALUATION.md` §Right-sizing item 14,
   `MCP_ENGINES.md` §Memory.
+- **XLSX export: `openspout/openspout`, matching the sibling apps.** It is
+  already the one Excel library across the Laravel fleet —
+  `upexcise-stats-dashboard`'s `ExportService` writes `.xlsx` with it,
+  `UP-excise-mailer`'s `RecipientImportParser` reads `.xlsx` with it — real
+  OOXML streaming I/O, not an `.xls`/HTML-table export. `web/`'s own
+  `ExportService` (Milestone 7, `DATA_PIPELINE.md` §Export) ports the
+  sibling's `xlsx()` method rather than introducing PhpSpreadsheet or
+  Maatwebsite Excel, neither of which appears anywhere in the fleet. `etl/`'s
+  own `.xlsx` ingestion is a separate, already-settled choice: `openpyxl` on
+  the Python side (`etl/etl/sources/excel.py`).
 
 ## Laravel conventions (`web/`)
 
@@ -311,7 +321,7 @@ the 11/12 + Livewire 3 named in the original brief.
   adds an `analysis_runs` row — that history is the trend, shown with the
   sibling `Sparkline`. `reports` order saved analyses + Markdown blocks into a
   presentation. Export a chart (PNG/SVG/PDF/`plotly.json`), a result
-  (CSV/XLSX via the sibling `ExportService`), or a report (dompdf PDF / XLSX /
+  (CSV/XLSX via the sibling `ExportService`, `openspout`), or a report (dompdf PDF / XLSX /
   ZIP bundle, stamped with the ETL vintage). `DATA_PIPELINE.md` §Output store.
 - **Tailwind + Alpine**: Tailwind Play CDN and Chart.js / Plotly from jsDelivr,
   same as the siblings. Add every CDN host to the CSP. Chart.js line colours
