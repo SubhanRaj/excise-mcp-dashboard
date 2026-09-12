@@ -39,6 +39,7 @@ flowchart LR
     M5["M5<br/>Laravel UI — form, chat, admin"]:::mvp
     M6["M6<br/>perimeter, hardening, end-to-end"]:::mvp
     M7["M7<br/>output store — saved analyses, reports, exports"]:::post
+    PBI["Backlog<br/>Power BI access (BI role, live connect)"]:::post
 
     M0 --> M1 --> M2
     M2 --> M3
@@ -47,6 +48,7 @@ flowchart LR
     M3 --> M5
     M5 --> M6
     M5 --> M7
+    M7 --> PBI
 ```
 
 ---
@@ -212,41 +214,66 @@ every failure path typed.
 
 ## Milestone 3 — Knowledge base and retrieval
 
-- [ ] `db/` already has the `kb` schema (Milestone 1). Add
-      `db/kb_indexes.sql` — the GIN FTS index, the document/chunk indexes
-- [ ] `etl/sources/pdf_pipeline.py` — read
+Scoped to the retrieval plumbing this milestone's own pipeline needs: the
+pdf-markdown-pipeline sync and FTS search. Wiring `search_knowledge` into the
+chat tool loop is Milestone 5+ (the loop itself isn't built yet either); the
+admin `.md` upload screen is Milestone 5 (`web/` doesn't exist yet); Google
+Docs/Drive ingestion into `kb.*` waits on Milestone 1's Google ingestion,
+still not started. `kb_uploads.py` / `gdocs.py` / the `gdrive.py` `kb.*`
+branch stay unbuilt until those land.
+
+- [x] `db/` already has the `kb` schema (Milestone 1). Add
+      `db/kb_indexes.sql` — the GIN FTS index, the document/chunk indexes.
+      Written; applying it needs `sudo -u postgres`, so it's a pending
+      `OPERATOR_SETUP.md` §Data bank step, not run by this session
+      (`CLAUDE.md`'s "no passwordless sudo" constraint)
+- [x] `etl/sources/pdf_pipeline.py` — read
       `pdf_markdown_pipeline_local.documents` (via `excise_mcp_kb_ro`,
       `SELECT`-only) filtered public + verified + not-deleted, join for
       `rule_set` / `doc_type` / `language` / URL slug, read each Markdown file
-      from `~/Sites/pdf-markdown-pipeline/storage/app/public/<markdown_path>`
-- [ ] `etl/chunk.py` — heading-aware chunking with `heading_path`, ~1,200-token
+      from `~/Sites/pdf-markdown-pipeline/storage/app/public/<markdown_path>`.
+      Verified live against the real `pdf_markdown_pipeline_local` (334
+      public+verified Excise rows, all with a buildable URL and a readable
+      `markdown_path`) — one alias fix needed (`div` is a MariaDB reserved
+      word)
+- [x] `etl/chunk.py` — heading-aware chunking with `heading_path`, ~1,200-token
       cap, ~100-token overlap, tables kept whole
 - [ ] `etl/sources/kb_uploads.py` — ingest pending `kb_uploads` rows staged by
       `web/`; `etl/sources/gdocs.py` — Google Docs -> Markdown -> `kb.*`;
       `gdrive.py` gains the `.md` / Docs -> `kb.*` branch
-- [ ] Withdrawal handling: a doc that stops matching the filter, or a withdrawn
+- [x] Withdrawal handling: a doc that stops matching the filter, or a withdrawn
       upload, sets `kb.documents.withdrawn_at`; re-run changes no other rows
-- [ ] `orchestrator/app/kb/retrieve.py` — FTS query over `kb.chunks`
+- [x] `orchestrator/app/kb/retrieve.py` — FTS query over `kb.chunks`
       (`websearch_to_tsquery('simple', ...)`, `withdrawn_at IS NULL`, top
       `KB_RETRIEVE_K`); a `pgvector` code path behind `KB_EMBEDDINGS_ENABLED`
       (off)
 - [ ] `orchestrator/app/kb/embed.py` — local Ollama embed client, used only
-      when embeddings are enabled
-- [ ] `orchestrator` `/kb/search` endpoint (retrieval only, no LLM) for tests
+      when embeddings are enabled. Not built: `KB_EMBEDDINGS_ENABLED` is off
+      and stays off until Milestone 6's retrieval quality check calls for it
+      (`EVALUATION.md` §Retrieval) — nothing to embed with yet
+- [x] `orchestrator` `/kb/search` endpoint (retrieval only, no LLM) for tests
       and the "cite sources" panel; `/health` reports `kb_docs` and
       `embeddings`
-- [ ] `etl.source_registry` rows: `pdf_pipeline_docs` (daily), `kb_uploads`
-      (15 min), `gdocs_*` / `gdrive_kb_*`
+- [x] `etl.source_registry` row: `pdf_pipeline_docs` (daily), registered live.
+      `kb_uploads` / `gdocs_*` / `gdrive_kb_*` wait on the sources above
 
 ### Tests
-- [ ] fixture mirroring `pdf_markdown_pipeline_local.documents` + a Markdown
+- [x] fixture mirroring `pdf_markdown_pipeline_local.documents` + a Markdown
       file -> correct `kb.documents` + `kb.chunks` with metadata and source
-      URL; non-public / non-verified skipped; re-run changes no counts;
-      removed upstream doc -> `withdrawn_at`
-- [ ] retrieval returns expected chunks by FTS rank; empty corpus -> no
-      context; `pgvector` path (when enabled) merges + de-dupes with FTS
-- [ ] upload validation in `web/` (extension, size, path traversal)
-- [ ] `ruff` / `mypy` / `pint` green
+      URL; re-run changes no counts; removed upstream doc -> `withdrawn_at`
+      (`etl/tests/test_pdf_pipeline.py`, against the real local Postgres via
+      `excise_etl`). Non-public/non-verified skipped is enforced by
+      `fetch_documents`' `WHERE` clause, not fixture-tested separately — the
+      live 334-row check above confirms the filter runs against the real
+      schema
+- [x] retrieval returns expected chunks by FTS rank; a withdrawn document is
+      excluded; no match / empty corpus -> no context
+      (`orchestrator/tests/test_kb_retrieve.py`, against the real local
+      Postgres). `pgvector` merge/de-dupe test deferred with `embed.py`
+- [ ] upload validation in `web/` (extension, size, path traversal) — `web/`
+      doesn't exist yet (Milestone 5)
+- [x] `ruff` / `ruff format --check` / `mypy --strict` green on `etl/` and
+      `orchestrator/`
 
 **Done when:** the verified pdf-markdown-pipeline corpus and admin `.md`
 uploads are searchable through `/kb/search`, withdrawal is respected, and
@@ -512,8 +539,21 @@ PDF / XLSX / ZIP with the data vintage on it.
   item 14, `MCP_ENGINES.md` §Memory
 - `crystaldba/postgres-mcp` mounted as a real MCP server — only if an external
   MCP client (Claude Desktop, an IDE) becomes a second consumer of the bank
-- Tailscale access to `excise_bank` for DBeaver — follow
-  `infra-notes/postgres-tailscale-remote-access.md`, named read-only role only
+- BI client access to `excise_bank` (Power BI Desktop, DBeaver, or any SQL
+  client several officers already use) — a new `excise_bi_ro` role, a copy of
+  `excise_ro`'s `SELECT`-only grants on `analytics.*` + `kb.*` under its own
+  name (`DATA_PIPELINE.md` §BI access), reached over Tailscale following
+  `infra-notes/postgres-tailscale-remote-access.md`, **named read-only role
+  only**. Bypasses the orchestrator entirely — no guard, no sandbox, no LLM,
+  because it's a human running their own query. `ARCHITECTURE.md` Diagram 5,
+  `EVALUATION.md` §Right-sizing item 15. CSV/XLSX export (Milestone 7) already
+  covers "get the data into Power BI" with no new role at all — this item is
+  for a *live* connection. A `.pbix` template or a custom Power BI connector
+  is a further-out toggle under the same item, built only if a named analyst
+  asks for a specific reusable report — the live-connection role already lets
+  anyone build their own in Power BI Desktop without one. Power BI *Service*
+  (cloud publish/scheduled refresh) is excluded, not deferred — it would send
+  data off the box, against `CLAUDE.md`'s no-egress hard constraint
 - `drive.file` scope instead of `drive.readonly` if the broad-read grant
   becomes a concern
 - PPTX export for reports — needs a slide library; the Milestone 7 PDF and

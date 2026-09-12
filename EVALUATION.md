@@ -609,6 +609,30 @@ Recommendations, each reversible:
     read-only against it. No rolling-summary chain either until real
     transcripts overflow the working set.
 
+15. **Power BI: two cheap paths now documented, cloud push declined.** Several
+    UP Excise officers already use Power BI Desktop day to day. Three shapes
+    were weighed:
+
+    | Path | What it needs | Verdict |
+    |---|---|---|
+    | **CSV / XLSX export** of a result or saved analysis | Nothing Power-BI-specific — `ROADMAP.md` Milestone 7's `ExportService` output already opens in Power BI's own *Get Data → Text/CSV* / *Excel workbook* import | **Already planned** (Milestone 7) |
+    | **Power BI Desktop connected directly to Postgres** | A new named, read-only Postgres role scoped to `analytics.*` + `kb.*` (the same surface `excise_ro` reads, a separate role so BI access is never conflated with the AI path's grants or its audit trail) | **Documented as a Backlog item** — `ROADMAP.md` Backlog, `ARCHITECTURE.md` Diagram 5, `DATA_PIPELINE.md` §BI access. Same shape as the existing "Tailscale + DBeaver" backlog line, generalised to any BI client, Power BI Desktop included |
+    | **A `.pbix` template / custom Power BI connector** | Power BI Desktop authoring is Windows-only — nothing else in this stack touches that toolchain; a shareable custom connector needs Microsoft's M-language + certification path if distributed beyond one desktop | **Declined until a named analyst asks for a specific reusable report.** The direct-Postgres path above already lets anyone build their own connection in Power BI Desktop in minutes with no template; a `.pbix` only saves that, at the cost of an entire unmaintained second toolchain. Revisit if that cost/benefit changes |
+
+    **Power BI *Service* (the cloud product — published datasets, scheduled
+    cloud refresh, embedded web reports) is declined outright, not just
+    deferred.** It requires sending departmental data to Microsoft's SaaS
+    tenant, which is a direct conflict with "No document or query leaves the
+    box" (`CLAUDE.md` hard constraints) — the only outbound paths this project
+    allows are the Cloudflare Tunnel and, for a connected user, the Google API.
+    Enabling it would need an explicit, named no-egress exception approved
+    before any code is written.
+
+    The two accepted paths cost nothing until built: CSV/XLSX rides on
+    Milestone 7's existing export work, and the read-only BI role is a `CREATE
+    ROLE` + two `GRANT`s away, following `db/roles.sql`'s existing pattern for
+    `excise_ro`. Toggle either on when an officer actually asks to connect.
+
 The full four-engine, MCP-server, heuristic-router design stays documented in
 `ARCHITECTURE.md` and `MCP_ENGINES.md` as the target shape if requirements grow.
 The recommendation is to build the reduced version first and let real use pull

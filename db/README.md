@@ -17,7 +17,7 @@ is MariaDB-only and touches nothing here.
 | `schema.sql` | `citext` extension; the base tables (dimensions, fact tables, the shops split, reference tables); the `etl` bookkeeping tables; the `kb` tables. One `set_updated_at()` trigger function with a `BEFORE UPDATE` trigger on every table that has an `updated_at` column. The fact-table and lookup indexes. |
 | `analytics_views.sql` | One `analytics.<name>` view per fact and reference table, plus `analytics.districts`. Each joins its dimensions, exposes human labels next to the join ids, and filters `deleted_at IS NULL AND published_at IS NOT NULL`. The views run with the owner's privileges, so `excise_ro` reads them without any grant on the base tables. |
 | `seed_reference.sql` | `zones` (5), `divisions` (18), `districts` (all 75, mapped to division and zone), `financial_years` (FY2014-15 through FY2025-26), `license_categories`. Every `INSERT` is `ON CONFLICT DO NOTHING` on the natural key; a re-run is a no-op. |
-| `kb_indexes.sql` | The `kb.*` GIN/FTS and document/chunk indexes. Added at Milestone 3, not part of this milestone. |
+| `kb_indexes.sql` | The `kb.*` GIN/FTS index (`kb.chunks.fts`) and the document/chunk lookup indexes. `kb.chunks.fts` and `kb.chunks.embedding` are columns from `schema.sql`; this script only adds indexes over them. |
 
 `schema.sql`, `analytics_views.sql`, and `seed_reference.sql` each begin with
 `SET ROLE excise_owner` so every object is owned by `excise_owner` and the
@@ -30,10 +30,10 @@ The operator runs these once as a cluster superuser, per
 `OPERATOR_SETUP.md` §"Data bank":
 
 ```
-roles.sql  →  schema.sql  →  analytics_views.sql  →  seed_reference.sql
+roles.sql  →  schema.sql  →  analytics_views.sql  →  seed_reference.sql  →  kb_indexes.sql
 ```
 
-`kb_indexes.sql` is applied at Milestone 3. `roles.sql` runs first because it
+`roles.sql` runs first because it
 creates the schemas the later scripts fill and registers the default
 privileges that grant `excise_ro` / `excise_etl` their access on tables created
 afterward.

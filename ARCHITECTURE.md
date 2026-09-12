@@ -143,6 +143,14 @@ needed" on the admin screen. `SECURITY.md` §Google OAuth.
 - **`web/` -> pdf-markdown-pipeline data**: read-only. A scoped MariaDB user
   (`SELECT` on `pdf_markdown_pipeline_local` only) and group-read on that
   project's `storage/app/public` Markdown tree. No write path.
+- **BI client -> PostgreSQL (future, not built)**: Diagram 5. A separate named
+  read-only role (`excise_bi_ro` or one per officer), `SELECT` on
+  `analytics.*` + `kb.*` only, same as `excise_ro` — but a distinct role so a
+  human's direct query is never conflated with the AI path's own grant or
+  audit trail. No orchestrator, no guard, no sandbox in this path; Power BI
+  Desktop (or any SQL client) connects straight to Postgres. Power BI Service
+  (cloud) is out of scope — it would be egress, ruled out by `CLAUDE.md`'s
+  no-egress hard constraint.
 
 ### Failure behavior
 
@@ -156,12 +164,13 @@ output from the LLM.
 ### Not in the first build
 
 Octave / MATLAB / Mathematica engines, an MCP server in front of Postgres, a
-complexity-based routing heuristic, `pgvector` semantic retrieval, and an
-embedded OpenWebUI. The interfaces accommodate all of them; `EVALUATION.md`
-§Right-sizing explains why they wait. `ROADMAP.md` Milestone 3 builds the
-knowledge base on Postgres FTS; Milestone 4 adds Octave behind the same
-`IVisualizationEngine`; `pgvector` is a config flag plus a backfill if the
-Milestone 6 quality check calls for it.
+complexity-based routing heuristic, `pgvector` semantic retrieval, an embedded
+OpenWebUI, and Power BI access (Diagram 5). The interfaces accommodate all of
+them; `EVALUATION.md` §Right-sizing explains why they wait. `ROADMAP.md`
+Milestone 3 builds the knowledge base on Postgres FTS; Milestone 4 adds Octave
+behind the same `IVisualizationEngine`; `pgvector` is a config flag plus a
+backfill if the Milestone 6 quality check calls for it; Power BI Desktop
+access is a new read-only role away, toggled on when an officer asks.
 
 ## Component diagrams
 
@@ -523,6 +532,40 @@ flowchart TD
 > A refresh re-runs the saved `recipe` through the same `/query` path, so it
 > passes the same guard, read-only role, and sandbox. `analysis_runs` is the
 > trend history — same question, successive data vintages.
+
+### Diagram 5: Power BI access path (documented, not built)
+
+Not part of the current build — a Backlog item (`ROADMAP.md` Backlog,
+`EVALUATION.md` §Right-sizing item 15, `DATA_PIPELINE.md` §BI access). Shown
+here so the trust boundary is clear before it's ever turned on: a BI client
+reads the same published views the AI path reads, through its own named
+read-only role, entirely outside the orchestrator — no guard, no sandbox, no
+LLM in this path, because none of that applies to a human running their own
+query in Power BI Desktop.
+
+```mermaid
+flowchart LR
+    classDef app fill:#059669,stroke:#047857,stroke-width:2px,color:#fff
+    classDef db fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#fff
+    classDef ai fill:#7c3aed,stroke:#6d28d9,stroke-width:2px,color:#fff
+    classDef off fill:#94a3b8,stroke:#64748b,stroke-width:1px,color:#fff,stroke-dasharray:4 3
+
+    O["orchestrator<br/>guard + sandbox + LLM"]:::ai
+    RO[("excise_ro<br/>SELECT analytics.* + kb.*")]:::db
+    PG[("PostgreSQL<br/>analytics.* + kb.* views")]:::db
+    BIRole[("excise_bi_ro (future)<br/>SELECT analytics.* + kb.* — named per officer,<br/>never excise_ro's own grant")]:::off
+    PBID["Power BI Desktop (future)<br/>an officer's own machine"]:::off
+    CSV["CSV / XLSX export (Milestone 7)<br/>already planned, no new role needed"]:::app
+
+    O --> RO --> PG
+    PBID -.->|future, toggleable| BIRole -.-> PG
+    PG --> CSV
+```
+
+> Power BI *Service* (cloud publish/refresh/embed) is deliberately absent from
+> this diagram — it would send data off the box, which the no-egress hard
+> constraint in `CLAUDE.md` rules out without an explicit, separately-approved
+> exception.
 
 ## Cross-references
 

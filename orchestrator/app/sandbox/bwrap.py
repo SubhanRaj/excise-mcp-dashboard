@@ -34,7 +34,7 @@ def _scratch_root() -> Path:
     return fallback
 
 
-def _build_command(*, run_dir: Path, venv_root: str) -> list[str]:
+def _build_command(*, run_dir: Path, venv_root: str, unit_name: str) -> list[str]:
     bwrap_cmd = [
         "bwrap",
         "--unshare-all",
@@ -125,12 +125,21 @@ def _build_command(*, run_dir: Path, venv_root: str) -> list[str]:
 
     timeout_cmd = ["timeout", "--signal=KILL", str(settings.sandbox_wallclock_seconds), *bwrap_cmd]
 
+    # --unit + --description name the transient scope so `journalctl` /
+    # `systemctl --user status` (and any desktop OOM notification that reads
+    # the unit's own description) identify it as ours, instead of systemd's
+    # default anonymous `run-p<pid>-i<pid>.scope`.
+    named = [
+        f"--unit={unit_name}",
+        "--description=excise-orchestrator sandboxed chart render",
+    ]
     if not settings.sandbox_uid_switch_enabled:
         return [
             "systemd-run",
             "--user",
             "--scope",
             "--collect",
+            *named,
             f"--property=MemoryMax={settings.sandbox_memory_mb}M",
             "--property=MemorySwapMax=0",
             "--property=TasksMax=16",
@@ -143,6 +152,7 @@ def _build_command(*, run_dir: Path, venv_root: str) -> list[str]:
         "--user",
         "--scope",
         "--collect",
+        *named,
         f"--uid={settings.sandbox_user}",
         f"--property=MemoryMax={settings.sandbox_memory_mb}M",
         "--property=MemorySwapMax=0",
@@ -159,7 +169,8 @@ async def run_in_sandbox(*, script: str, data_path: Path) -> tuple[Path, str]:
     / SandboxViolationError. The caller collects declared outputs from
     scratch_dir and is responsible for removing it afterward (cleanup_scratch).
     """
-    run_dir = _scratch_root() / uuid4().hex
+    run_id = uuid4().hex
+    run_dir = _scratch_root() / run_id
     run_dir.mkdir(mode=0o700, parents=True)
     (run_dir / "chart.py").write_text(script)
     shutil.copy(data_path, run_dir / "data.parquet")
@@ -171,7 +182,8 @@ async def run_in_sandbox(*, script: str, data_path: Path) -> tuple[Path, str]:
             "sandbox running without excise-sandbox uid separation", run_dir=str(run_dir)
         )
 
-    cmd = _build_command(run_dir=run_dir, venv_root=sys.prefix)
+    unit_name = f"excise-sandbox-{run_id}.scope"
+    cmd = _build_command(run_dir=run_dir, venv_root=sys.prefix, unit_name=unit_name)
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
     )
@@ -180,9 +192,13 @@ async def run_in_sandbox(*, script: str, data_path: Path) -> tuple[Path, str]:
 
     if proc.returncode in _TIMEOUT_EXIT_CODES:
         cleanup_scratch(run_dir)
+        logger.warning("sandbox wallclock timeout", unit=unit_name)
         raise SandboxTimeoutError()
     if proc.returncode != 0:
         cleanup_scratch(run_dir)
+        logger.warning(
+            "sandbox violation", unit=unit_name, returncode=proc.returncode, stdout=stdout_tail
+        )
         raise SandboxViolationError(f"exit {proc.returncode}: {stdout_tail}")
 
     return run_dir, stdout_tail

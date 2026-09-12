@@ -178,10 +178,19 @@ read-only and least-privilege:
 ### Network
 
 `postgresql.conf` keeps `listen_addresses = 'localhost'` for this project. If
-DBeaver-over-Tailscale access to `excise_bank` is ever wanted, follow
+direct BI-client access to `excise_bank` is ever wanted — DBeaver, Power BI
+Desktop, or any SQL client, over Tailscale — follow
 `~/Sites/infra-notes/postgres-tailscale-remote-access.md` exactly — bind the
 Tailscale IP, scope the `ufw` rule to `tailscale0`, add a `pg_hba.conf` line
 for a **named read-only role only**, never `all`/`admin` over the tailnet.
+`DATA_PIPELINE.md` §BI access has the role grant (`excise_bi_ro`, a copy of
+`excise_ro`'s grants under its own name — never the same role the orchestrator
+uses). This path bypasses the orchestrator entirely: no SQL guard, no sandbox,
+no request-id logging, because it's a human running their own query, not the
+AI. Once it exists, add its connections to the audit checklist below. Power BI
+*Service* (the cloud product) is not this — publishing or scheduling a refresh
+there sends data off the box, which the no-egress hard constraint in
+`CLAUDE.md` rules out.
 
 ## 2. Code-execution sandbox
 
@@ -498,6 +507,7 @@ so a `queries` row links to its logs.
 | Knowledge upload / withdraw | `activity_logs` + `kb_uploads.status` | the "Knowledge base" screen |
 | ETL runs and quarantined rows | `etl.ingestion_runs` / `etl.quarantine` (Postgres) | `etl/` |
 | Orchestrator request/response, stage transitions, errors | `structlog` JSON to the systemd journal, `request_id` on every line | the orchestrator |
+| BI-client connections (`excise_bi_ro`, future — §1 Network) | PostgreSQL's own `log_connections`/`log_disconnections` — no `queries` row, since this path never touches the orchestrator | PostgreSQL, once the role exists |
 
 - **Never logged**: bearer tokens, DB passwords, Google OAuth tokens, full
   result row sets (a preview only), document text.

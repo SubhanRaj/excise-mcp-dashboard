@@ -21,9 +21,12 @@ from app.config import settings
 from app.engines.base import available as available_engines
 from app.engines.base import register
 from app.engines.python_engine import PythonEngine
+from app.kb.retrieve import retrieve as kb_retrieve
 from app.llm.client import OllamaClient
 from app.pipeline import run_query
 from app.schemas import (
+    KbSearchRequest,
+    KbSearchResponse,
     OrchestratorError,
     PostgresUnavailableError,
     QueryRequest,
@@ -110,6 +113,12 @@ async def health() -> dict[str, object]:
         "kb_docs": kb_docs,
         "embeddings": settings.kb_embeddings_enabled,
     }
+
+
+@app.post("/kb/search", dependencies=[Depends(require_bearer_token)])
+async def kb_search(request: KbSearchRequest) -> KbSearchResponse:
+    await _ensure_ready(_ctx())
+    return KbSearchResponse(chunks=await kb_retrieve(request.query, request.k))
 
 
 @app.post("/query", dependencies=[Depends(require_bearer_token)])

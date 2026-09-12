@@ -146,9 +146,7 @@ sudo -u postgres psql -d excise_bank \
 sudo -u postgres psql -d excise_bank -f schema.sql
 sudo -u postgres psql -d excise_bank -f analytics_views.sql
 sudo -u postgres psql -d excise_bank -f seed_reference.sql
-
-# db/kb_indexes.sql is added at Milestone 3 (kb FTS/GIN indexes). Apply it then:
-# sudo -u postgres psql -d excise_bank -f kb_indexes.sql
+sudo -u postgres psql -d excise_bank -f kb_indexes.sql
 ```
 
 `roles.sql` creates the three roles, reassigns `excise_bank` and its schemas to
@@ -188,8 +186,9 @@ FLUSH PRIVILEGES;
 SQL
 ```
 
-Put `CHANGE_ME_kb_ro` in `etl/.env`. Also give the ETL user group read on the
-pipeline's Markdown tree:
+Put `CHANGE_ME_kb_ro` in `etl/.env` as `KB_RO_MYSQL_PASSWORD` (`etl/.env.example`
+has the full set of `KB_RO_MYSQL_*` vars). Also give the ETL user group read on
+the pipeline's Markdown tree:
 
 ```bash
 # the ETL runs as your user for now; if it later runs as its own user, add that
@@ -204,6 +203,20 @@ Verify:
 mariadb -h127.0.0.1 -u excise_mcp_kb_ro -p'CHANGE_ME_kb_ro' \
   -e "SELECT visibility,status,COUNT(*) FROM pdf_markdown_pipeline_local.documents GROUP BY 1,2;"
 ```
+
+**Register the pdf-markdown-pipeline sync as a source** (`excise_etl` already
+has `kb.*` write access from `roles.sql`):
+
+```bash
+PGPASSWORD='CHANGE_ME_etl' psql -h 127.0.0.1 -U excise_etl -d excise_bank <<'SQL'
+INSERT INTO etl.source_registry (name, source, source_ref, target_table, schedule, enabled)
+VALUES ('pdf_pipeline_docs', 'pdf_pipeline', 'pdf_markdown_pipeline_local', 'kb', '0 3 * * *', true)
+ON CONFLICT (name) DO NOTHING;
+SQL
+```
+
+Then `etl/.venv/bin/python -m etl sync --source pdf_pipeline_docs` (`etl/README.md`
+§Knowledge base has the module notes).
 
 ---
 

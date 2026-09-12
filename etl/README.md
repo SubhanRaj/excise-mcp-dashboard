@@ -7,16 +7,18 @@ package layout.
 
 ```
 etl/
-  config.py        Settings (pydantic-settings) — DATABASE_URL_ETL, NITI_SOURCE_DIR
+  config.py        Settings (pydantic-settings) — DATABASE_URL_ETL, NITI_SOURCE_DIR, KB_RO_MYSQL_*
   db.py            asyncpg pool on the excise_etl role; the sync advisory lock
   normalize.py     district/FY/money/volume rules (DATA_PIPELINE.md §Normalization rules)
   loader.py        INSERT ... ON CONFLICT upsert, keyed by each table's natural key
   quarantine.py    writes a rejected row to etl.quarantine
+  chunk.py         heading-aware Markdown chunking for the knowledge base
   run.py           `etl sync [--source NAME | --all]` — the sync loop and its CLI
   sources/
-    base.py        RawRow — the shape every adapter yields
-    csv.py         csv.DictReader over a file path
-    excel.py       openpyxl over one workbook sheet
+    base.py         RawRow — the shape every adapter yields
+    csv.py          csv.DictReader over a file path
+    excel.py        openpyxl over one workbook sheet
+    pdf_pipeline.py pdf-markdown-pipeline (MariaDB + Markdown files) -> kb.documents / kb.chunks
 ```
 
 ## Status
@@ -41,6 +43,23 @@ Once a workbook's layout is confirmed:
 4. Run `etl sync --source <name>` and check `etl.ingestion_runs` /
    `etl.quarantine` for the counts against the sibling's verified import
    (`ROADMAP.md` Milestone 1's reconciliation targets).
+
+## Knowledge base (`sources/pdf_pipeline.py`)
+
+Reads `pdf_markdown_pipeline_local` (MariaDB, via `excise_mcp_kb_ro`) filtered
+to public, verified, non-deleted documents in the Excise department, joined
+for the route context (section / division / folder / rule set) that builds
+each document's `docsrepo.exciseup.in` URL — mirrors
+`SitemapController::documentUrl()` in that app. `fetch_documents()` (the
+MariaDB read) and `sync_documents()` (hash, chunk, upsert, withdraw against
+Postgres) are separate functions so the ingest logic is tested against fixture
+rows with no MariaDB driver involved; `sync()` is the two glued together for
+`etl sync --source pdf_pipeline_docs`.
+
+`OPERATOR_SETUP.md` §Data bank has the one-time setup: `db/kb_indexes.sql`
+applied, the `excise_mcp_kb_ro` MariaDB user created, and the
+`pdf_pipeline_docs` row registered in `etl.source_registry`. After that,
+`etl sync --source pdf_pipeline_docs` runs it.
 
 ## Setup
 

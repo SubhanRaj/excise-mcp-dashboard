@@ -19,6 +19,10 @@ files = ["etl"]
 module = "asyncpg.*"
 ignore_missing_imports = true  # asyncpg ships no py.typed marker; no stub package exists
 
+[[tool.mypy.overrides]]
+module = "aiomysql.*"
+ignore_missing_imports = true  # aiomysql ships no py.typed marker; no stub package exists
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

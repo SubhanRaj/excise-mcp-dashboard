@@ -20,10 +20,22 @@ insufficient on its own; the sudoers fallback in `SECURITY.md` §2 is the
 untried real path. `OLLAMA_KEEP_ALIVE`/`OLLAMA_NUM_PARALLEL`/
 `OLLAMA_MAX_LOADED_MODELS` (`EVALUATION.md` §2) are now actually applied to
 the Ollama service, found missing after a loaded model sat resident well past
-its documented 30s. Work follows the `ROADMAP.md` milestone order; Milestone 3
-(knowledge base) is next. Dependency installs so far: `web/`'s Composer + npm
-set, `etl/`'s venv, `orchestrator/`'s venv — each the current milestone's
-`OPERATOR_SETUP.md` section at the time.
+its documented 30s. Milestone 3's retrieval plumbing is done — `etl/sources/
+pdf_pipeline.py` syncs the pdf-markdown-pipeline corpus (verified live against
+the real `pdf_markdown_pipeline_local`: 334 public+verified Excise rows) into
+`kb.documents`/`kb.chunks` via `etl/chunk.py`'s heading-aware chunker, with
+withdrawal handling; `orchestrator/app/kb/retrieve.py` and `/kb/search` run
+Postgres FTS over it, tested green (`ruff` / `mypy --strict` / `pytest`
+against the real local Postgres, both packages). `db/kb_indexes.sql` is
+written but not yet applied — needs `sudo -u postgres`, a pending
+`OPERATOR_SETUP.md` §Data bank step. What Milestone 3 leaves for later
+milestones: the admin `.md` upload screen and wiring `search_knowledge` into
+a chat tool loop (both need `web/`, Milestone 5+), and Google Docs/Drive into
+`kb.*` (waits on Milestone 1's Google ingestion, not started). Work follows
+the `ROADMAP.md` milestone order; Milestone 4 (second engine) or the rest of
+Milestone 1's Google ingestion is next. Dependency installs so far: `web/`'s
+Composer + npm set, `etl/`'s venv (`+aiomysql`), `orchestrator/`'s venv — each
+the current milestone's `OPERATOR_SETUP.md` section at the time.
 
 ## What this project is
 

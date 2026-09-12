@@ -46,6 +46,24 @@ class ChartArtifact(BaseModel):
     files: dict[str, str] = Field(default_factory=dict)
 
 
+class KbChunk(BaseModel):
+    content: str
+    heading_path: str | None
+    title: str
+    source_url: str | None
+    doc_type: str | None
+    rank: float
+
+
+class KbSearchRequest(BaseModel):
+    query: str
+    k: int = 6
+
+
+class KbSearchResponse(BaseModel):
+    chunks: list[KbChunk]
+
+
 class QueryResponse(BaseModel):
     request_id: str
     sql: str

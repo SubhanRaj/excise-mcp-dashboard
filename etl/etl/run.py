@@ -12,6 +12,7 @@ import structlog
 from etl import db, loader, quarantine
 from etl.sources import csv as csv_source
 from etl.sources import excel as excel_source
+from etl.sources import pdf_pipeline
 from etl.sources.base import RawRow
 
 log = structlog.get_logger()
@@ -51,6 +52,40 @@ async def sync_one(pool: asyncpg.Pool, registry_row: asyncpg.Record) -> None:
             await db.advisory_unlock(conn, name)
 
 
+async def _finish_run(
+    conn: asyncpg.Connection,
+    registry_row: asyncpg.Record,
+    run_id: int,
+    *,
+    seen: int,
+    upserted: int,
+    quarantined: int,
+    error: str | None,
+    status: str,
+) -> None:
+    await conn.execute(
+        "UPDATE etl.ingestion_runs SET finished_at = now(), status = $1, rows_seen = $2, "
+        "rows_upserted = $3, rows_quarantined = $4, error = $5 WHERE id = $6",
+        status,
+        seen,
+        upserted,
+        quarantined,
+        error,
+        run_id,
+    )
+    await conn.execute(
+        "UPDATE etl.source_registry SET last_run_id = $1 WHERE id = $2", run_id, registry_row["id"]
+    )
+    log.info(
+        "etl.sync.done",
+        source=registry_row["name"],
+        status=status,
+        seen=seen,
+        upserted=upserted,
+        quarantined=quarantined,
+    )
+
+
 async def _run_source(conn: asyncpg.Connection, registry_row: asyncpg.Record) -> None:
     name = registry_row["name"]
     run_id = await conn.fetchval(
@@ -58,8 +93,31 @@ async def _run_source(conn: asyncpg.Connection, registry_row: asyncpg.Record) ->
         registry_row["source"],
         registry_row["source_ref"],
     )
+
+    if registry_row["source"] == "pdf_pipeline":
+        error: str | None = None
+        try:
+            counts = await pdf_pipeline.sync(conn, run_id)
+            seen, upserted, quarantined = counts.seen, counts.upserted, counts.quarantined
+        except Exception as exc:  # noqa: BLE001 — surfaced via the typed run row, not a crash
+            seen = upserted = quarantined = 0
+            error = str(exc)
+            log.error("etl.sync.failed", source=name, error=error)
+        status = "failed" if error else ("partial" if quarantined else "ok")
+        await _finish_run(
+            conn,
+            registry_row,
+            run_id,
+            seen=seen,
+            upserted=upserted,
+            quarantined=quarantined,
+            error=error,
+            status=status,
+        )
+        return
+
     seen = upserted = quarantined = 0
-    error: str | None = None
+    error = None
     status = "ok"
     try:
         for raw in _dispatch_source(registry_row):
@@ -89,26 +147,15 @@ async def _run_source(conn: asyncpg.Connection, registry_row: asyncpg.Record) ->
         status = "failed"
         log.error("etl.sync.failed", source=name, error=error)
 
-    await conn.execute(
-        "UPDATE etl.ingestion_runs SET finished_at = now(), status = $1, rows_seen = $2, "
-        "rows_upserted = $3, rows_quarantined = $4, error = $5 WHERE id = $6",
-        status,
-        seen,
-        upserted,
-        quarantined,
-        error,
+    await _finish_run(
+        conn,
+        registry_row,
         run_id,
-    )
-    await conn.execute(
-        "UPDATE etl.source_registry SET last_run_id = $1 WHERE id = $2", run_id, registry_row["id"]
-    )
-    log.info(
-        "etl.sync.done",
-        source=name,
-        status=status,
         seen=seen,
         upserted=upserted,
         quarantined=quarantined,
+        error=error,
+        status=status,
     )
 
 
