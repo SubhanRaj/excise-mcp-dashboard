@@ -54,9 +54,9 @@ the chat stream is newline-delimited JSON (`application/x-ndjson`, matching
 `/query`'s existing wire format), not `text/event-stream` — every "SSE"
 reference below to `/chat`'s transport means that; and RBAC carries a
 `designations` preset table (`role` + `privileges` + `designation_id` +
-free-text `post`), the pattern four sibling Laravel apps converged on
-independently, not a bare `role`/`privileges` pair. Dependency installs so
-far: `web/`'s Composer + npm set, `etl/`'s venv (`+aiomysql`),
+free-text `post`) — the pattern four sibling Laravel apps converged on
+independently. Dependency installs so far: `web/`'s Composer + npm set,
+`etl/`'s venv (`+aiomysql`),
 `orchestrator/`'s venv — each the current milestone's `OPERATOR_SETUP.md`
 section at the time.
 
