@@ -125,7 +125,7 @@ flowchart TD
     G{"guard_sql<br/>one SELECT / WITH, analytics.* only,<br/>no DML/DDL/COPY/volatile fn, LIMIT enforced"}:::app
     RS["run_sql<br/>asyncpg as excise_ro, BEGIN READ ONLY,<br/>statement_timeout 10s, fetch, ROLLBACK"]:::db
     P2["plan_plot<br/>Ollama qwen2.5-coder, structured PlotPlan,<br/>engine must be in the live registry"]:::ai
-    R["render<br/>engines/&lt;engine&gt;.py — script + Parquet into scratch,<br/>run under bwrap, collect declared outputs"]:::viz
+    R["render<br/>engines/&lt;engine&gt;.py — script + data into scratch<br/>(Parquet, or a generated .m for Octave),<br/>run under bwrap, collect declared outputs"]:::viz
     S["summarize<br/>Ollama llama3.1, 2-4 sentence reading"]:::ai
     Out(["chart + table + SQL + summary + per-stage timings"]):::app
     Err["typed error<br/>(error, request_id, stage)"]:::err
@@ -159,10 +159,12 @@ flowchart TD
    and the question; require a `PlotPlan`
    (`{engine: str, script: str, outputs: list["plotly_json"|"png"|"svg"|"pdf"],
    title: str}`). `engine` must be in the live registry; default `python`.
-5. **render** — `engines/<engine>.py` writes `script` + the result data
-   (Parquet) into a fresh scratch dir, runs it through `sandbox/bwrap.py`,
-   collects the declared outputs. Missing output -> `render produced no
-   output`. Timeout / namespace violation -> `sandbox timeout` /
+5. **render** — `engines/<engine>.py` writes `script` + the result data into a
+   fresh scratch dir (Parquet for Python, a generated `.m` variable file for
+   Octave — it has no Parquet or table reader), runs it through
+   `sandbox/bwrap.py`, collects the declared outputs. Missing output ->
+   `render produced no output`. Timeout / namespace violation -> `sandbox
+   timeout` /
    `sandbox violation`.
 6. **summarize** — prompt Ollama (`llama3.1:8b`) for a 2–4 sentence reading of
    the numbers; plain text, `/general-english` tone rules apply on the Laravel
@@ -637,8 +639,10 @@ its value here would be symbolic math, not charting.
 2. Else use the LLM's `engine` if it is in `available()`.
 3. Else fall back to `"python"`.
 
-No heuristic on data volume or "task complexity". The LLM is given the
-one-line capability list (`python`: interactive + static, all output types)
-and picks; with one engine registered the pick is always `python`. When Octave
-is added, the prompt gains one line and the same mechanism handles it.
+No heuristic on data volume or "task complexity". The LLM is given a one-line
+capability list per engine actually in the live registry (`python`:
+interactive + static, all output types; `octave`: static only, no
+`table`/`readtable`, gnuplot's cairo print devices) and picks —
+`llm/prompts.py`'s `build_plot_prompt`. A future engine only adds one more
+line the same way; the routing logic itself doesn't change.
 `EVALUATION.md` §Right-sizing point 3.

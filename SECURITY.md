@@ -265,6 +265,16 @@ bwrap \
 - `--die-with-parent` — if the orchestrator worker dies, the sandbox child
   dies with it.
 
+The command above is the Python engine's; the Octave engine's tail is
+`octave-cli --no-gui --norc --eval "source('/scratch/chart.m')"` instead, over
+a generated `data.m` rather than the Parquet file, with two additions found
+only by testing a real render: `--setenv LANG C.utf8` (Ghostscript's iconv
+step, reached via Octave's gnuplot print path, fails outright in the C/POSIX
+locale `--clearenv` otherwise leaves), and a conditional read-only
+`--ro-bind /etc/fonts /etc/fonts` (gnuplot's cairo print terminals need it for
+text rendering). Neither widens the writable surface or touches the network;
+`sandbox/bwrap.py`'s `_build_command` has the exact per-engine invocation.
+
 ### Resource limits
 
 Applied to the child before `exec` (via `resource.setrlimit` in a
