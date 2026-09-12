@@ -310,6 +310,30 @@ the `id` columns are still present for joins but the natural-language layer
 works in district names and FY labels. `SECURITY.md` §Read-only role grants
 `SELECT` on `analytics.*` and nothing else.
 
+### BI access (future — Power BI and similar, not built)
+
+`analytics.*` and `kb.*` are the entire surface any read-only consumer ever
+needs, human or model. A BI tool (Power BI Desktop today; DBeaver was the
+original Backlog framing) connects the same way `excise_ro` does, just under
+its own role:
+
+```sql
+CREATE ROLE excise_bi_ro LOGIN PASSWORD :'bi_ro_pw';
+GRANT CONNECT ON DATABASE excise_bank TO excise_bi_ro;
+GRANT USAGE ON SCHEMA analytics, kb TO excise_bi_ro;
+GRANT SELECT ON ALL TABLES IN SCHEMA analytics, kb TO excise_bi_ro;
+ALTER ROLE excise_bi_ro SET default_transaction_read_only = on;
+```
+
+A direct copy of `db/roles.sql`'s `excise_ro` grants under a new name — kept
+separate from `excise_ro` itself so a human's ad-hoc query is never on the
+same role as the AI path's own audit trail, and so revoking BI access never
+touches the orchestrator. One shared `excise_bi_ro`, or one role per officer
+if per-person audit ever matters more than setup simplicity — either way it
+follows `db/roles.sql`'s existing pattern. `ARCHITECTURE.md` Diagram 5,
+`EVALUATION.md` §Right-sizing item 15, `ROADMAP.md` Backlog. Power BI *Service*
+(cloud publish/refresh) stays out of scope — it would send data off the box.
+
 ## ETL pipeline design
 
 `etl/` is a small Python 3.12 package run from cron / systemd timers. One

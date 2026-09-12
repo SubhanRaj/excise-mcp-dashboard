@@ -6,13 +6,22 @@ Phased build. Each milestone is a checklist with a stated "done when" gate.
 running, `excise_bank` created, the sandbox user and scratch dir in place,
 MariaDB migrated, both LLM models pulled (`qwen2.5-coder:7b-instruct-q4_K_M`,
 `llama3.1:8b-instruct-q4_K_M`); the Cloudflare and Google-consent decisions
-are the owner's remaining M0 items. Milestone 1 is in progress — the
-database (`db/`) is complete (schema, `analytics.*` views, the three roles,
-reference seed); the ETL core plumbing (`etl/` package, loader, normalize,
-quarantine, the csv/excel readers) is built and tested, waiting on the final
-NITI workbook layout to write its column maps; Google ingestion is not
-started. The `web/` skeleton, `db/` data bank, and `etl/` core are merged
-into `dev`.
+are the owner's remaining M0 items. Milestone 1's database half (`db/` —
+schema, `analytics.*` views, the three roles, reference seed) and ETL core
+plumbing (loader, normalize, quarantine, the csv/excel readers) are done;
+the NITI workbook column maps and Google ingestion are not started. Milestone
+2 (the orchestrator's one-shot `/query` pipeline) is done, tested live against
+real seed data. Milestone 3's retrieval plumbing is done — the
+pdf-markdown-pipeline sync, the chunker, and Postgres FTS via `/kb/search`,
+tested live against the real corpus (334 rows); the admin upload screen,
+Google Docs/Drive into `kb.*`, and wiring `search_knowledge` into a chat loop
+wait on `web/` (M5) and the rest of Google ingestion (M1). Milestone 4 (the
+Octave engine) is done, tested live against a real `octave-cli` render in the
+sandbox. The `web/` skeleton, `db/` data bank, `etl/` core, and
+`orchestrator/`'s pipeline + knowledge base + second engine are merged into
+`dev`. **Next up: Milestone 5 (Laravel UI)** — its detailed design is still
+being decided by the owner, so its checklist below may still change before
+work starts.
 
 Every `sudo` / install / external-console step is collected, copy-pasteable,
 in [`OPERATOR_SETUP.md`](OPERATOR_SETUP.md), grouped by the milestone that
@@ -39,6 +48,7 @@ flowchart LR
     M5["M5<br/>Laravel UI — form, chat, admin"]:::mvp
     M6["M6<br/>perimeter, hardening, end-to-end"]:::mvp
     M7["M7<br/>output store — saved analyses, reports, exports"]:::post
+    PBI["Backlog<br/>Power BI access (BI role, live connect)"]:::post
 
     M0 --> M1 --> M2
     M2 --> M3
@@ -47,6 +57,7 @@ flowchart LR
     M3 --> M5
     M5 --> M6
     M5 --> M7
+    M7 --> PBI
 ```
 
 ---
@@ -83,11 +94,14 @@ pulled, the sandbox user exists.
       seeded from `~/Sites/UP-excise-mailer`'s contact-list JSON;
       `ON CONFLICT DO NOTHING` throughout
 - [x] `db/README.md` — script purpose, apply order, roles
-- [ ] Owner runs `OPERATOR_SETUP.md` §Data bank — `createdb`, apply the four
-      scripts, create the `excise_mcp_kb_ro` read-only MariaDB user for the
-      pdf-markdown-pipeline sync
-- [ ] Verify: `psql -U excise_ro` can `SELECT` from `analytics.revenues` and
-      `kb.documents`, and **cannot** `INSERT` anywhere or read `public.*`
+- [x] Owner runs `OPERATOR_SETUP.md` §Data bank — `createdb`, apply the four
+      scripts (`roles.sql`'s `-v` password-quoting bug found and fixed along
+      the way, see `db/roles.sql`'s header comment). The
+      `excise_mcp_kb_ro` read-only MariaDB user is Milestone 3-scoped and
+      still pending
+- [x] Verify: `psql -U excise_ro` can `SELECT` from `analytics.revenues` and
+      `kb.documents`, and **cannot** `INSERT` anywhere or read `public.*` —
+      confirmed live against `excise_bank`
 
 ### ETL core (`etl/`)
 - [x] `etl/` package: `config.py` (pydantic-settings), `db.py` (writer pool on
@@ -138,50 +152,68 @@ OAuth connection.
 
 ## Milestone 2 — Orchestrator: the one-shot analytical pipeline
 
-- [ ] `orchestrator/` scaffold per `MCP_ENGINES.md` §Module layout; venv,
+- [x] `orchestrator/` scaffold per `MCP_ENGINES.md` §Module layout; venv,
       pinned `requirements.txt` + `.lock`
-- [ ] `config.py` Settings incl. the model registry (`OLLAMA_ALLOWED_MODELS`,
+- [x] `config.py` Settings incl. the model registry (`OLLAMA_ALLOWED_MODELS`,
       per-role defaults); `auth.py` bearer-token dependency (constant-time)
-- [ ] `schemas.py`: `QueryRequest` / `QueryResponse` / `SqlPlan` / `PlotPlan` /
+- [x] `schemas.py`: `QueryRequest` / `QueryResponse` / `SqlPlan` / `PlotPlan` /
       `Stage` / typed errors (`QueryRequest.model` optional, registry-checked)
-- [ ] `sql/schema_card.py` renders `analytics.*` into a prompt schema card
-- [ ] `llm/client.py`: Ollama async client, `format=`-constrained structured
+- [x] `sql/schema_card.py` renders `analytics.*` into a prompt schema card
+- [x] `llm/client.py`: Ollama async client, `format=`-constrained structured
       output, one-retry validation loop, model resolved from the registry (a
       request override falls back to the per-role default);
       `llm/prompts.py` (system prompt, schema card slot, 6–10 few-shot NL->SQL
       examples)
-- [ ] `sql/guard.py`: `sqlglot` single-read-only-SELECT parser with the full
+- [x] `sql/guard.py`: `sqlglot` single-read-only-SELECT parser with the full
       reject list from `SECURITY.md`; `LIMIT` injection
-- [ ] `sql/runner.py`: `asyncpg` pool on `DATABASE_URL_READONLY`,
+- [x] `sql/runner.py`: `asyncpg` pool on `DATABASE_URL_READONLY`,
       `BEGIN READ ONLY` + `SET LOCAL` timeouts + `ROLLBACK`, row cap
-- [ ] `engines/base.py`: `IVisualizationEngine` Protocol, registry, errors
-- [ ] `engines/python_engine.py`: script harness (Parquet preamble), output
+- [x] `engines/base.py`: `IVisualizationEngine` Protocol, registry, errors
+- [x] `engines/python_engine.py`: script harness (Parquet preamble), output
       collection (`plotly.json` / `png` / `svg` / `pdf`), `is_available()`
-- [ ] `sandbox/bwrap.py`: the `bwrap` command from `SECURITY.md` §2, rlimits /
-      `systemd-run` cgroup caps, artifact copy-out, scratch cleanup; decide
-      `systemd-run` vs a scoped sudoers rule with the owner
-      (`OPERATOR_SETUP.md` §Sandbox)
-- [ ] `pipeline.py`: the six stages, `Stage` events, per-stage timing
-- [ ] `main.py`: FastAPI app, lifespan (pool, `httpx`, ollama warmup),
+- [x] `sandbox/bwrap.py`: the `bwrap` command from `SECURITY.md` §2,
+      `systemd-run` cgroup caps (`MemoryMax` + `MemorySwapMax=0` — swap alone
+      lets a script page around the cap instead of getting OOM-killed, found
+      live), artifact copy-out, scratch cleanup; decided `systemd-run` —
+      `--uid=excise-sandbox` behind `SANDBOX_UID_SWITCH_ENABLED` (still off:
+      `loginctl enable-linger excise-sandbox` is done, but `--uid=` from an
+      unprivileged session needs root/polkit regardless of linger — confirmed
+      live; the sudoers fallback in `SECURITY.md` §2 is the real path,
+      untried). `bwrap`'s own namespace/network/filesystem confinement is the
+      primary control either way and is fully active without the uid switch
+- [x] `pipeline.py`: the six stages, `Stage` events, per-stage timing
+- [x] `main.py`: FastAPI app, lifespan (pool, `httpx`, ollama warmup),
       `/health` (incl. the model registry with a pulled flag each), `/query`
       (chunked stage stream + final JSON), `/query/{id}/status`
-- [ ] `deploy/`: systemd `--user` unit `excise-orchestrator.service` on
+- [x] `deploy/`: systemd `--user` unit `excise-orchestrator.service` on
       `127.0.0.1:8085`
-- [ ] Manual end-to-end from `curl`: a question -> SQL -> rows -> `chart.png` +
-      `chart.plotly.json` -> a summary
+- [x] Manual end-to-end from `curl`: a question -> SQL -> rows -> `chart.plotly.json`
+      -> a summary — done against the live `excise_bank` and the real
+      `qwen2.5-coder`/`llama3.1` models ("How many districts are in each
+      zone?" -> a real `GROUP BY` over `analytics.districts`, 75 rows across 5
+      zones matching `seed_reference.sql`, a real sandboxed Plotly render, a
+      real narrated summary). `chart.png` (static export) is not yet part of
+      this: Plotly's static export needs `kaleido>=1.0`, which drives a real
+      headless Chrome instead of the old pure-binary renderer, and it fails to
+      launch inside the `bwrap` sandbox even with `/dev/shm` mounted
+      (`BrowserFailedError`) — `llm/prompts.py` asks the model for
+      `chart.plotly.json` only until this is debugged further; see the note in
+      `engines/python_engine.py`
 
 ### Tests
-- [ ] tool schemas round-trip; guard rejects non-SELECT / multi-statement /
-      cross-schema / volatile-fn; integration test: a write attempt fails
-      against real local Postgres via `excise_ro`
-- [ ] router: explicit `engine` picks the adapter; unknown/unavailable ->
+- [x] tool schemas round-trip; guard rejects non-SELECT / multi-statement /
+      cross-schema / volatile-fn; a write attempt fails against real local
+      Postgres via `excise_ro` (verified live: `CREATE TABLE`, `INSERT` into
+      `kb.*`, and a `public.*` / `etl.*` read all correctly refused)
+- [x] router: explicit `engine` picks the adapter; unknown/unavailable ->
       typed error; default `python`
-- [ ] sandbox: past-wallclock killed; socket open fails; write outside
+- [x] sandbox: past-wallclock killed; socket open fails; write outside
       `/scratch` fails; past-memory killed
-- [ ] Ollama client: malformed structured output -> one retry -> typed error
-- [ ] model selection: allowed `model` used; out-of-registry `model` rejected
+- [x] Ollama client: malformed structured output -> one retry -> typed error
+- [x] model selection: allowed `model` used; out-of-registry `model` rejected
       pre-call; chat picker does not change the `run_sql_query` planner model
-- [ ] `ruff` / `ruff format --check` / `mypy --strict` green
+      (chat itself is Milestone 5)
+- [x] `ruff` / `ruff format --check` / `mypy --strict` green
 
 **Done when:** `POST /query` with a bearer token turns an excise question into
 a validated read-only SQL run plus a sandboxed Python chart plus a summary,
@@ -191,41 +223,66 @@ every failure path typed.
 
 ## Milestone 3 — Knowledge base and retrieval
 
-- [ ] `db/` already has the `kb` schema (Milestone 1). Add
-      `db/kb_indexes.sql` — the GIN FTS index, the document/chunk indexes
-- [ ] `etl/sources/pdf_pipeline.py` — read
+Scoped to the retrieval plumbing this milestone's own pipeline needs: the
+pdf-markdown-pipeline sync and FTS search. Wiring `search_knowledge` into the
+chat tool loop is Milestone 5+ (the loop itself isn't built yet either); the
+admin `.md` upload screen is Milestone 5 (`web/` doesn't exist yet); Google
+Docs/Drive ingestion into `kb.*` waits on Milestone 1's Google ingestion,
+still not started. `kb_uploads.py` / `gdocs.py` / the `gdrive.py` `kb.*`
+branch stay unbuilt until those land.
+
+- [x] `db/` already has the `kb` schema (Milestone 1). Add
+      `db/kb_indexes.sql` — the GIN FTS index, the document/chunk indexes.
+      Written; applying it needs `sudo -u postgres`, so it's a pending
+      `OPERATOR_SETUP.md` §Data bank step, not run by this session
+      (`CLAUDE.md`'s "no passwordless sudo" constraint)
+- [x] `etl/sources/pdf_pipeline.py` — read
       `pdf_markdown_pipeline_local.documents` (via `excise_mcp_kb_ro`,
       `SELECT`-only) filtered public + verified + not-deleted, join for
       `rule_set` / `doc_type` / `language` / URL slug, read each Markdown file
-      from `~/Sites/pdf-markdown-pipeline/storage/app/public/<markdown_path>`
-- [ ] `etl/chunk.py` — heading-aware chunking with `heading_path`, ~1,200-token
+      from `~/Sites/pdf-markdown-pipeline/storage/app/public/<markdown_path>`.
+      Verified live against the real `pdf_markdown_pipeline_local` (334
+      public+verified Excise rows, all with a buildable URL and a readable
+      `markdown_path`) — one alias fix needed (`div` is a MariaDB reserved
+      word)
+- [x] `etl/chunk.py` — heading-aware chunking with `heading_path`, ~1,200-token
       cap, ~100-token overlap, tables kept whole
 - [ ] `etl/sources/kb_uploads.py` — ingest pending `kb_uploads` rows staged by
       `web/`; `etl/sources/gdocs.py` — Google Docs -> Markdown -> `kb.*`;
       `gdrive.py` gains the `.md` / Docs -> `kb.*` branch
-- [ ] Withdrawal handling: a doc that stops matching the filter, or a withdrawn
+- [x] Withdrawal handling: a doc that stops matching the filter, or a withdrawn
       upload, sets `kb.documents.withdrawn_at`; re-run changes no other rows
-- [ ] `orchestrator/app/kb/retrieve.py` — FTS query over `kb.chunks`
+- [x] `orchestrator/app/kb/retrieve.py` — FTS query over `kb.chunks`
       (`websearch_to_tsquery('simple', ...)`, `withdrawn_at IS NULL`, top
       `KB_RETRIEVE_K`); a `pgvector` code path behind `KB_EMBEDDINGS_ENABLED`
       (off)
 - [ ] `orchestrator/app/kb/embed.py` — local Ollama embed client, used only
-      when embeddings are enabled
-- [ ] `orchestrator` `/kb/search` endpoint (retrieval only, no LLM) for tests
+      when embeddings are enabled. Not built: `KB_EMBEDDINGS_ENABLED` is off
+      and stays off until Milestone 6's retrieval quality check calls for it
+      (`EVALUATION.md` §Retrieval) — nothing to embed with yet
+- [x] `orchestrator` `/kb/search` endpoint (retrieval only, no LLM) for tests
       and the "cite sources" panel; `/health` reports `kb_docs` and
       `embeddings`
-- [ ] `etl.source_registry` rows: `pdf_pipeline_docs` (daily), `kb_uploads`
-      (15 min), `gdocs_*` / `gdrive_kb_*`
+- [x] `etl.source_registry` row: `pdf_pipeline_docs` (daily), registered live.
+      `kb_uploads` / `gdocs_*` / `gdrive_kb_*` wait on the sources above
 
 ### Tests
-- [ ] fixture mirroring `pdf_markdown_pipeline_local.documents` + a Markdown
+- [x] fixture mirroring `pdf_markdown_pipeline_local.documents` + a Markdown
       file -> correct `kb.documents` + `kb.chunks` with metadata and source
-      URL; non-public / non-verified skipped; re-run changes no counts;
-      removed upstream doc -> `withdrawn_at`
-- [ ] retrieval returns expected chunks by FTS rank; empty corpus -> no
-      context; `pgvector` path (when enabled) merges + de-dupes with FTS
-- [ ] upload validation in `web/` (extension, size, path traversal)
-- [ ] `ruff` / `mypy` / `pint` green
+      URL; re-run changes no counts; removed upstream doc -> `withdrawn_at`
+      (`etl/tests/test_pdf_pipeline.py`, against the real local Postgres via
+      `excise_etl`). Non-public/non-verified skipped is enforced by
+      `fetch_documents`' `WHERE` clause, not fixture-tested separately — the
+      live 334-row check above confirms the filter runs against the real
+      schema
+- [x] retrieval returns expected chunks by FTS rank; a withdrawn document is
+      excluded; no match / empty corpus -> no context
+      (`orchestrator/tests/test_kb_retrieve.py`, against the real local
+      Postgres). `pgvector` merge/de-dupe test deferred with `embed.py`
+- [ ] upload validation in `web/` (extension, size, path traversal) — `web/`
+      doesn't exist yet (Milestone 5)
+- [x] `ruff` / `ruff format --check` / `mypy --strict` green on `etl/` and
+      `orchestrator/`
 
 **Done when:** the verified pdf-markdown-pipeline corpus and admin `.md`
 uploads are searchable through `/kb/search`, withdrawal is respected, and
@@ -235,28 +292,38 @@ turning on `pgvector` is a config flag plus a backfill (not a rebuild).
 
 ## Milestone 4 — Second engine (GNU Octave); proprietary adapters stubbed
 
-- [ ] Owner runs `OPERATOR_SETUP.md` §Octave (`sudo apt install octave`)
-- [ ] `engines/octave_engine.py`: CSV hand-off, `octave-cli --no-gui --norc`
-      under the same sandbox, `print()` to `chart.{png,svg,pdf}`,
+- [x] Owner runs `OPERATOR_SETUP.md` §Octave (`sudo apt install octave`)
+- [x] `engines/octave_engine.py`: generated `.m` variable hand-off (Octave has
+      no `readtable`), `octave-cli --no-gui --norc` under the same sandbox,
+      `print()` to `chart.{png,svg,pdf}` via gnuplot's cairo terminals,
       `supported_outputs = {"png","svg","pdf"}`, `is_available()`
-- [ ] `sandbox/bwrap.py` gains an Octave profile
-- [ ] Router prompt gains one capability line for `octave`; the chat
-      `make_chart` tool can target it too
-- [ ] Tests: an `.m` script renders a PNG in the sandbox; unavailable Octave
-      is skipped cleanly; pipeline falls back to a static chart when a
-      no-Plotly-JSON engine is chosen
-- [ ] `engines/matlab_engine.py` and `engines/wolfram_engine.py` as documented
+- [x] `sandbox/bwrap.py` gains an Octave profile (script/data filenames, the
+      `octave-cli` command line, a `LANG` for Ghostscript's iconv step, and a
+      conditional `/etc/fonts` bind for gnuplot's text rendering)
+- [x] Router prompt gains one capability line for `octave` — the chat
+      `make_chart` tool has nothing to target yet, since the chat tool loop
+      itself is still Milestone 5+ (Milestone 3 above has the same deferral
+      for `search_knowledge`)
+- [x] Tests: an `.m` script renders a PNG in the sandbox (live, against a real
+      `octave-cli`); unavailable Octave is skipped cleanly; pipeline falls
+      back to a static chart when a no-Plotly-JSON engine is chosen
+- [x] `engines/matlab_engine.py` and `engines/wolfram_engine.py` as documented
       stubs raising `EngineUnavailable("not configured")`, behind
       `ENABLE_MATLAB` / `ENABLE_WOLFRAM` (default off), integration notes from
       `MCP_ENGINES.md` in the docstrings. No dependency added.
 
-**Done when:** the model can choose `python` or `octave` from both the
-one-shot path and the chat, both run in the sandbox, proprietary adapters are
+**Done when:** the model can choose `python` or `octave` from the one-shot
+path, both run in the sandbox, proprietary adapters are
 inert stubs.
 
 ---
 
 ## Milestone 5 — Laravel UI: analytical form, chat window, admin
+
+Full design in `web/plan/webui.md` — reuse map, RBAC and data model, the Ask
+and Chat flows end to end, the orchestrator `/chat` design, the model picker,
+and a security checklist. This checklist tracks the same scope; the plan has
+the detail and the reasoning behind each decision below.
 
 - [ ] `web/` scaffold: Laravel 13 + Livewire 4 + Fortify, sibling dependency
       set + `laravel/socialite`; `php artisan db:provision` ->
@@ -284,8 +351,12 @@ inert stubs.
       `LogMutation`, `HasPrivilege` / `IsAdmin`. Every Livewire write method
       re-checks its privilege — `livewire/update` skips route middleware
       (`SECURITY.md` §3)
-- [ ] RBAC trimmed to `Admin` / `Analyst`; `AppServiceProvider` rate limiters
-      incl. `ask` and `chat`; `Carbon::macro('ist')` and the `Login` /
+- [ ] RBAC: `role` (`Admin`/`Analyst`) + `privileges` JSON + `designation_id` +
+      free-text `post`, plus a `designations` preset table seeded with the
+      excise-specific rank names `excise-budget-tracker`/`UP-excise-mailer`
+      already seed — the pattern four sibling Laravel apps converged on
+      independently (`web/plan/webui.md` §6); `AppServiceProvider` rate
+      limiters incl. `ask` and `chat`; `Carbon::macro('ist')` and the `Login` /
       `Logout` -> `activity_logs` listeners ported from the sibling
 - [ ] Formatting: store UTC, render IST via `->ist()`; `₹` + `en-IN` grouping
       with a rupees / thousands / lakh / crore switcher on money figures;
@@ -297,29 +368,41 @@ inert stubs.
       `tables_used`, row_count, timings JSON, status, request_id),
       `chart_artifacts` (`spec` JSON + disk file paths), `query_feedback`,
       `kb_uploads`, `google_connections`, `users.ui_prefs` (JSON)
+- [ ] Orchestrator `orchestrator/app/chat/` (`tools.py`, `loop.py`,
+      `prompts.py`; `ChatRequest` + tool schemas in the existing root
+      `schemas.py`) and one new route, `POST /chat` — the bounded tool loop
+      over the existing `sql/`, `kb/`, `engines/` primitives, no parallel
+      implementation (`MCP_ENGINES.md` §Chat and retrieval,
+      `web/plan/webui.md` §9). Streams the same newline-delimited JSON
+      `/query` already uses, not `text/event-stream`
 - [ ] `RunExciseQuery` job (one-shot `/query`); queue worker systemd `--user`
       unit with `--timeout` above the orchestrator timeout
 - [ ] Livewire `Ask` component: split-view (chat left, canvas right, one
-      column under `lg`); submit -> job -> SSE stage stream
+      column under `lg`); submit -> job -> a plain route the browser polls via
+      `fetch()` for DB-status stage changes
       (`Querying database -> Running analysis -> Rendering chart -> Complete`),
       `wire:poll` fallback
-- [ ] Livewire `Chat` component: conversation list rail, active thread,
-      Alpine SSE reader appending assistant tokens; tool-call cards (SQL,
-      cited knowledge snippets with `docsrepo.exciseup.in` links, chart);
-      history persists and resumes; markdown/code render client-side,
-      sanitised; model picker (`config/models.php` registry, offered entries
-      filtered by orchestrator `/health`, sent as `model`, server-validated)
+- [ ] Livewire `Chat` component: conversation list rail, active thread, a
+      `fetch()` + `ReadableStream` reader (not `EventSource`, which is
+      GET-only and would put the message in a query string) appending
+      assistant tokens; tool-call cards (SQL, cited knowledge snippets with
+      `docsrepo.exciseup.in` links, chart); history persists and resumes;
+      markdown/code render client-side, sanitised; model picker
+      (`config/models.php` registry, offered entries filtered by orchestrator
+      `/health`, sent as `model`, server-validated)
 - [ ] Chart canvas: interactive `chart.plotly.json`; data table
       (`rows_preview`, paginated); generated SQL (collapsed, copyable); export
       PNG / SVG / PDF (artifact files) + CSV / XLSX (rows, reuse the sibling
-      `ExportService`)
+      `ExportService`, `openspout`)
 - [ ] Query ledger view: every past `/query` with prompt, SQL, timing, engine,
       model, status, thumbs + note; Admin sees all, Analyst sees own
 - [ ] Admin: user CRUD (ported); "Connected sources" (Google connect /
       disconnect, list Drive folders / Sheets / Docs, register as
       `source_registry` rows, show "reconnect needed"); "Knowledge base"
-      (upload `.md`, browse the ingested corpus, withdraw an upload); a
-      read-only view of `etl.ingestion_runs` / `etl.quarantine`
+      (upload `.md`, browse the ingested corpus via a new orchestrator
+      `GET /kb/documents` — paginated, no ranking, alongside the existing
+      ranked `/kb/search` — withdraw an upload); a read-only view of
+      `etl.ingestion_runs` / `etl.quarantine`
 - [x] `deploy/`: Apache vhost on `127.0.0.1:8084`, `DocumentRoot web/public`;
       owner runs `OPERATOR_SETUP.md` §Apache (append `ReadWritePaths`, incl.
       the `kb-uploads` disk path) — done ahead of schedule via
@@ -338,7 +421,7 @@ inert stubs.
       oversize rejected; path traversal blocked
 - [ ] Google OAuth: connect redirect scopes; callback stores encrypted token +
       row; disconnect deletes it; a token never appears in a log or response
-- [ ] `SecurityHeaders` present; `activity_logs` on non-GET; SSE stage
+- [ ] `SecurityHeaders` present; `activity_logs` on non-GET; the stage-polling
       endpoint returns the sequence
 - [ ] customization panel: a pref change persists across reload (cookie +
       `users.ui_prefs`), Reset restores defaults, timestamps render IST
@@ -439,7 +522,7 @@ Post-MVP. `DATA_PIPELINE.md` §Output store has the design.
       image), reorder, per-block `run_ref` (`latest` / pinned), visibility,
       a shared read-only link on a ULID
 - [ ] Exports: chart (PNG/SVG/PDF/`plotly.json`); result (CSV/XLSX via the
-      sibling `ExportService`); report (print-view Blade -> `laravel-dompdf`
+      sibling `ExportService`, `openspout`); report (print-view Blade -> `laravel-dompdf`
       PDF, DejaVu Sans; XLSX workbook, one sheet per analysis block; ZIP
       bundle), each stamped with `etl_epoch`. `report_exports` caches the last
       per `(report_id, format)`
@@ -491,8 +574,21 @@ PDF / XLSX / ZIP with the data vintage on it.
   item 14, `MCP_ENGINES.md` §Memory
 - `crystaldba/postgres-mcp` mounted as a real MCP server — only if an external
   MCP client (Claude Desktop, an IDE) becomes a second consumer of the bank
-- Tailscale access to `excise_bank` for DBeaver — follow
-  `infra-notes/postgres-tailscale-remote-access.md`, named read-only role only
+- BI client access to `excise_bank` (Power BI Desktop, DBeaver, or any SQL
+  client several officers already use) — a new `excise_bi_ro` role, a copy of
+  `excise_ro`'s `SELECT`-only grants on `analytics.*` + `kb.*` under its own
+  name (`DATA_PIPELINE.md` §BI access), reached over Tailscale following
+  `infra-notes/postgres-tailscale-remote-access.md`, **named read-only role
+  only**. Bypasses the orchestrator entirely — no guard, no sandbox, no LLM,
+  because it's a human running their own query. `ARCHITECTURE.md` Diagram 5,
+  `EVALUATION.md` §Right-sizing item 15. CSV/XLSX export (Milestone 7) already
+  covers "get the data into Power BI" with no new role at all — this item is
+  for a *live* connection. A `.pbix` template or a custom Power BI connector
+  is a further-out toggle under the same item, built only if a named analyst
+  asks for a specific reusable report — the live-connection role already lets
+  anyone build their own in Power BI Desktop without one. Power BI *Service*
+  (cloud publish/scheduled refresh) is excluded, not deferred — it would send
+  data off the box, against `CLAUDE.md`'s no-egress hard constraint
 - `drive.file` scope instead of `drive.readonly` if the broad-read grant
   becomes a concern
 - PPTX export for reports — needs a slide library; the Milestone 7 PDF and
