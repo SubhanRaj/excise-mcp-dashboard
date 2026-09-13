@@ -2,6 +2,7 @@
 errors for the one-shot pipeline. MCP_ENGINES.md §HTTP surface, §Pipeline stages.
 """
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -62,6 +63,20 @@ class KbSearchRequest(BaseModel):
 
 class KbSearchResponse(BaseModel):
     chunks: list[KbChunk]
+
+
+class KbDocument(BaseModel):
+    id: int
+    title: str
+    doc_type: str | None
+    source_url: str | None
+    ingested_at: datetime
+    withdrawn_at: datetime | None
+
+
+class KbDocumentsResponse(BaseModel):
+    documents: list[KbDocument]
+    total: int
 
 
 class QueryResponse(BaseModel):

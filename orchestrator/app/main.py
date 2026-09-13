@@ -24,10 +24,12 @@ from app.engines.matlab_engine import MatlabEngine
 from app.engines.octave_engine import OctaveEngine
 from app.engines.python_engine import PythonEngine
 from app.engines.wolfram_engine import WolframEngine
+from app.kb.retrieve import list_documents as kb_list_documents
 from app.kb.retrieve import retrieve as kb_retrieve
 from app.llm.client import OllamaClient
 from app.pipeline import run_query
 from app.schemas import (
+    KbDocumentsResponse,
     KbSearchRequest,
     KbSearchResponse,
     OrchestratorError,
@@ -127,6 +129,13 @@ async def health() -> dict[str, object]:
 async def kb_search(request: KbSearchRequest) -> KbSearchResponse:
     await _ensure_ready(_ctx())
     return KbSearchResponse(chunks=await kb_retrieve(request.query, request.k))
+
+
+@app.get("/kb/documents", dependencies=[Depends(require_bearer_token)])
+async def kb_documents(page: int = 1, per_page: int = 20) -> KbDocumentsResponse:
+    await _ensure_ready(_ctx())
+    documents, total = await kb_list_documents(page, per_page)
+    return KbDocumentsResponse(documents=documents, total=total)
 
 
 @app.post("/query", dependencies=[Depends(require_bearer_token)])
