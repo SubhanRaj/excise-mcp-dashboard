@@ -17,6 +17,17 @@ class Chat extends Component
 
     public ?string $model = null;
 
+    /**
+     * Set once, at mount, and never touched again — the chat thread's Alpine
+     * component keys off this instead of $conversationId so that send()
+     * creating a conversation mid-request doesn't change the wire:key and
+     * make Livewire tear down and recreate that DOM node. That teardown was
+     * destroying the very listener meant to catch the chat-message-ready
+     * event it fires in the same request, so the browser's fetch() to
+     * ChatController::send() never happened.
+     */
+    public ?string $mountedConversationId = null;
+
     public function mount(?Conversation $conversation = null): void
     {
         if ($conversation) {
@@ -24,6 +35,7 @@ class Chat extends Component
             $this->conversationId = $conversation->id;
             $this->model = $conversation->model;
         }
+        $this->mountedConversationId = $this->conversationId;
     }
 
     public function send(): void

@@ -19,10 +19,13 @@
 
     {{-- Active thread --}}
     <div
-        wire:key="thread-{{ $activeConversation?->id ?? 'new' }}"
+        wire:key="thread-{{ $mountedConversationId ?? 'new' }}"
         x-data="chatThread()"
         class="flex-1 min-w-0 flex flex-col bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden"
     >
+        {{-- The composer lives inside this same scrolling element, pinned with
+             sticky bottom-0, so it always stays on screen even if the panel's
+             height guess above doesn't exactly match the real viewport. --}}
         <div class="flex-1 overflow-y-auto p-4 space-y-4" x-ref="scrollArea">
             @if(! $activeConversation)
             <div class="stat-card justify-center text-center flex-col py-16 mx-auto max-w-md">
@@ -78,25 +81,26 @@
                     </div>
                 </div>
             </template>
-        </div>
 
-        {{-- Composer --}}
-        <form wire:submit="send" x-on:submit="onSubmit()" class="border-t border-slate-200 dark:border-slate-700 p-3 flex items-end gap-2">
-            @if(count($models) > 1)
-            <select wire:model="model" class="field-input w-auto text-xs flex-shrink-0">
-                @foreach($models as $key => $m)
-                <option value="{{ $key }}">{{ $m['label'] }}</option>
-                @endforeach
-            </select>
-            @endif
-            <textarea wire:model="message" rows="1" placeholder="Ask anything..."
-                      class="field-input flex-1 resize-none @error('message') field-error @enderror"></textarea>
-            @error('message') <p class="field-err-msg">{{ $message }}</p> @enderror
-            <button type="submit" wire:loading.attr="disabled" wire:target="send"
-                    class="bg-govviolet-600 hover:bg-govviolet-700 disabled:opacity-50 text-white text-sm font-semibold py-2.5 px-4 rounded-lg transition-colors flex-shrink-0">
-                <i class="ti ti-send"></i>
-            </button>
-        </form>
+            {{-- Composer --}}
+            <form wire:submit="send" x-on:submit="onSubmit()"
+                  class="sticky bottom-0 -mx-4 -mb-4 mt-2 bg-white dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700 p-3 flex items-end gap-2">
+                @if(count($models) > 1)
+                <select wire:model="model" class="field-input w-auto text-xs flex-shrink-0">
+                    @foreach($models as $key => $m)
+                    <option value="{{ $key }}">{{ $m['label'] }}</option>
+                    @endforeach
+                </select>
+                @endif
+                <textarea wire:model="message" rows="1" placeholder="Ask anything..."
+                          class="field-input flex-1 resize-none @error('message') field-error @enderror"></textarea>
+                @error('message') <p class="field-err-msg">{{ $message }}</p> @enderror
+                <button type="submit" wire:loading.attr="disabled" wire:target="send"
+                        class="bg-govviolet-600 hover:bg-govviolet-700 disabled:opacity-50 text-white text-sm font-semibold py-2.5 px-4 rounded-lg transition-colors flex-shrink-0">
+                    <i class="ti ti-send"></i>
+                </button>
+            </form>
+        </div>
     </div>
 </div>
 

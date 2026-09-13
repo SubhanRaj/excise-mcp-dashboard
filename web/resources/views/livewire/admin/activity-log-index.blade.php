@@ -1,7 +1,7 @@
 <div>
     <div class="relative w-full sm:w-72 mb-5">
         <i class="ti ti-search absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm"></i>
-        <input type="text" wire:model.live.debounce.300ms="search" placeholder="Search action..." class="field-input pl-9">
+        <input type="text" wire:model.live.debounce.300ms="search" placeholder="Search action..." class="field-input !pl-9">
     </div>
 
     <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden">

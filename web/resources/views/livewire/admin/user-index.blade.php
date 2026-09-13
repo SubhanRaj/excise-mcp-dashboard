@@ -3,7 +3,7 @@
         <div class="relative w-full sm:w-72">
             <i class="ti ti-search absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm"></i>
             <input type="text" wire:model.live.debounce.300ms="search" placeholder="Search name, username, email..."
-                   class="field-input pl-9">
+                   class="field-input !pl-9">
         </div>
         <a href="{{ route('admin.users.create') }}" wire:navigate
            class="inline-flex items-center gap-2 bg-govviolet-600 hover:bg-govviolet-700 text-white text-sm font-semibold py-2.5 px-4 rounded-lg transition-colors">
