@@ -78,11 +78,16 @@ names, route names).
 | `config/models.php` | new, shaped on `pdf-markdown-pipeline`'s `config/ocr.php` | `default` key + `models` map, each entry `{label, role, ollama_tag}` — see §10 |
 
 Not ported, by design:
-- `resources/views/components/public-layout.blade.php` and the whole UX4G/GIGW
-  chrome (identity strip, A-/A/A+ toggle, footer policy links, Material
-  Symbols) — this app defines no public route yet (§4). If one is ever added,
-  it uses that track; the authed dashboard/chat/admin use the plain indigo
-  admin shell only, per your direction.
+- The A-/A/A+ text-size toggle, the Material Symbols icon set, the JSON-LD
+  block, and the policy-page footer (accessibility statement, privacy policy,
+  sitemap) — this app's one public page is a placeholder landing screen, not
+  the sibling's full statistics site, and CLAUDE.md's design-system section
+  scopes the GIGW baseline down to skip link, landmarks, one `h1`, and a
+  focus-visible outline for exactly this reason. The authed dashboard/chat/
+  admin use the plain govviolet admin shell only.
+- `public-layout.blade.php` itself is ported, trimmed to an identity strip,
+  the emblem header, and a plain footer — no section nav, since this app has
+  no other public pages to link between.
 - The Dexie/IndexedDB offline cache (`shops-table.blade.php` pattern) — that's
   `ROADMAP.md` Milestone 7 scope, not this one.
 - `laravel/laravel-db-provisioner` is already a required dev dependency here
@@ -98,18 +103,17 @@ Not ported, by design:
 public UX4G/GIGW track (`public-layout.blade.php`, Material Symbols,
 indexable) and an admin track (`layout.blade.php`, Tabler Icons, `noindex`).
 
-Per your direction: **this app has no public route**, so only the admin track
-applies — to the dashboard, the Ask form, the Chat window, and every admin
-screen alike. `govviolet` (`#4a2bc2`)/`govsaffron` stay as the brand and
-accent colors (they're the department's palette regardless of audience), but
-none of the GIGW-specific chrome (identity strip, accessibility text-size
-toggle bar, skip-link styled for a public visitor, footer policy links) is
-built. `X-Robots-Tag: noindex` applies to every route, not just an `/admin`
-prefix.
+The admin track (`layout.blade.php`, Tabler Icons, `noindex`) covers the
+dashboard, the Ask form, the Chat window, and every admin screen. `govviolet`
+(`#4a2bc2`)/`govsaffron` are the brand and accent colors across both tracks.
 
-If a public route is ever added later (the backlog item about publishing to
-`upexcise-stats-dashboard` is the only candidate currently on record), it
-adopts the public track at that time — that's a separate, future decision.
+The one public route (`/`, `home.blade.php`) uses a trimmed
+`public-layout.blade.php`: the government identity strip, the emblem header,
+a skip link, and a plain footer, with a "Staff sign-in" link into the admin
+track's auth flow. It carries none of the sibling's section nav, JSON-LD, or
+policy-page footer — see §2's "Not ported, by design" for why. `X-Robots-Tag:
+noindex` still applies to every route, including this one — it's a
+placeholder page, not a public site ready for search.
 
 Chart color conventions (from the same doc, unaffected by the above): single
 Chart.js series `#4a2bc2` line + `rgba(74,43,194,0.08)` fill; multi-series

@@ -12,8 +12,15 @@ role-verified live, and `orchestrator/`'s `/query` ran a real question
 end-to-end against real seed data (SQL -> Postgres -> a sandboxed Plotly
 render -> a narrated summary), tested green (`ruff` / `mypy --strict` /
 `pytest`, 32 tests including live `bwrap` runs). Static chart export
-(`chart.png` via `kaleido`) is a known gap — needs a headless Chrome the
-sandbox can't launch yet; see `engines/python_engine.py`. The `excise-sandbox`
+(`chart.png`/`svg`/`pdf`) never runs Plotly's own `fig.write_image()` inside
+the per-script sandbox — that repeatedly OOM-killed the render's cgroup
+launching a fresh headless Chrome. A matplotlib script still calls
+`plt.savefig()` directly, inside the sandbox. A Plotly script only ever
+calls `fig.write_json()`; `engines/static_render.py` then derives any
+requested static format from that JSON afterward, outside the sandbox, via
+one persistent, isolated browser kept running for the orchestrator's whole
+lifetime — it never executes LLM-authored code, only rasterizes an
+already-produced chart spec. The `excise-sandbox`
 uid-separation layer is also still off (`bwrap`'s own confinement covers the
 same ground meanwhile) — `loginctl enable-linger excise-sandbox` turned out
 insufficient on its own; the sudoers fallback in `SECURITY.md` §2 is the
@@ -49,18 +56,37 @@ namespace, so the engine uses gnuplot's own cairo terminals
 `ROADMAP.md` milestone order; Milestone 5 (Laravel UI) is underway, built
 against the full design in `web/plan/webui.md` (reuse map, RBAC and data
 model, the Ask and Chat flows, the orchestrator `/chat` design, the model
-picker, a security checklist). Phase 0 (shell, RBAC, auth) and Phase 4
-(admin — users, Google connect, knowledge base, activity log) are built on
-branch `m5-phase-0-4-admin`: OTP-email login and onboarding ported from
+picker, a security checklist). Phase 0 (shell, RBAC, auth), Phase 4
+(admin — users, Google connect, knowledge base, activity log), Phase 1
+(the Ask form), Phase 2 (the orchestrator `/chat` endpoint and bounded tool
+loop), and Phase 3 (the Chat window) are built on branch
+`m5-phase-0-4-admin`, held there pending an explicit go-ahead to merge into
+`dev`. Phase 0/4: OTP-email login and onboarding ported from
 `upexcise-stats-dashboard`, `SecurityHeaders`/`LogMutation`/privilege
 middleware, the `designations`-backed RBAC model, and four full-page
 Livewire admin screens, each gated by route middleware and a per-write
-`abort_unless()` re-check — tested green (`pint`, 39 PHPUnit tests) and a
-new orchestrator `GET /kb/documents` endpoint for the Knowledge base
-screen's browse view (`ruff` / `mypy --strict` / `pytest`, 48 tests).
-Phases 1-3 (the Ask form, the orchestrator `/chat` endpoint, the Chat
-window) and Phase 5 (customization panel, brand assets) are next. Two
-decisions from the design correct this file: the chat stream is
+`abort_unless()` re-check, plus a new orchestrator `GET /kb/documents`
+endpoint for the Knowledge base screen's browse view. Phase 1: the `queries`
+ledger, `RunExciseQuery` queued job, and the Livewire `Ask` form, relaying
+the orchestrator's stage events to the browser via `fetch()` polling of a
+plain status route (not a held-open connection). Phase 2: `orchestrator/app/
+chat/` (`tools.py`, `loop.py`, `prompts.py`) wires `search_knowledge`,
+`run_sql_query`, and `make_chart` into a turn loop capped at
+`CHAT_MAX_TOOL_CALLS`, reusing the one-shot pipeline's SQL guard, read-only
+role, and sandbox — no parallel implementation. Phase 3: `conversations`/
+`messages`/`message_tool_calls` hold the transcript, and a plain
+`POST /chat/{conversation}/send` route (real streaming I/O, since a chat
+token arrives too fast for a queued job) pipes the orchestrator's ndjson
+stream straight to the browser while persisting it. Tested green throughout
+— `pint`, 51 PHPUnit tests on `web/`; `ruff` / `mypy --strict` / `pytest`,
+62 tests on `orchestrator/`. A live render also surfaced a second sandbox
+fix this phase: Plotly's own static export (`fig.write_image`, via
+kaleido's headless Chrome) was repeatedly OOM-killing the sandbox cgroup
+instead of erroring, so the plot-planning prompt no longer offers it and
+the Python engine now rejects a script that calls it anyway before a
+sandboxed process runs — matplotlib's `plt.savefig` covers static export
+without that dependency. Phase 5 (customization panel, brand assets) is
+next. Two decisions from the design correct this file: the chat stream is
 newline-delimited JSON (`application/x-ndjson`, matching `/query`'s
 existing wire format), not `text/event-stream` — every "SSE" reference
 below to `/chat`'s transport means that; and RBAC carries a `designations`
@@ -68,7 +94,22 @@ preset table (`role` + `privileges` + `designation_id` + free-text `post`)
 — the pattern four sibling Laravel apps converged on independently.
 Dependency installs so far: `web/`'s Composer + npm set, `etl/`'s venv
 (`+aiomysql`), `orchestrator/`'s venv — each the current milestone's
-`OPERATOR_SETUP.md` section at the time.
+`OPERATOR_SETUP.md` section at the time. A public `/` route now exists — a
+placeholder landing page on the trimmed GIGW/UX4G track ported from
+`upexcise-stats-dashboard` (identity strip, emblem header, skip link, no
+policy footer), since every other route stayed behind `/login` with nothing
+to land on. The department's brand assets (state emblem, favicons) moved
+from `assets/brand/` into `web/public/`, wired into `<x-head>`. The app is
+now live end to end on this box: the Apache vhost, the Cloudflare tunnel, the
+`web/` queue worker, and the orchestrator itself all run as `systemd --user`
+units (`OPERATOR_SETUP.md`'s per-milestone sections had each unit file
+written but not installed until now) and were verified together —
+`visualizer.exciseup.in` serves the home page, `/ask` redirects an
+unauthenticated request to `/login`, and `/health` on both `web/` and
+`orchestrator/` report `ok`. `OPERATOR_SETUP.md` also gained the bootstrap
+step for an empty `users` table's first Admin account, and the recovery
+command for the tunnel's one operational failure mode so far — a transient
+DNS lookup tripping systemd's restart-rate-limit, which does not self-clear.
 
 ## What this project is
 

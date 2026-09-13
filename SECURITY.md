@@ -297,14 +297,54 @@ the cgroup limits and is preferred over `preexec_fn` rlimits where available.
 ### What the script can and cannot do
 
 Can: read `/scratch/data.parquet`, use `pandas`/`numpy`/`scipy`/`matplotlib`/
-`seaborn`/`plotly`/`kaleido`, write `chart.{png,svg,pdf,plotly.json}` into
-`/scratch`, print to stdout (last 4 KB is captured).
+`seaborn`/`plotly`, write `chart.{png,svg,pdf,plotly.json}` into `/scratch`,
+print to stdout (last 4 KB is captured). The script never calls `kaleido`
+itself — see below.
 
 Cannot: open a socket, resolve a hostname, read anything under `/home`,
 `/etc` (beyond `/etc/alternatives`), `/root`, `/var` (beyond its own scratch),
 write outside `/scratch`, spawn more than 16 procs, run longer than 15 s, use
 more than ~1 GB, `import` a package not in the pinned venv, escalate
 privilege, or see the orchestrator's environment.
+
+### Static image export — outside the sandbox, on purpose
+
+`fig.write_image()` (Plotly's own static export, via `kaleido`) drives a
+real headless browser — too heavy and too slow to launch fresh inside this
+sandbox for every chart, and a live render showed it repeatedly OOM-killing
+the render's cgroup instead of just erroring. `python_engine.py` rejects a
+script that calls it, before a sandboxed process ever runs
+(`MCP_ENGINES.md` §1 Python).
+
+Instead, `engines/static_render.py` keeps one browser open for the
+orchestrator's whole lifetime and reuses it for every chart that needs a
+static export. This is the one place the design deliberately steps outside
+"every LLM-generated script runs under the sandbox" — because it is not
+running a script. It only ever rasterizes an already-produced,
+schema-shaped `chart.plotly.json`; no LLM-authored code reaches it, and it
+never receives the SQL result, the user's question, or anything else
+model-influenced beyond the finished chart spec.
+
+Two properties keep it from ever touching the operator's real browser:
+
+- **A fresh profile every launch.** `choreographer` (kaleido's browser
+  driver) always passes its own `--user-data-dir` pointing at a private
+  temp directory — never the operator's `~/.config/google-chrome`,
+  bookmarks, cookies, or signed-in Google account. This holds regardless of
+  which browser binary is launched.
+- **Chromium preferred over Chrome.** `_find_browser_path()` looks for an
+  installed `chromium`/`chromium-browser` binary first (`OPERATOR_SETUP.md`
+  §Chart rendering — an operator step, not automatic; installing it needs
+  `sudo`), falling back to the box's existing Google Chrome only if
+  Chromium isn't present. Either way the profile isolation above applies.
+
+`enable_sandbox=False` (`--no-sandbox`) is `choreographer`'s own default,
+kept explicit here rather than weakened: Chrome's *internal* sandbox
+protects a host from a hostile *webpage*, which doesn't apply to a fixed
+local HTML harness rendering a JSON spec with no navigation and no network
+call of its own — and that internal sandbox routinely fails to initialize
+inside an outer namespace sandbox like `bwrap`'s regardless, the same
+reason Docker/CI headless-Chrome setups disable it.
 
 ### After the render
 
