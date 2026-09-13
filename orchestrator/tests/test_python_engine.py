@@ -1,7 +1,5 @@
-"""engines/python_engine.py's write_image() guard. A live render showed
-Plotly's own static export (fig.write_image, via kaleido's headless Chrome)
-repeatedly OOM-killing the sandbox cgroup instead of just erroring — this
-rejects that script before a sandboxed process ever runs.
+"""engines/python_engine.py's write_image() guard, and the persistent
+static-render wiring that replaces it (engines/static_render.py).
 """
 
 from pathlib import Path
@@ -31,3 +29,71 @@ async def test_write_image_is_rejected_before_touching_the_sandbox(
 
     with pytest.raises(SandboxViolationError):
         await PythonEngine().render(req)
+
+
+async def test_a_plotly_script_gets_static_outputs_from_the_persistent_renderer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "chart.plotly.json").write_text('{"data": [], "layout": {}}')
+
+    async def fake_run_in_sandbox(**kwargs: object) -> tuple[Path, str]:
+        return tmp_path, ""
+
+    monkeypatch.setattr("app.engines.python_engine.run_in_sandbox", fake_run_in_sandbox)
+
+    rendered: list[str] = []
+
+    class FakeRenderer:
+        def is_available(self) -> bool:
+            return True
+
+        async def render(self, plotly_json: str, fmt: str) -> bytes:
+            rendered.append(fmt)
+            return b"fake-image-bytes"
+
+    monkeypatch.setattr("app.engines.python_engine.get_static_renderer", lambda: FakeRenderer())
+
+    req = RenderRequest(
+        script='fig.write_json(f"{OUT}/chart.plotly.json")',
+        data_path=Path("/tmp/does-not-matter.parquet"),
+        outputs=["plotly_json", "png"],
+        title="x",
+        scratch_dir=tmp_path,
+    )
+
+    result = await PythonEngine().render(req)
+
+    assert rendered == ["png"]
+    assert result.files["png"].read_bytes() == b"fake-image-bytes"
+
+
+async def test_static_output_is_skipped_when_no_renderer_is_available(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "chart.plotly.json").write_text('{"data": [], "layout": {}}')
+
+    async def fake_run_in_sandbox(**kwargs: object) -> tuple[Path, str]:
+        return tmp_path, ""
+
+    monkeypatch.setattr("app.engines.python_engine.run_in_sandbox", fake_run_in_sandbox)
+
+    class UnavailableRenderer:
+        def is_available(self) -> bool:
+            return False
+
+    monkeypatch.setattr(
+        "app.engines.python_engine.get_static_renderer", lambda: UnavailableRenderer()
+    )
+
+    req = RenderRequest(
+        script='fig.write_json(f"{OUT}/chart.plotly.json")',
+        data_path=Path("/tmp/does-not-matter.parquet"),
+        outputs=["plotly_json", "png"],
+        title="x",
+        scratch_dir=tmp_path,
+    )
+
+    result = await PythonEngine().render(req)
+
+    assert "png" not in result.files
+    assert result.plotly_json == '{"data": [], "layout": {}}'

@@ -366,6 +366,28 @@ Never `tee`/hand-edit a sudoers file — `visudo` validates before saving
 
 ---
 
+## §Chart rendering (Milestone 2, optional)
+
+Static chart export (PNG/SVG/PDF) runs through a persistent, isolated
+browser the orchestrator starts once at boot (`engines/static_render.py`,
+`SECURITY.md` §Static image export). It works out of the box against the
+box's existing Google Chrome — no action needed. Installing open-source
+Chromium instead is optional and preferred:
+
+```bash
+sudo apt install chromium-browser
+```
+
+The orchestrator looks for `chromium`/`chromium-browser` on `PATH` first and
+only falls back to Chrome if neither is installed; no config change or
+restart-order dependency either way — just install it and restart
+`excise-orchestrator.service` (`systemctl --user restart
+excise-orchestrator.service`) to pick it up. Either browser gets a fresh,
+private profile per launch (never the operator's own Chrome profile or
+signed-in account — `SECURITY.md` has the detail).
+
+---
+
 ## §Octave (Milestone 4)
 
 ```bash

@@ -31,6 +31,7 @@ from app.engines.base import register
 from app.engines.matlab_engine import MatlabEngine
 from app.engines.octave_engine import OctaveEngine
 from app.engines.python_engine import PythonEngine
+from app.engines.static_render import get_renderer as get_static_renderer
 from app.engines.wolfram_engine import WolframEngine
 from app.kb.retrieve import list_documents as kb_list_documents
 from app.kb.retrieve import retrieve as kb_retrieve
@@ -82,8 +83,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         ctx.schema_card = await render_schema_card(ctx.pool)
     except Exception as e:  # noqa: BLE001 — startup must not crash if Postgres isn't up yet
         logger.warning("postgres unavailable at startup, will retry per-request", error=str(e))
+    try:
+        await get_static_renderer().start()
+    except Exception as e:  # noqa: BLE001 — static export is a nice-to-have, not required to boot
+        logger.warning("static renderer failed to start, static export disabled", error=str(e))
     app_context = ctx
     yield
+    await get_static_renderer().stop()
     await http_client.aclose()
     await close_pool()
 

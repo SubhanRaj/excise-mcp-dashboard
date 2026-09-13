@@ -5,21 +5,24 @@ path; there is no web/ artifact disk to copy them into yet (Milestone 5) and
 no sweep timer yet (Milestone 6) — OPERATOR_SETUP.md / ROADMAP.md already
 track the sweep as a Milestone 6 item.
 
-Static export (png/svg/pdf) works through matplotlib's plt.savefig, which has
-no extra runtime dependency. Plotly's own static export (fig.write_image)
-needs kaleido>=1.0, which drives a real headless Chrome (the box's own
-/opt/google/chrome, bind-mounted read-only by sandbox/bwrap.py) instead of the
-old pure-binary renderer — it fails to launch inside the bwrap sandbox even
-with /dev/shm mounted, and a live render showed it repeatedly OOM-killing the
-render's cgroup instead of just erroring. llm/prompts.py no longer offers
-fig.write_image() to the model, and render() below rejects a script that
-calls it anyway before a sandboxed process ever runs.
+Static export (png/svg/pdf) has two paths. A script that builds a matplotlib
+figure calls plt.savefig directly, inside the sandbox — no extra runtime
+dependency. A script that builds a Plotly figure only ever calls
+fig.write_json(); render() below derives any requested png/svg/pdf from that
+JSON afterward, outside the sandbox, via engines/static_render.py's
+persistent, isolated browser. Plotly's own in-script static export
+(fig.write_image, which needs a real headless Chrome) is never called from
+inside the sandbox: a live render showed Chrome repeatedly OOM-killing the
+render's cgroup there instead of just erroring, so llm/prompts.py doesn't
+offer fig.write_image() to the model, and render() below rejects a script
+that calls it anyway before a sandboxed process ever runs.
 """
 
 import importlib.util
 from pathlib import Path
 
 from app.engines.base import RenderRequest, RenderResult
+from app.engines.static_render import get_renderer as get_static_renderer
 from app.sandbox.bwrap import run_in_sandbox
 from app.schemas import RenderEmptyError, SandboxViolationError
 
@@ -81,6 +84,15 @@ class PythonEngine:
                 plotly_json = path.read_text()
             else:
                 files[output] = path
+
+        static_renderer = get_static_renderer()
+        if plotly_json is not None and static_renderer.is_available():
+            for output in ("png", "svg", "pdf"):
+                if output in req.outputs and output not in files:
+                    data = await static_renderer.render(plotly_json, output)
+                    out_path = scratch_dir / _OUTPUT_FILENAMES[output]
+                    out_path.write_bytes(data)
+                    files[output] = out_path
 
         if plotly_json is None and not files:
             raise RenderEmptyError(stdout_tail)
