@@ -40,6 +40,61 @@ class OrchestratorClient
         return $response->json('results', []);
     }
 
+    /**
+     * Consumes POST /query's streamed ndjson lines ({"stage": ...}, {"error": ...},
+     * {"result": ...}), calling $onStage as each stage event arrives and returning the
+     * final result. `RunExciseQuery` is the only caller (ARCHITECTURE.md — the job, not
+     * the web worker, blocks on this).
+     *
+     * @param  array<string, mixed>  $payload
+     * @param  callable(array<string, mixed>): void  $onStage
+     * @return array<string, mixed>
+     *
+     * @throws ConnectionException|RequestException|OrchestratorQueryException
+     */
+    public function runQuery(array $payload, callable $onStage): array
+    {
+        $response = Http::baseUrl(config('services.orchestrator.base_url'))
+            ->withToken(config('services.orchestrator.token'))
+            ->withOptions(['stream' => true])
+            ->timeout(300)
+            ->post('/query', $payload)
+            ->throw();
+
+        $body = $response->toPsrResponse()->getBody();
+        $buffer = '';
+        $result = null;
+
+        while (! $body->eof()) {
+            $buffer .= $body->read(8192);
+            while (($newlineAt = strpos($buffer, "\n")) !== false) {
+                $line = trim(substr($buffer, 0, $newlineAt));
+                $buffer = substr($buffer, $newlineAt + 1);
+                if ($line === '') {
+                    continue;
+                }
+
+                // Order matters: an {"error": ...} event also carries a flat "stage"
+                // string (main.py's _stream_query), unlike a {"stage": {...}} event's
+                // nested Stage object — check "error" first or it's mistaken for one.
+                $event = json_decode($line, true, 512, JSON_THROW_ON_ERROR);
+                if (isset($event['error'])) {
+                    throw new OrchestratorQueryException($event['error'], $event['stage'] ?? null);
+                } elseif (isset($event['stage'])) {
+                    $onStage($event['stage']);
+                } elseif (isset($event['result'])) {
+                    $result = $event['result'];
+                }
+            }
+        }
+
+        if ($result === null) {
+            throw new OrchestratorQueryException('orchestrator stream ended without a result');
+        }
+
+        return $result;
+    }
+
     private function request()
     {
         return Http::baseUrl(config('services.orchestrator.base_url'))

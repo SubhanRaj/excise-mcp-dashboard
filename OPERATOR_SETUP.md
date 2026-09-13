@@ -449,6 +449,24 @@ curl -s http://127.0.0.1:8084/health                   # {"app":"Excise Data Vis
 
 ---
 
+## §web/ queue worker (Milestone 5, Phase 1)
+
+`RunExciseQuery` (the Ask flow's one-shot `/query` job) runs on `QUEUE_CONNECTION=database`
+— nothing processes it until this worker is running. No `sudo` needed, `--user` units only:
+
+```bash
+cp ~/Sites/excise-mcp-dashboard/deploy/excise-mcp-dashboard-queue.service \
+   ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now excise-mcp-dashboard-queue.service
+```
+
+Verify: `systemctl --user status excise-mcp-dashboard-queue.service` shows `active (running)`;
+submitting a question on `/ask` moves a `queries` row from `pending` through `running` to
+`complete` within a few seconds (watch it with `php artisan tinker` or the MariaDB CLI).
+
+---
+
 ## §Apache vhost (Milestone 5)
 
 `web/` deploys behind Apache on `127.0.0.1:8084`, same pattern as the four

@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\AskController;
 use App\Http\Controllers\Auth\ForgotPasswordController;
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\Auth\OnboardingController;
@@ -9,6 +10,7 @@ use App\Livewire\Admin\GoogleConnectionIndex;
 use App\Livewire\Admin\KnowledgeBaseIndex;
 use App\Livewire\Admin\UserForm;
 use App\Livewire\Admin\UserIndex;
+use App\Livewire\Ask;
 use Illuminate\Support\Facades\Route;
 
 // The only route the perimeter leaves open (ROADMAP Milestone 6). Every other
@@ -44,9 +46,15 @@ Route::middleware(['guest', 'signed'])->group(function () {
 // Signed-in area. This app has no public route (web/plan/webui.md §3) — every page below
 // is internal staff tooling.
 Route::middleware('auth')->group(function () {
-    // Phase 1/2/3 build these for real; stubbed here so the shell/nav/RBAC have somewhere
-    // to route to (web/plan/webui.md §1's build order — Phase 0 only).
-    Route::view('/ask', 'stubs.coming-soon', ['feature' => 'Ask'])->name('ask');
+    // The 'ask' rate limit (10/min) is enforced inside Ask::submit() itself, not here —
+    // this route is the page load, not the question submission (that's a Livewire
+    // action routed through livewire/update, already throttled by 'mutations').
+    Route::get('/ask', Ask::class)->name('ask');
+    Route::get('/ask/{query}/stream', [AskController::class, 'stream'])->name('ask.stream');
+    Route::get('/ask/{query}/export/{format}', [AskController::class, 'export'])->name('ask.export');
+
+    // Phase 2/3 build these for real; stubbed here so the shell/nav/RBAC have somewhere
+    // to route to (web/plan/webui.md §1's build order).
     Route::view('/chat', 'stubs.coming-soon', ['feature' => 'Chat'])->name('chat');
     Route::view('/ledger', 'stubs.coming-soon', ['feature' => 'Ledger'])->name('ledger');
 
