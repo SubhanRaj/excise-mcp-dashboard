@@ -19,11 +19,10 @@ and Google ingestion (M1). Milestone 4 (the Octave engine) is done, tested
 live against a real `octave-cli` render in the sandbox. The `db/` data bank,
 `etl/` core, and `orchestrator/`'s pipeline + knowledge base + second engine
 are merged into `dev`. **Milestone 5 (Laravel UI)** is underway on
-`web/plan/webui.md`'s design, all on branch `m5-phase-0-4-admin` (held there
-pending an explicit go-ahead to merge into `dev`): Phase 0 (shell, RBAC,
-auth), Phase 4 (admin — users, Google connect, knowledge base, activity log),
-Phase 1 (the Ask form), Phase 2 (the orchestrator `/chat` endpoint and tool
-loop), and Phase 3 (the Chat window) are built — tested green,
+`web/plan/webui.md`'s design. Phase 0 (shell, RBAC, auth), Phase 4 (admin —
+users, Google connect, knowledge base, activity log), Phase 1 (the Ask
+form), Phase 2 (the orchestrator `/chat` endpoint and tool loop), and Phase
+3 (the Chat window) are merged into `dev` — tested green,
 `pint`/PHPUnit 52 tests on `web/`, `ruff`/`mypy --strict`/`pytest` 70 tests on
 `orchestrator/`. A public `/` landing page and the brand assets (state
 emblem, favicons, moved from `assets/brand/` into `web/public/`) are also

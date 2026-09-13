@@ -8,9 +8,9 @@ excise data bank is the orchestrator's, read-only.
 
 OTP-email login and onboarding, RBAC (`designations` + `privileges`), the
 admin screens (users, Google connect, knowledge base, activity log), the Ask
-form, and the chat window are built (`m5-phase-0-4-admin`, `CLAUDE.md`'s
-Status paragraph has the detail). The customization panel and brand assets
-(Milestone 5 Phase 5) are next.
+form, the chat window, and a public landing page are built (`CLAUDE.md`'s
+Status paragraph has the detail). The customization panel
+(Milestone 5 Phase 5) is next.
 
 ## Docs
 

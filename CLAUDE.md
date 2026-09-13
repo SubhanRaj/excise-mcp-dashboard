@@ -59,9 +59,8 @@ model, the Ask and Chat flows, the orchestrator `/chat` design, the model
 picker, a security checklist). Phase 0 (shell, RBAC, auth), Phase 4
 (admin — users, Google connect, knowledge base, activity log), Phase 1
 (the Ask form), Phase 2 (the orchestrator `/chat` endpoint and bounded tool
-loop), and Phase 3 (the Chat window) are built on branch
-`m5-phase-0-4-admin`, held there pending an explicit go-ahead to merge into
-`dev`. Phase 0/4: OTP-email login and onboarding ported from
+loop), and Phase 3 (the Chat window) are merged into `dev`. Phase 0/4:
+OTP-email login and onboarding ported from
 `upexcise-stats-dashboard`, `SecurityHeaders`/`LogMutation`/privilege
 middleware, the `designations`-backed RBAC model, and four full-page
 Livewire admin screens, each gated by route middleware and a per-write
