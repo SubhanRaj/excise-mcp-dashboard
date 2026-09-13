@@ -125,6 +125,21 @@ log search boxes' left icon overlapping the input text — `field-input`'s own
 padding, compiled via the Tailwind Play CDN's runtime `@apply`, was beating
 a plain `pl-9` override in the cascade; `excise-budget-tracker` hit the same
 thing and fixed it with Tailwind's `!` modifier, applied the same way here.
+Two more turned up right after: a failed Ask query rendered its red error
+box with nothing in it, traced to some httpx/httpcore exceptions (timeouts
+especially) having an empty `str()` when raised without an explicit
+message — `OllamaClient` wraps them as `OllamaUnreachableError(str(e))`, so
+the wrapped error's own message came out empty too, all the way to the blade
+view's `?? 'fallback'` (which only catches `null`, not `''`). Fixed at the
+source (`OrchestratorError` falls back to the raising exception's class
+name when the message is empty) and at the display (`?:` instead of `??`,
+plus the stage and request_id shown in the box when `APP_DEBUG` is on). And
+Chat's "New conversation" link stopped responding once a message had been
+sent in the thread: `sendToOrchestrator()` moves the address bar with
+`history.replaceState()` after a live send, which Livewire's `wire:navigate`
+router never observes, so a `wire:navigate` click back to a path it still
+thinks it's already on silently no-ops — the conversation-rail links are
+plain navigation now.
 
 ## What this project is
 
