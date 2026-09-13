@@ -32,6 +32,15 @@ class KnowledgeBaseTest extends TestCase
         $this->actingAs($analyst)->get(route('admin.knowledge.index'))->assertForbidden();
     }
 
+    public function test_an_admin_can_view_the_screen_even_when_the_orchestrator_is_unreachable(): void
+    {
+        $admin = User::factory()->create(['role' => 'Admin']);
+
+        $this->actingAs($admin)->get(route('admin.knowledge.index'))
+            ->assertOk()
+            ->assertSee('unreachable');
+    }
+
     public function test_a_valid_markdown_file_is_accepted_and_creates_a_pending_upload(): void
     {
         Storage::fake('kb-uploads');
