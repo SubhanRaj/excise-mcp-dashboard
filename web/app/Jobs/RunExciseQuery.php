@@ -52,6 +52,8 @@ class RunExciseQuery implements ShouldQueue
                     'timings' => $result['timings_ms'] ?? null,
                     'rows_preview' => $result['rows_preview'] ?? null,
                     'summary' => $result['summary'] ?? null,
+                    'prompt_tokens' => $result['prompt_tokens'] ?? 0,
+                    'completion_tokens' => $result['completion_tokens'] ?? 0,
                     'status' => 'complete',
                 ]);
 

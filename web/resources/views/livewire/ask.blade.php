@@ -147,6 +147,27 @@
                 </div>
             </div>
             @endif
+
+            @if($activeQuery->status === 'complete')
+            <div class="flex flex-wrap items-center gap-3 text-sm text-slate-500 dark:text-slate-400">
+                <span>Was this useful?</span>
+                <button wire:click="giveFeedback(true)"
+                        class="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 {{ $activeQuery->feedback->first()?->thumbs_up === true ? 'text-green-600' : '' }}"
+                        title="Yes">
+                    <i class="ti ti-thumb-up"></i>
+                </button>
+                <button wire:click="giveFeedback(false)"
+                        class="p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 {{ $activeQuery->feedback->first()?->thumbs_up === false ? 'text-red-600' : '' }}"
+                        title="No">
+                    <i class="ti ti-thumb-down"></i>
+                </button>
+                <input type="text" wire:model="feedbackNote" placeholder="Add a note (optional)"
+                       class="field-input !py-1.5 text-xs flex-1 min-w-[10rem] max-w-xs">
+                @if($activeQuery->feedback->first()?->note)
+                <span class="text-xs italic">Saved: "{{ $activeQuery->feedback->first()->note }}"</span>
+                @endif
+            </div>
+            @endif
         @endif
     </div>
 </div>

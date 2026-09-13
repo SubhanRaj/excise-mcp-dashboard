@@ -65,6 +65,8 @@ class AskTest extends TestCase
                         'engine' => 'python',
                         'model' => 'qwen2.5-coder',
                         'timings_ms' => ['run_sql' => 12],
+                        'prompt_tokens' => 150,
+                        'completion_tokens' => 40,
                     ]],
                 ]),
                 200,
@@ -78,11 +80,33 @@ class AskTest extends TestCase
         $this->assertSame('SELECT 1', $query->sql);
         $this->assertSame(1, $query->row_count);
         $this->assertSame('There is 1 row.', $query->summary);
+        $this->assertSame(150, $query->prompt_tokens);
+        $this->assertSame(40, $query->completion_tokens);
         $this->assertDatabaseHas('chart_artifacts', [
             'owner_type' => Query::class,
             'owner_id' => $query->id,
         ]);
         $this->assertNotNull(ChartArtifact::where('owner_id', $query->id)->first()->spec);
+    }
+
+    public function test_a_user_can_leave_thumbs_up_feedback_with_a_note_on_their_own_query(): void
+    {
+        $user = User::factory()->create();
+        $query = Query::create([
+            'user_id' => $user->id, 'prompt' => 'x', 'status' => 'complete',
+        ]);
+
+        Livewire::actingAs($user)->test(Ask::class)
+            ->set('activeQueryId', $query->id)
+            ->set('feedbackNote', 'Very useful')
+            ->call('giveFeedback', true);
+
+        $this->assertDatabaseHas('query_feedback', [
+            'query_id' => $query->id,
+            'user_id' => $user->id,
+            'thumbs_up' => 1,
+            'note' => 'Very useful',
+        ]);
     }
 
     public function test_the_job_marks_a_query_failed_on_an_orchestrator_error(): void

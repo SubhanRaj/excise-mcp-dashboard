@@ -6,12 +6,14 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Concerns\HasUlids;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphOne;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 #[Fillable([
     'user_id', 'request_id', 'prompt', 'sql', 'engine', 'model', 'tables_used',
     'row_count', 'timings', 'status', 'current_stage', 'rows_preview', 'summary', 'error_message',
+    'prompt_tokens', 'completion_tokens',
 ])]
 class Query extends Model
 {
@@ -34,6 +36,11 @@ class Query extends Model
     public function chartArtifact(): MorphOne
     {
         return $this->morphOne(ChartArtifact::class, 'owner');
+    }
+
+    public function feedback(): HasMany
+    {
+        return $this->hasMany(QueryFeedback::class);
     }
 
     public function isTerminal(): bool

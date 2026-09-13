@@ -9,6 +9,7 @@ use App\Http\Controllers\GoogleConnectionController;
 use App\Livewire\Admin\ActivityLogIndex;
 use App\Livewire\Admin\GoogleConnectionIndex;
 use App\Livewire\Admin\KnowledgeBaseIndex;
+use App\Livewire\Admin\SystemHealth;
 use App\Livewire\Admin\UserForm;
 use App\Livewire\Admin\UserIndex;
 use App\Livewire\Ask;
@@ -84,6 +85,10 @@ Route::middleware('auth')->group(function () {
 
         Route::middleware('privilege:activity-logs.view')->prefix('activity-logs')->name('activity-logs.')->group(function () {
             Route::get('/', ActivityLogIndex::class)->name('index');
+        });
+
+        Route::middleware('privilege:system.monitor')->prefix('system-health')->name('system-health.')->group(function () {
+            Route::get('/', SystemHealth::class)->name('index');
         });
     });
 

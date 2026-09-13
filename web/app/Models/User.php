@@ -31,6 +31,7 @@ class User extends Authenticatable
         'google.manage',
         'users.manage',
         'activity-logs.view',
+        'system.monitor',
     ];
 
     public const ROLES = ['Admin', 'Analyst'];

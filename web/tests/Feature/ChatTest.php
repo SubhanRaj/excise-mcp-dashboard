@@ -58,7 +58,7 @@ class ChatTest extends TestCase
                     ['tool_call' => ['name' => 'make_chart', 'arguments' => ['spec' => 'x', 'data_ref' => $conversation->id]]],
                     ['tool_result' => ['name' => 'make_chart', 'ok' => true, 'summary' => 'Chart rendered.']],
                     ['chart' => ['plotly_json' => json_encode(['data' => [], 'layout' => []])]],
-                    ['done' => ['tool_calls_count' => 1]],
+                    ['done' => ['tool_calls_count' => 1, 'prompt_tokens' => 200, 'completion_tokens' => 50]],
                 ]),
                 200,
             ),
@@ -74,6 +74,8 @@ class ChatTest extends TestCase
         $assistant = Message::where('conversation_id', $conversation->id)->where('role', 'assistant')->first();
         $this->assertNotNull($assistant);
         $this->assertSame('Here is the trend.', $assistant->content);
+        $this->assertSame(200, $assistant->prompt_tokens);
+        $this->assertSame(50, $assistant->completion_tokens);
 
         $toolCall = MessageToolCall::where('message_id', $assistant->id)->first();
         $this->assertNotNull($toolCall);

@@ -9,7 +9,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
-#[Fillable(['conversation_id', 'role', 'content', 'model'])]
+#[Fillable(['conversation_id', 'role', 'content', 'model', 'prompt_tokens', 'completion_tokens'])]
 class Message extends Model
 {
     use HasUlids, SoftDeletes;

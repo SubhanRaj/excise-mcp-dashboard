@@ -31,7 +31,7 @@
         </a>
 
         @auth
-        @if(auth()->user()->isAdmin() || auth()->user()->hasPrivilege('google.manage') || auth()->user()->hasPrivilege('kb.manage') || auth()->user()->hasPrivilege('users.manage') || auth()->user()->hasPrivilege('activity-logs.view'))
+        @if(auth()->user()->isAdmin() || auth()->user()->hasPrivilege('google.manage') || auth()->user()->hasPrivilege('kb.manage') || auth()->user()->hasPrivilege('users.manage') || auth()->user()->hasPrivilege('activity-logs.view') || auth()->user()->hasPrivilege('system.monitor'))
         <span class="nav-section-label">Admin</span>
         @endif
 
@@ -64,6 +64,14 @@
            class="nav-link {{ request()->routeIs('admin.activity-logs.*') ? 'nav-link-active' : 'nav-link-idle' }}">
             <i class="ti ti-activity w-5 text-center text-base flex-shrink-0"></i>
             <span class="sidebar-text">Activity log</span>
+        </a>
+        @endif
+
+        @if(auth()->user()->isAdmin() || auth()->user()->hasPrivilege('system.monitor'))
+        <a href="{{ route('admin.system-health.index') }}" wire:navigate data-tooltip="System health"
+           class="nav-link {{ request()->routeIs('admin.system-health.*') ? 'nav-link-active' : 'nav-link-idle' }}">
+            <i class="ti ti-heart-rate-monitor w-5 text-center text-base flex-shrink-0"></i>
+            <span class="sidebar-text">System health</span>
         </a>
         @endif
         @endauth

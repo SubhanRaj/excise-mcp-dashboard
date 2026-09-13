@@ -64,6 +64,8 @@ class ChatController extends Controller
             $assistantText = '';
             $pendingToolCall = null;
             $lastToolCallId = null;
+            $promptTokens = 0;
+            $completionTokens = 0;
 
             try {
                 foreach ($orchestrator->chatStream([
@@ -96,13 +98,20 @@ class ChatController extends Controller
                             'owner_id' => $lastToolCallId,
                             'spec' => $event['chart'],
                         ]);
+                    } elseif (isset($event['done'])) {
+                        $promptTokens = $event['done']['prompt_tokens'] ?? 0;
+                        $completionTokens = $event['done']['completion_tokens'] ?? 0;
                     }
                 }
             } catch (\Throwable $e) {
                 Log::error('ChatController::send stream failed', ['error' => $e->getMessage()]);
                 echo json_encode(['error' => ['stage' => 'internal', 'message' => 'The chat connection was interrupted.']])."\n";
             } finally {
-                $assistantMessage->update(['content' => $assistantText]);
+                $assistantMessage->update([
+                    'content' => $assistantText,
+                    'prompt_tokens' => $promptTokens,
+                    'completion_tokens' => $completionTokens,
+                ]);
             }
         }, 200, [
             'Content-Type' => 'application/x-ndjson',
