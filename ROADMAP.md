@@ -13,15 +13,19 @@ the NITI workbook column maps and Google ingestion are not started. Milestone
 2 (the orchestrator's one-shot `/query` pipeline) is done, tested live against
 real seed data. Milestone 3's retrieval plumbing is done — the
 pdf-markdown-pipeline sync, the chunker, and Postgres FTS via `/kb/search`,
-tested live against the real corpus (334 rows); the admin upload screen,
-Google Docs/Drive into `kb.*`, and wiring `search_knowledge` into a chat loop
-wait on `web/` (M5) and the rest of Google ingestion (M1). Milestone 4 (the
-Octave engine) is done, tested live against a real `octave-cli` render in the
-sandbox. The `web/` skeleton, `db/` data bank, `etl/` core, and
-`orchestrator/`'s pipeline + knowledge base + second engine are merged into
-`dev`. **Next up: Milestone 5 (Laravel UI)** — its detailed design is still
-being decided by the owner, so its checklist below may still change before
-work starts.
+tested live against the real corpus (334 rows); Google Docs/Drive into `kb.*`
+and wiring `search_knowledge` into a chat loop wait on the rest of Milestone 5
+and Google ingestion (M1). Milestone 4 (the Octave engine) is done, tested
+live against a real `octave-cli` render in the sandbox. The `db/` data bank,
+`etl/` core, and `orchestrator/`'s pipeline + knowledge base + second engine
+are merged into `dev`. **Milestone 5 (Laravel UI)** is underway on
+`web/plan/webui.md`'s design: Phase 0 (shell, RBAC, auth) and Phase 4 (admin —
+users, Google connect, knowledge base, activity log) are built (branch
+`m5-phase-0-4-admin`, tested green — `pint`/PHPUnit 39 tests on `web/`,
+`ruff`/`mypy --strict`/`pytest` 48 tests on `orchestrator/`, including the new
+`GET /kb/documents` endpoint). Phases 1-3 (the Ask form, the orchestrator
+`/chat` endpoint, the Chat window) and Phase 5 (customization panel, brand
+assets) are next.
 
 Every `sudo` / install / external-console step is collected, copy-pasteable,
 in [`OPERATOR_SETUP.md`](OPERATOR_SETUP.md), grouped by the milestone that
@@ -225,8 +229,7 @@ every failure path typed.
 
 Scoped to the retrieval plumbing this milestone's own pipeline needs: the
 pdf-markdown-pipeline sync and FTS search. Wiring `search_knowledge` into the
-chat tool loop is Milestone 5+ (the loop itself isn't built yet either); the
-admin `.md` upload screen is Milestone 5 (`web/` doesn't exist yet); Google
+chat tool loop is Milestone 5+ (the loop itself isn't built yet either); Google
 Docs/Drive ingestion into `kb.*` waits on Milestone 1's Google ingestion,
 still not started. `kb_uploads.py` / `gdocs.py` / the `gdrive.py` `kb.*`
 branch stay unbuilt until those land.
@@ -279,8 +282,9 @@ branch stay unbuilt until those land.
       excluded; no match / empty corpus -> no context
       (`orchestrator/tests/test_kb_retrieve.py`, against the real local
       Postgres). `pgvector` merge/de-dupe test deferred with `embed.py`
-- [ ] upload validation in `web/` (extension, size, path traversal) — `web/`
-      doesn't exist yet (Milestone 5)
+- [x] upload validation in `web/` (extension, size, path traversal) — built as
+      part of Milestone 5's Knowledge base admin screen
+      (`tests/Feature/Admin/KnowledgeBaseTest.php`)
 - [x] `ruff` / `ruff format --check` / `mypy --strict` green on `etl/` and
       `orchestrator/`
 
@@ -325,33 +329,36 @@ and Chat flows end to end, the orchestrator `/chat` design, the model picker,
 and a security checklist. This checklist tracks the same scope; the plan has
 the detail and the reasoning behind each decision below.
 
-- [ ] `web/` scaffold: Laravel 13 + Livewire 4 + Fortify, sibling dependency
+- [x] `web/` scaffold: Laravel 13 + Livewire 4 + Fortify, sibling dependency
       set + `laravel/socialite`; `php artisan db:provision` ->
       `excise_mcp_dashboard_local` (MariaDB, scoped user)
-- [ ] Port auth from `~/Sites/upexcise-stats-dashboard` (OTP login, magic-link
+- [x] Port auth from `~/Sites/upexcise-stats-dashboard` (OTP login, magic-link
       onboarding + reset, `tests/Feature/Auth/*`)
 - [ ] Move `assets/brand/*` (state emblem, favicons, app icons) into
       `web/public/`; port the identity strip, the theme + high-contrast toggle
       and the skip link from `~/Sites/upexcise-stats-dashboard` into the authed
       layout; regenerate the icons and OG card with that repo's
       `scripts/make-brand-assets.php` (`EVALUATION.md` §4)
-- [ ] Design system: copy the token block and `@apply` classes from the
+- [x] Design system: copy the token block and `@apply` classes from the
       sibling's `head.blade.php`, the Tabler-icon admin shell
       (`components/{layout,sidebar}.blade.php`), and `public/vendor/tabler-icons/`;
       follow `docs/design-guidelines.md` (`govviolet` / `govsaffron`, Inter,
-      GIGW accessibility baseline); Chart.js colours per §Charts
+      GIGW accessibility baseline). Since this app has no public route
+      (`web/plan/webui.md` §3), the one admin shell uses `govviolet` as its
+      accent rather than the sibling's public/admin split; Chart.js colours
+      per §Charts wait on the first screen that renders a Chart.js chart
 - [ ] Customization panel: a FAB + Display panel (theme, font family via
       on-demand Google Fonts, text size, line spacing, content width, density,
       accent, high contrast, reduce-motion), `data-*` + one CSS var, anti-flash
       script from the sibling, `localStorage` + cookie + `users.ui_prefs` JSON,
       Reset. Port `CustomizationPanel.tsx` from
       `~/Projects/chinese-intel-pipeline` (`EVALUATION.md` §4)
-- [ ] Port middleware: `SecurityHeaders` (CSP extended for the FastAPI origin,
+- [x] Port middleware: `SecurityHeaders` (CSP extended for the FastAPI origin,
       Plotly/Chart.js, `marked` + highlighter, `cleave.js`, `dexie`),
       `LogMutation`, `HasPrivilege` / `IsAdmin`. Every Livewire write method
       re-checks its privilege — `livewire/update` skips route middleware
       (`SECURITY.md` §3)
-- [ ] RBAC: `role` (`Admin`/`Analyst`) + `privileges` JSON + `designation_id` +
+- [x] RBAC: `role` (`Admin`/`Analyst`) + `privileges` JSON + `designation_id` +
       free-text `post`, plus a `designations` preset table seeded with the
       excise-specific rank names `excise-budget-tracker`/`UP-excise-mailer`
       already seed — the pattern four sibling Laravel apps converged on
@@ -361,13 +368,14 @@ the detail and the reasoning behind each decision below.
 - [ ] Formatting: store UTC, render IST via `->ist()`; `₹` + `en-IN` grouping
       with a rupees / thousands / lakh / crore switcher on money figures;
       Cleave.js `currency-input` component for money inputs
-- [ ] `/admin/activity-logs` (Admin only) ported; the audit table in
+- [x] `/admin/activity-logs` (Admin only) ported; the audit table in
       `SECURITY.md` §5 is the coverage checklist
 - [ ] Migrations: `conversations` (ULID), `messages` (incl. `model`),
       `message_tool_calls`, `queries` (prompt, sql, engine, `model`,
       `tables_used`, row_count, timings JSON, status, request_id),
-      `chart_artifacts` (`spec` JSON + disk file paths), `query_feedback`,
-      `kb_uploads`, `google_connections`, `users.ui_prefs` (JSON)
+      `chart_artifacts` (`spec` JSON + disk file paths), `query_feedback` are
+      Phase 1-3 scope, not built yet. `kb_uploads`, `google_connections`, and
+      `users.ui_prefs` (JSON) are built (Phase 4)
 - [ ] Orchestrator `orchestrator/app/chat/` (`tools.py`, `loop.py`,
       `prompts.py`; `ChatRequest` + tool schemas in the existing root
       `schemas.py`) and one new route, `POST /chat` — the bounded tool loop
@@ -396,20 +404,20 @@ the detail and the reasoning behind each decision below.
       `ExportService`, `openspout`)
 - [ ] Query ledger view: every past `/query` with prompt, SQL, timing, engine,
       model, status, thumbs + note; Admin sees all, Analyst sees own
-- [ ] Admin: user CRUD (ported); "Connected sources" (Google connect /
-      disconnect, list Drive folders / Sheets / Docs, register as
-      `source_registry` rows, show "reconnect needed"); "Knowledge base"
-      (upload `.md`, browse the ingested corpus via a new orchestrator
-      `GET /kb/documents` — paginated, no ranking, alongside the existing
-      ranked `/kb/search` — withdraw an upload); a read-only view of
-      `etl.ingestion_runs` / `etl.quarantine`
+- [ ] Admin: user CRUD (built); "Connected sources" (Google connect /
+      disconnect, show "reconnect needed" — built; the Drive folder / Sheets /
+      Docs `source_registry` picker waits on Milestone 1's Google ingestion);
+      "Knowledge base" (upload `.md`, browse the ingested corpus via the new
+      orchestrator `GET /kb/documents` — paginated, no ranking, alongside the
+      existing ranked `/kb/search` — withdraw an upload — built); a read-only
+      view of `etl.ingestion_runs` / `etl.quarantine` — not built
 - [x] `deploy/`: Apache vhost on `127.0.0.1:8084`, `DocumentRoot web/public`;
       owner runs `OPERATOR_SETUP.md` §Apache (append `ReadWritePaths`, incl.
       the `kb-uploads` disk path) — done ahead of schedule via
       `deploy/root-setup.sh`
 
 ### Tests
-- [ ] Auth suite (ported): login, wrong password, wrong/expired OTP, the auth
+- [x] Auth suite (ported): login, wrong password, wrong/expired OTP, the auth
       gate redirecting an unauthenticated request, onboarding link, password
       reset
 - [ ] `ask` flow: submit -> ledger rows; mocked orchestrator success -> chart
@@ -417,15 +425,18 @@ the detail and the reasoning behind each decision below.
 - [ ] chat flow: streamed tokens; a tool call persisted and rendered; history
       loads and resumes; `chat` rate limit; model picker lists only pulled
       registry models and sends the choice as `model`
-- [ ] knowledge upload: valid `.md` accepted + `kb_uploads` row; non-`.md` /
+- [x] knowledge upload: valid `.md` accepted + `kb_uploads` row; non-`.md` /
       oversize rejected; path traversal blocked
-- [ ] Google OAuth: connect redirect scopes; callback stores encrypted token +
+- [x] Google OAuth: connect redirect scopes; callback stores encrypted token +
       row; disconnect deletes it; a token never appears in a log or response
-- [ ] `SecurityHeaders` present; `activity_logs` on non-GET; the stage-polling
-      endpoint returns the sequence
+- [ ] `SecurityHeaders` present (built); `activity_logs` on non-GET (built);
+      the stage-polling endpoint returns the sequence — Phase 1 (Ask), not
+      built yet
 - [ ] customization panel: a pref change persists across reload (cookie +
-      `users.ui_prefs`), Reset restores defaults, timestamps render IST
-- [ ] `vendor/bin/pint --dirty` clean
+      `users.ui_prefs`), Reset restores defaults, timestamps render IST —
+      Phase 5, not built yet (`->ist()` itself is already covered by
+      `tests/Feature/Admin/ActivityLogTest.php`)
+- [x] `vendor/bin/pint --dirty` clean
 
 **Done when:** a signed-in analyst can use the one-shot form and the chat
 window; the chat calls SQL and knowledge tools and renders charts; admins can

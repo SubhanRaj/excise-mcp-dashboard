@@ -302,9 +302,13 @@ In <https://console.cloud.google.com>:
    `GOOGLE_APPLICATION_CREDENTIALS` in `etl/.env` at it, and share the target
    sheets with the service-account email as Viewer.
 
-Verify: from `web/` (once Milestone 1's minimal Socialite wiring exists),
-visit `/google/connect`, complete consent, and confirm a `google_connections`
-row is written with an encrypted `refresh_token`.
+Verify: the Connected sources screen's `/google/connect` and `/google/callback`
+routes are built (Milestone 5's Phase 4, `web/plan/webui.md` §15 decision 5,
+superseding this section's original "Milestone 1" placement) but need this
+section's `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` filled in before they can
+run. Once done, sign in as an Admin, visit Admin -> Connected sources ->
+Connect, complete consent, and confirm a `google_connections` row is written
+with an encrypted `refresh_token`.
 
 ---
 
@@ -316,7 +320,7 @@ python3.12 -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt
 cp .env.example .env && chmod 600 .env
 # fill in DATABASE_URL_READONLY with the ro_pw set in db/roles.sql (§Data bank)
-# and a real ORCH_BEARER_TOKEN — also put the same token in web/.env once web/ exists
+# and a real ORCH_BEARER_TOKEN — also put the same token in web/.env's ORCHESTRATOR_TOKEN
 ```
 
 Verify:
