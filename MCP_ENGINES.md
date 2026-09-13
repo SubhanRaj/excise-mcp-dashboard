@@ -538,14 +538,28 @@ Contract every engine keeps:
 
   and appends nothing. The LLM is instructed: use `df`; for an interactive
   chart build a Plotly figure and `fig.write_json(f"{OUT}/chart.plotly.json")`;
-  for static output `fig.write_image(...)` (Plotly+kaleido) or
-  `plt.savefig(...)`; do not read other files, do not call the network.
+  for static output, use matplotlib's `plt.savefig(...)`; do not read other
+  files, do not call the network.
 - **Outputs**: `plotly_json` for the interactive pane; `png` (2x DPI), `svg`,
-  `pdf` for the export buttons. Plotly static export needs `kaleido` (pure
-  binary, no browser) — pin it.
+  `pdf` for the export buttons, via `plt.savefig(...)`.
+- **Static export and `kaleido`, resolved**: this doc originally assumed
+  `kaleido` was "pure binary, no browser" — true of `kaleido<1.0`, not of
+  `kaleido==1.4.0` (the pinned version, `requirements.txt`), which drives a
+  real system Chrome (`/opt/google/chrome`, bind-mounted read-only by
+  `sandbox/bwrap.py`) over the DevTools protocol instead. A live render
+  showed that Chrome repeatedly OOM-killing the render's cgroup instead of
+  erroring, so `llm/prompts.py` no longer offers the model Plotly's own
+  `fig.write_image()`, and `python_engine.py` rejects a script that calls it
+  anyway before a sandboxed process runs (`SandboxViolationError`).
+  Matplotlib's `plt.savefig()` covers every static output format without a
+  browser dependency — the settled choice, not a stopgap: the older
+  `kaleido<1.0` line that bundles its own headless Chromium avoids this
+  specific failure too, but is unmaintained upstream, so it stays out.
 - **Libraries in the venv**: `pandas`, `numpy`, `scipy`, `matplotlib`,
   `seaborn`, `plotly`, `kaleido`, `pyarrow`. Nothing else reachable from the
-  sandbox.
+  sandbox. `fig.write_json()`'s interactive export is pure-Python
+  serialization and doesn't touch `kaleido`/Chrome at all; `kaleido` stays
+  pinned at `1.4.0` regardless, unused for now.
 - **Failure modes**: import error in the body -> `RenderEmpty` with
   `stdout_tail`; wall-clock -> `SandboxTimeout`; `MemoryError` / OOM-kill ->
   `SandboxViolation` (rlimit); no `chart.*` produced -> `RenderEmpty`.
