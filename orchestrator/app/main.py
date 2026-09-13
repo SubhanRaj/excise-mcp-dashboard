@@ -17,6 +17,14 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 
 from app.auth import require_bearer_token
+from app.chat.loop import (
+    ChartEvent,
+    DoneEvent,
+    TokenEvent,
+    ToolCallEvent,
+    ToolResultEvent,
+    run_chat,
+)
 from app.config import settings
 from app.engines.base import available as available_engines
 from app.engines.base import register
@@ -29,6 +37,7 @@ from app.kb.retrieve import retrieve as kb_retrieve
 from app.llm.client import OllamaClient
 from app.pipeline import run_query
 from app.schemas import (
+    ChatRequest,
     KbDocumentsResponse,
     KbSearchRequest,
     KbSearchResponse,
@@ -196,6 +205,67 @@ async def _stream_query(
                 ).encode()
             else:
                 yield (json.dumps({"result": item.model_dump()}) + "\n").encode()
+    finally:
+        if not task.done():
+            task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
+@app.post("/chat", dependencies=[Depends(require_bearer_token)])
+async def chat(request: ChatRequest) -> StreamingResponse:
+    if request.model is not None and request.model not in settings.allowed_models:
+        raise HTTPException(status_code=400, detail=f"model not in registry: {request.model}")
+    return StreamingResponse(_stream_chat(_ctx(), request), media_type="application/x-ndjson")
+
+
+def _chat_event_line(item: object) -> bytes:
+    line: dict[str, object]
+    if isinstance(item, TokenEvent):
+        line = {"token": item.delta}
+    elif isinstance(item, ToolCallEvent):
+        line = {"tool_call": {"name": item.name, "arguments": item.arguments}}
+    elif isinstance(item, ToolResultEvent):
+        line = {"tool_result": {"name": item.name, "ok": item.ok, "summary": item.summary}}
+    elif isinstance(item, ChartEvent):
+        line = {"chart": item.chart.model_dump()}
+    elif isinstance(item, DoneEvent):
+        line = {"done": {"tool_calls_count": item.tool_calls_count}}
+    else:
+        assert isinstance(item, OrchestratorError)
+        line = {"error": {"stage": item.stage, "message": item.message}}
+    return (json.dumps(line) + "\n").encode()
+
+
+async def _stream_chat(ctx: AppContext, request: ChatRequest) -> AsyncIterator[bytes]:
+    queue: asyncio.Queue[object | None] = asyncio.Queue()
+
+    async def runner() -> None:
+        try:
+            await _ensure_ready(ctx)
+            assert ctx.pool is not None
+            assert ctx.schema_card is not None
+            async for event in run_chat(
+                request, pool=ctx.pool, ollama=ctx.ollama, schema_card=ctx.schema_card
+            ):
+                await queue.put(event)
+        except OrchestratorError as e:
+            await queue.put(e)
+        except Exception as e:  # noqa: BLE001 — last resort so the stream always terminates
+            logger.exception(
+                "unhandled error in /chat loop", conversation_id=request.conversation_id
+            )
+            await queue.put(OrchestratorError(str(e), stage="internal", http_status=500))
+        finally:
+            await queue.put(None)
+
+    task = asyncio.create_task(runner())
+    try:
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            yield _chat_event_line(item)
     finally:
         if not task.done():
             task.cancel()

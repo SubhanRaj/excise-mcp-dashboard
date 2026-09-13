@@ -1,15 +1,30 @@
-"""Ollama async client: structured-output loop (one retry) and plain text
-generation. MCP_ENGINES.md §Structured-output loop.
+"""Ollama async client: structured-output loop (one retry), plain text
+generation, and the streaming chat call. MCP_ENGINES.md §Structured-output
+loop, §Chat and retrieval.
 """
 
+import json
+from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
 from typing import TypeVar
 
 import httpx
 from pydantic import BaseModel, ValidationError
 
-from app.schemas import LLMStructuredOutputError, OllamaUnreachableError
+from app.schemas import LLMStructuredOutputError, OllamaUnreachableError, ToolCall
 
 T = TypeVar("T", bound=BaseModel)
+
+
+@dataclass
+class ChatChunk:
+    """One /api/chat streamed line, decoded: a content delta, or the tool
+    calls Ollama attaches to a turn's final message. Internal to the chat
+    loop, not a wire model.
+    """
+
+    content: str
+    tool_calls: list[ToolCall] = field(default_factory=list)
 
 
 class OllamaClient:
@@ -42,6 +57,27 @@ class OllamaClient:
 
     async def generate_text(self, *, model: str, prompt: str) -> str:
         return await self._generate(model=model, prompt=prompt, format_schema=None)
+
+    async def chat_stream(
+        self, *, model: str, messages: list[dict[str, object]], tools: list[dict[str, object]]
+    ) -> AsyncIterator[ChatChunk]:
+        payload = {"model": model, "messages": messages, "tools": tools, "stream": True}
+        try:
+            async with self.http.stream(
+                "POST", f"{self.base_url}/api/chat", json=payload, timeout=120.0
+            ) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    if not line.strip():
+                        continue
+                    message = json.loads(line).get("message", {})
+                    tool_calls = [
+                        ToolCall(name=tc["function"]["name"], arguments=tc["function"]["arguments"])
+                        for tc in message.get("tool_calls") or []
+                    ]
+                    yield ChatChunk(content=message.get("content") or "", tool_calls=tool_calls)
+        except httpx.HTTPError as e:
+            raise OllamaUnreachableError(str(e)) from e
 
     async def _generate(
         self, *, model: str, prompt: str, format_schema: dict[str, object] | None

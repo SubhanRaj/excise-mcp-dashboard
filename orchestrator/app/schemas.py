@@ -22,6 +22,18 @@ class QueryRequest(BaseModel):
     row_limit: int = 5000
 
 
+class ChatTurn(BaseModel):
+    role: Literal["user", "assistant", "tool"]
+    content: str
+
+
+class ChatRequest(BaseModel):
+    conversation_id: str
+    message: str
+    history: list[ChatTurn] = Field(default_factory=list)
+    model: str | None = None
+
+
 class Stage(BaseModel):
     name: Literal["plan_sql", "guard_sql", "run_sql", "plan_plot", "render", "summarize"]
     status: Literal["running", "ok", "error"]
@@ -45,6 +57,17 @@ class PlotPlan(BaseModel):
 class ChartArtifact(BaseModel):
     plotly_json: str | None = None
     files: dict[str, str] = Field(default_factory=dict)
+
+
+class ToolCall(BaseModel):
+    name: Literal["search_knowledge", "run_sql_query", "make_chart"]
+    arguments: dict[str, object]
+
+
+class ToolResult(BaseModel):
+    ok: bool
+    summary: str
+    chart: ChartArtifact | None = None
 
 
 class KbChunk(BaseModel):
@@ -162,6 +185,16 @@ class RenderEmptyError(OrchestratorError):
         super().__init__(
             f"render produced no output: {stdout_tail[-500:]}", stage="render", http_status=502
         )
+
+
+class ChatToolLoopExceededError(OrchestratorError):
+    def __init__(self) -> None:
+        super().__init__("too many tool calls", stage="tool_loop", http_status=400)
+
+
+class ChatToolArgumentError(OrchestratorError):
+    def __init__(self, tool: str, detail: str) -> None:
+        super().__init__(f"{tool}: {detail}", stage="tool_call", http_status=400)
 
 
 class PostgresUnavailableError(OrchestratorError):
