@@ -12,8 +12,15 @@ role-verified live, and `orchestrator/`'s `/query` ran a real question
 end-to-end against real seed data (SQL -> Postgres -> a sandboxed Plotly
 render -> a narrated summary), tested green (`ruff` / `mypy --strict` /
 `pytest`, 32 tests including live `bwrap` runs). Static chart export
-(`chart.png` via `kaleido`) is a known gap — needs a headless Chrome the
-sandbox can't launch yet; see `engines/python_engine.py`. The `excise-sandbox`
+(`chart.png`/`svg`/`pdf`) never runs Plotly's own `fig.write_image()` inside
+the per-script sandbox — that repeatedly OOM-killed the render's cgroup
+launching a fresh headless Chrome. A matplotlib script still calls
+`plt.savefig()` directly, inside the sandbox. A Plotly script only ever
+calls `fig.write_json()`; `engines/static_render.py` then derives any
+requested static format from that JSON afterward, outside the sandbox, via
+one persistent, isolated browser kept running for the orchestrator's whole
+lifetime — it never executes LLM-authored code, only rasterizes an
+already-produced chart spec. The `excise-sandbox`
 uid-separation layer is also still off (`bwrap`'s own confinement covers the
 same ground meanwhile) — `loginctl enable-linger excise-sandbox` turned out
 insufficient on its own; the sudoers fallback in `SECURITY.md` §2 is the
@@ -29,9 +36,10 @@ Postgres FTS over it, tested green (`ruff` / `mypy --strict` / `pytest`
 against the real local Postgres, both packages). `db/kb_indexes.sql` is
 written but not yet applied — needs `sudo -u postgres`, a pending
 `OPERATOR_SETUP.md` §Data bank step. What Milestone 3 leaves for later
-milestones: the admin `.md` upload screen and wiring `search_knowledge` into
-a chat tool loop (both need `web/`, Milestone 5+), and Google Docs/Drive into
-`kb.*` (waits on Milestone 1's Google ingestion, not started). Milestone 4
+milestones: wiring `search_knowledge` into a chat tool loop (Milestone 5's
+Phase 2/3, not built yet), and Google Docs/Drive into `kb.*` (waits on
+Milestone 1's Google ingestion, not started) — the admin `.md` upload screen
+itself is now built (Milestone 5's Phase 4). Milestone 4
 (the Octave engine) is done — `engines/octave_engine.py` runs `octave-cli`
 under the same `bwrap` sandbox as the Python engine, tested green (`ruff` /
 `mypy --strict` / `pytest`, 45 tests) including a live render against the real
@@ -45,20 +53,48 @@ namespace, so the engine uses gnuplot's own cairo terminals
 (`-dpngcairo`/`-dsvg`/`-dpdfcairo`) instead. `matlab_engine.py` /
 `wolfram_engine.py` are documented, unconfigured stubs behind
 `ENABLE_MATLAB` / `ENABLE_WOLFRAM` (default off). Work follows the
-`ROADMAP.md` milestone order; Milestone 5 (Laravel UI) is next — its full
-design is written up in `web/plan/webui.md` (reuse map, RBAC and data model,
-the Ask and Chat flows, the orchestrator `/chat` design, the model picker,
-a security checklist), so `ROADMAP.md`'s checklist for it now reflects real
-decisions rather than a draft. Two of those decisions correct this file:
-the chat stream is newline-delimited JSON (`application/x-ndjson`, matching
-`/query`'s existing wire format), not `text/event-stream` — every "SSE"
-reference below to `/chat`'s transport means that; and RBAC carries a
-`designations` preset table (`role` + `privileges` + `designation_id` +
-free-text `post`) — the pattern four sibling Laravel apps converged on
-independently. Dependency installs so far: `web/`'s Composer + npm set,
-`etl/`'s venv (`+aiomysql`),
-`orchestrator/`'s venv — each the current milestone's `OPERATOR_SETUP.md`
-section at the time.
+`ROADMAP.md` milestone order; Milestone 5 (Laravel UI) is underway, built
+against the full design in `web/plan/webui.md` (reuse map, RBAC and data
+model, the Ask and Chat flows, the orchestrator `/chat` design, the model
+picker, a security checklist). Phase 0 (shell, RBAC, auth), Phase 4
+(admin — users, Google connect, knowledge base, activity log), Phase 1
+(the Ask form), Phase 2 (the orchestrator `/chat` endpoint and bounded tool
+loop), and Phase 3 (the Chat window) are built on branch
+`m5-phase-0-4-admin`, held there pending an explicit go-ahead to merge into
+`dev`. Phase 0/4: OTP-email login and onboarding ported from
+`upexcise-stats-dashboard`, `SecurityHeaders`/`LogMutation`/privilege
+middleware, the `designations`-backed RBAC model, and four full-page
+Livewire admin screens, each gated by route middleware and a per-write
+`abort_unless()` re-check, plus a new orchestrator `GET /kb/documents`
+endpoint for the Knowledge base screen's browse view. Phase 1: the `queries`
+ledger, `RunExciseQuery` queued job, and the Livewire `Ask` form, relaying
+the orchestrator's stage events to the browser via `fetch()` polling of a
+plain status route (not a held-open connection). Phase 2: `orchestrator/app/
+chat/` (`tools.py`, `loop.py`, `prompts.py`) wires `search_knowledge`,
+`run_sql_query`, and `make_chart` into a turn loop capped at
+`CHAT_MAX_TOOL_CALLS`, reusing the one-shot pipeline's SQL guard, read-only
+role, and sandbox — no parallel implementation. Phase 3: `conversations`/
+`messages`/`message_tool_calls` hold the transcript, and a plain
+`POST /chat/{conversation}/send` route (real streaming I/O, since a chat
+token arrives too fast for a queued job) pipes the orchestrator's ndjson
+stream straight to the browser while persisting it. Tested green throughout
+— `pint`, 51 PHPUnit tests on `web/`; `ruff` / `mypy --strict` / `pytest`,
+62 tests on `orchestrator/`. A live render also surfaced a second sandbox
+fix this phase: Plotly's own static export (`fig.write_image`, via
+kaleido's headless Chrome) was repeatedly OOM-killing the sandbox cgroup
+instead of erroring, so the plot-planning prompt no longer offers it and
+the Python engine now rejects a script that calls it anyway before a
+sandboxed process runs — matplotlib's `plt.savefig` covers static export
+without that dependency. Phase 5 (customization panel, brand assets) is
+next. Two decisions from the design correct this file: the chat stream is
+newline-delimited JSON (`application/x-ndjson`, matching `/query`'s
+existing wire format), not `text/event-stream` — every "SSE" reference
+below to `/chat`'s transport means that; and RBAC carries a `designations`
+preset table (`role` + `privileges` + `designation_id` + free-text `post`)
+— the pattern four sibling Laravel apps converged on independently.
+Dependency installs so far: `web/`'s Composer + npm set, `etl/`'s venv
+(`+aiomysql`), `orchestrator/`'s venv — each the current milestone's
+`OPERATOR_SETUP.md` section at the time.
 
 ## What this project is
 

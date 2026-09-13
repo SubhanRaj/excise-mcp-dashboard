@@ -302,9 +302,13 @@ In <https://console.cloud.google.com>:
    `GOOGLE_APPLICATION_CREDENTIALS` in `etl/.env` at it, and share the target
    sheets with the service-account email as Viewer.
 
-Verify: from `web/` (once Milestone 1's minimal Socialite wiring exists),
-visit `/google/connect`, complete consent, and confirm a `google_connections`
-row is written with an encrypted `refresh_token`.
+Verify: the Connected sources screen's `/google/connect` and `/google/callback`
+routes are built (Milestone 5's Phase 4, `web/plan/webui.md` §15 decision 5,
+superseding this section's original "Milestone 1" placement) but need this
+section's `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` filled in before they can
+run. Once done, sign in as an Admin, visit Admin -> Connected sources ->
+Connect, complete consent, and confirm a `google_connections` row is written
+with an encrypted `refresh_token`.
 
 ---
 
@@ -316,7 +320,7 @@ python3.12 -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt
 cp .env.example .env && chmod 600 .env
 # fill in DATABASE_URL_READONLY with the ro_pw set in db/roles.sql (§Data bank)
-# and a real ORCH_BEARER_TOKEN — also put the same token in web/.env once web/ exists
+# and a real ORCH_BEARER_TOKEN — also put the same token in web/.env's ORCHESTRATOR_TOKEN
 ```
 
 Verify:
@@ -359,6 +363,28 @@ sudo visudo -f /etc/sudoers.d/excise-sandbox
 
 Never `tee`/hand-edit a sudoers file — `visudo` validates before saving
 (`~/Sites/infra-notes/cpu-thermal-and-apache-procfs.md` records why).
+
+---
+
+## §Chart rendering (Milestone 2, optional)
+
+Static chart export (PNG/SVG/PDF) runs through a persistent, isolated
+browser the orchestrator starts once at boot (`engines/static_render.py`,
+`SECURITY.md` §Static image export). It already works against the box's
+existing Google Chrome — no action needed. Installing open-source Chromium
+instead is optional and preferred:
+
+```bash
+sudo apt install chromium-browser
+```
+
+The orchestrator looks for `chromium`/`chromium-browser` on `PATH` first and
+only falls back to Chrome if neither is installed; no config change or
+restart-order dependency either way — just install it and restart
+`excise-orchestrator.service` (`systemctl --user restart
+excise-orchestrator.service`) to pick it up. Either browser gets a fresh,
+private profile per launch (never the operator's own Chrome profile or
+signed-in account — `SECURITY.md` has the detail).
 
 ---
 
@@ -442,6 +468,24 @@ mariadb -h127.0.0.1 -u excise_mcp_dashboard_local -p'CHANGE_ME_web_db' \
   -e "SHOW TABLES FROM excise_mcp_dashboard_local;"    # migrations, users, sessions, cache, jobs
 curl -s http://127.0.0.1:8084/health                   # {"app":"Excise Data Visualization","status":"ok"}
 ```
+
+---
+
+## §web/ queue worker (Milestone 5, Phase 1)
+
+`RunExciseQuery` (the Ask flow's one-shot `/query` job) runs on `QUEUE_CONNECTION=database`
+— nothing processes it until this worker is running. No `sudo` needed, `--user` units only:
+
+```bash
+cp ~/Sites/excise-mcp-dashboard/deploy/excise-mcp-dashboard-queue.service \
+   ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now excise-mcp-dashboard-queue.service
+```
+
+Verify: `systemctl --user status excise-mcp-dashboard-queue.service` shows `active (running)`;
+submitting a question on `/ask` moves a `queries` row from `pending` through `running` to
+`complete` within a few seconds (watch it with `php artisan tinker` or the MariaDB CLI).
 
 ---
 

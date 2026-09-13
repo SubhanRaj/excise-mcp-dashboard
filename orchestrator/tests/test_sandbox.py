@@ -24,7 +24,9 @@ def data_path() -> Iterator[Path]:
     path.unlink(missing_ok=True)
 
 
-async def test_wallclock_timeout_kills_script(data_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_wallclock_timeout_kills_script(
+    data_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(settings, "sandbox_wallclock_seconds", 2)
     script = "import time\ntime.sleep(30)\n"
     with pytest.raises(SandboxTimeoutError):

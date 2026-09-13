@@ -538,14 +538,37 @@ Contract every engine keeps:
 
   and appends nothing. The LLM is instructed: use `df`; for an interactive
   chart build a Plotly figure and `fig.write_json(f"{OUT}/chart.plotly.json")`;
-  for static output `fig.write_image(...)` (Plotly+kaleido) or
-  `plt.savefig(...)`; do not read other files, do not call the network.
+  for a static chart built with matplotlib directly, use `plt.savefig(...)`;
+  never call a Plotly figure's own `fig.write_image()`; do not read other
+  files, do not call the network.
 - **Outputs**: `plotly_json` for the interactive pane; `png` (2x DPI), `svg`,
-  `pdf` for the export buttons. Plotly static export needs `kaleido` (pure
-  binary, no browser) — pin it.
+  `pdf` for the export buttons — via `plt.savefig(...)` for a matplotlib
+  script, or derived automatically from `chart.plotly.json` for a Plotly one
+  (below).
+- **Static export and `kaleido`, resolved**: this doc originally assumed
+  `kaleido` was "pure binary, no browser" — true of `kaleido<1.0`, not of
+  `kaleido==1.4.0` (the pinned version, `requirements.txt`), which drives a
+  real system Chrome over the DevTools protocol instead. Calling
+  `fig.write_image()` *inside the per-script sandbox* launched a fresh
+  Chrome per chart and repeatedly OOM-killed the render's cgroup instead of
+  erroring, so `llm/prompts.py` no longer offers it to the model, and
+  `python_engine.py` rejects a script that calls it anyway before a
+  sandboxed process runs (`SandboxViolationError`). Once the sandboxed
+  script produces `chart.plotly.json`, `render()` hands that JSON to
+  `engines/static_render.py` — a *persistent* browser, started once at
+  orchestrator boot and reused for every chart, running entirely outside
+  the sandbox. This step never executes LLM-authored code, only rasterizes
+  an already-produced, schema-shaped JSON spec, so the untrusted-code
+  sandbox boundary is a deliberate non-fit here, not a gap in it.
+  `SECURITY.md` §Static image export has the isolation detail — a fresh
+  browser profile per launch either way, and an open-source Chromium binary
+  preferred over the box's Chrome when the operator installs one
+  (`OPERATOR_SETUP.md` §Chart rendering).
 - **Libraries in the venv**: `pandas`, `numpy`, `scipy`, `matplotlib`,
   `seaborn`, `plotly`, `kaleido`, `pyarrow`. Nothing else reachable from the
-  sandbox.
+  sandbox. `fig.write_json()`'s interactive export is pure-Python
+  serialization and doesn't touch `kaleido`/Chrome at all — only
+  `static_render.py`, outside the sandbox, does.
 - **Failure modes**: import error in the body -> `RenderEmpty` with
   `stdout_tail`; wall-clock -> `SandboxTimeout`; `MemoryError` / OOM-kill ->
   `SandboxViolation` (rlimit); no `chart.*` produced -> `RenderEmpty`.
