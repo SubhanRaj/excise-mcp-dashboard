@@ -49,18 +49,37 @@ namespace, so the engine uses gnuplot's own cairo terminals
 `ROADMAP.md` milestone order; Milestone 5 (Laravel UI) is underway, built
 against the full design in `web/plan/webui.md` (reuse map, RBAC and data
 model, the Ask and Chat flows, the orchestrator `/chat` design, the model
-picker, a security checklist). Phase 0 (shell, RBAC, auth) and Phase 4
-(admin — users, Google connect, knowledge base, activity log) are built on
-branch `m5-phase-0-4-admin`: OTP-email login and onboarding ported from
+picker, a security checklist). Phase 0 (shell, RBAC, auth), Phase 4
+(admin — users, Google connect, knowledge base, activity log), Phase 1
+(the Ask form), Phase 2 (the orchestrator `/chat` endpoint and bounded tool
+loop), and Phase 3 (the Chat window) are built on branch
+`m5-phase-0-4-admin`, held there pending an explicit go-ahead to merge into
+`dev`. Phase 0/4: OTP-email login and onboarding ported from
 `upexcise-stats-dashboard`, `SecurityHeaders`/`LogMutation`/privilege
 middleware, the `designations`-backed RBAC model, and four full-page
 Livewire admin screens, each gated by route middleware and a per-write
-`abort_unless()` re-check — tested green (`pint`, 39 PHPUnit tests) and a
-new orchestrator `GET /kb/documents` endpoint for the Knowledge base
-screen's browse view (`ruff` / `mypy --strict` / `pytest`, 48 tests).
-Phases 1-3 (the Ask form, the orchestrator `/chat` endpoint, the Chat
-window) and Phase 5 (customization panel, brand assets) are next. Two
-decisions from the design correct this file: the chat stream is
+`abort_unless()` re-check, plus a new orchestrator `GET /kb/documents`
+endpoint for the Knowledge base screen's browse view. Phase 1: the `queries`
+ledger, `RunExciseQuery` queued job, and the Livewire `Ask` form, relaying
+the orchestrator's stage events to the browser via `fetch()` polling of a
+plain status route (not a held-open connection). Phase 2: `orchestrator/app/
+chat/` (`tools.py`, `loop.py`, `prompts.py`) wires `search_knowledge`,
+`run_sql_query`, and `make_chart` into a turn loop capped at
+`CHAT_MAX_TOOL_CALLS`, reusing the one-shot pipeline's SQL guard, read-only
+role, and sandbox — no parallel implementation. Phase 3: `conversations`/
+`messages`/`message_tool_calls` hold the transcript, and a plain
+`POST /chat/{conversation}/send` route (real streaming I/O, since a chat
+token arrives too fast for a queued job) pipes the orchestrator's ndjson
+stream straight to the browser while persisting it. Tested green throughout
+— `pint`, 51 PHPUnit tests on `web/`; `ruff` / `mypy --strict` / `pytest`,
+62 tests on `orchestrator/`. A live render also surfaced a second sandbox
+fix this phase: Plotly's own static export (`fig.write_image`, via
+kaleido's headless Chrome) was repeatedly OOM-killing the sandbox cgroup
+instead of erroring, so the plot-planning prompt no longer offers it and
+the Python engine now rejects a script that calls it anyway before a
+sandboxed process runs — matplotlib's `plt.savefig` covers static export
+without that dependency. Phase 5 (customization panel, brand assets) is
+next. Two decisions from the design correct this file: the chat stream is
 newline-delimited JSON (`application/x-ndjson`, matching `/query`'s
 existing wire format), not `text/event-stream` — every "SSE" reference
 below to `/chat`'s transport means that; and RBAC carries a `designations`
