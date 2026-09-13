@@ -331,6 +331,20 @@ Verify:
 .venv/bin/pytest
 ```
 
+Runs as a persistent `--user` service, no `sudo` needed — `web/` calls it over
+loopback HTTP, so nothing in `/ask` or `/chat` works until this is up:
+
+```bash
+cp ~/Sites/excise-mcp-dashboard/deploy/excise-orchestrator.service \
+   ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now excise-orchestrator.service
+```
+
+Verify: `systemctl --user status excise-orchestrator.service` shows
+`active (running)`; `curl http://127.0.0.1:8085/health` returns
+`{"status": "ok", ...}` with `ollama`/`postgres` both `ok`.
+
 ---
 
 ## §Sandbox execution route (Milestone 2)
@@ -468,6 +482,30 @@ mariadb -h127.0.0.1 -u excise_mcp_dashboard_local -p'CHANGE_ME_web_db' \
   -e "SHOW TABLES FROM excise_mcp_dashboard_local;"    # migrations, users, sessions, cache, jobs
 curl -s http://127.0.0.1:8084/health                   # {"app":"Excise Data Visualization","status":"ok"}
 ```
+
+**The first admin account.** A fresh `users` table is empty, and the Admin →
+Users screen that creates accounts is itself behind an existing Admin login
+— nothing self-registers. Bootstrap the first one from a shell:
+
+```bash
+cd ~/Sites/excise-mcp-dashboard/web
+php artisan tinker --execute="
+  \$user = App\Models\User::create([
+      'name' => 'Your Name', 'username' => 'your_username', 'email' => 'you@example.com',
+      'role' => 'Admin', 'privileges' => [],
+      'password' => Hash::make(Str::random(40)), 'email_verified_at' => null,
+  ]);
+  \$url = URL::temporarySignedRoute('onboarding.show', now()->addHours(72), ['user' => \$user->id]);
+  Mail::to(\$user->email)->send(new App\Mail\AccountOnboarding(\$user, \$url));
+"
+```
+
+This is the same path `Admin → Users → Add User` uses for every account after
+this one — a placeholder password plus a 72-hour signed onboarding link, not
+a real password set here. With `MAIL_MAILER=log` (the default) the link lands
+in `storage/logs/laravel.log`; with Resend configured (§ above) it reaches
+the real inbox. Every later account goes through the Users screen once this
+one can sign in.
 
 ---
 

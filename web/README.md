@@ -35,5 +35,5 @@ npm install && npm run build
 php artisan test
 ```
 
-`GET /health` returns `{"app": "...", "status": "ok"}` and is the only route
-open to an unauthenticated request — every other route redirects to `/login`.
+`GET /health` returns `{"app": "...", "status": "ok"}`. `/` is a placeholder
+public landing page; every other route redirects to `/login`.
