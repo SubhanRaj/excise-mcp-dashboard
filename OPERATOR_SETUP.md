@@ -370,9 +370,9 @@ Never `tee`/hand-edit a sudoers file — `visudo` validates before saving
 
 Static chart export (PNG/SVG/PDF) runs through a persistent, isolated
 browser the orchestrator starts once at boot (`engines/static_render.py`,
-`SECURITY.md` §Static image export). It works out of the box against the
-box's existing Google Chrome — no action needed. Installing open-source
-Chromium instead is optional and preferred:
+`SECURITY.md` §Static image export). It already works against the box's
+existing Google Chrome — no action needed. Installing open-source Chromium
+instead is optional and preferred:
 
 ```bash
 sudo apt install chromium-browser

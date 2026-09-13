@@ -1,13 +1,16 @@
 # web/ — Excise Data Visualization (Laravel)
 
-The Laravel 13 / Livewire 4 app: the analytical form, the chat window, and the
-admin screens. It talks to the FastAPI orchestrator over HTTP and stores its
-own operational data (sessions, users, the query ledger, chat history, queued
-jobs) in MariaDB. It never connects to PostgreSQL — the excise data bank is the
-orchestrator's, read-only.
+The Laravel 13 / Livewire 4 app: the analytical form (Ask), the chat window,
+and the admin screens. It talks to the FastAPI orchestrator over HTTP and
+stores its own operational data (sessions, users, the query ledger, chat
+history, queued jobs) in MariaDB. It never connects to PostgreSQL — the
+excise data bank is the orchestrator's, read-only.
 
-This is the bare skeleton. Auth, layouts, components, and middleware are ported
-from the sibling apps in later Milestone 5 PRs.
+OTP-email login and onboarding, RBAC (`designations` + `privileges`), the
+admin screens (users, Google connect, knowledge base, activity log), the Ask
+form, and the chat window are built (`m5-phase-0-4-admin`, `CLAUDE.md`'s
+Status paragraph has the detail). The customization panel and brand assets
+(Milestone 5 Phase 5) are next.
 
 ## Docs
 
@@ -33,4 +36,4 @@ php artisan test
 ```
 
 `GET /health` returns `{"app": "...", "status": "ok"}` and is the only route
-until the auth port lands.
+open to an unauthenticated request — every other route redirects to `/login`.

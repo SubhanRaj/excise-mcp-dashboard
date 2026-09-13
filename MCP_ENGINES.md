@@ -553,15 +553,13 @@ Contract every engine keeps:
   Chrome per chart and repeatedly OOM-killed the render's cgroup instead of
   erroring, so `llm/prompts.py` no longer offers it to the model, and
   `python_engine.py` rejects a script that calls it anyway before a
-  sandboxed process runs (`SandboxViolationError`). Static export is
-  restored properly rather than dropped: once the sandboxed script produces
-  `chart.plotly.json`, `render()` hands that JSON to
+  sandboxed process runs (`SandboxViolationError`). Once the sandboxed
+  script produces `chart.plotly.json`, `render()` hands that JSON to
   `engines/static_render.py` — a *persistent* browser, started once at
   orchestrator boot and reused for every chart, running entirely outside
-  the sandbox. That's a deliberate exception to "every LLM-generated script
-  runs under the sandbox," not a gap in it: this step never executes
-  LLM-authored code, only rasterizes an already-produced, schema-shaped
-  JSON spec, so the untrusted-code sandbox boundary doesn't apply to it.
+  the sandbox. This step never executes LLM-authored code, only rasterizes
+  an already-produced, schema-shaped JSON spec, so the untrusted-code
+  sandbox boundary is a deliberate non-fit here, not a gap in it.
   `SECURITY.md` §Static image export has the isolation detail — a fresh
   browser profile per launch either way, and an open-source Chromium binary
   preferred over the box's Chrome when the operator installs one
