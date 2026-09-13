@@ -24,8 +24,14 @@ pending an explicit go-ahead to merge into `dev`): Phase 0 (shell, RBAC,
 auth), Phase 4 (admin — users, Google connect, knowledge base, activity log),
 Phase 1 (the Ask form), Phase 2 (the orchestrator `/chat` endpoint and tool
 loop), and Phase 3 (the Chat window) are built — tested green,
-`pint`/PHPUnit 51 tests on `web/`, `ruff`/`mypy --strict`/`pytest` 62 tests on
-`orchestrator/`. Phase 5 (customization panel, brand assets) is next.
+`pint`/PHPUnit 52 tests on `web/`, `ruff`/`mypy --strict`/`pytest` 70 tests on
+`orchestrator/`. A public `/` landing page and the brand assets (state
+emblem, favicons, moved from `assets/brand/` into `web/public/`) are also
+built, ahead of the rest of Phase 5. The app is live end to end on this box —
+Apache vhost, Cloudflare tunnel, `web/` queue worker, and the orchestrator
+all running as `systemd --user` units, verified together against the real
+`visualizer.exciseup.in` URL. Phase 5's remaining piece (the customization
+panel) is next.
 
 Every `sudo` / install / external-console step is collected, copy-pasteable,
 in [`OPERATOR_SETUP.md`](OPERATOR_SETUP.md), grouped by the milestone that
@@ -334,19 +340,22 @@ the detail and the reasoning behind each decision below.
       `excise_mcp_dashboard_local` (MariaDB, scoped user)
 - [x] Port auth from `~/Sites/upexcise-stats-dashboard` (OTP login, magic-link
       onboarding + reset, `tests/Feature/Auth/*`)
-- [ ] Move `assets/brand/*` (state emblem, favicons, app icons) into
-      `web/public/`; port the identity strip, the theme + high-contrast toggle
-      and the skip link from `~/Sites/upexcise-stats-dashboard` into the authed
-      layout; regenerate the icons and OG card with that repo's
-      `scripts/make-brand-assets.php` (`EVALUATION.md` §4)
+- [x] Move `assets/brand/*` (state emblem, favicons, app icons) into
+      `web/public/`, wired into `<x-head>`; port the identity strip and the
+      skip link into a new public landing page (`web/plan/webui.md` §3 — a
+      placeholder public route was added this milestone, reversing the
+      original "no public route" call). Not done: the theme + high-contrast
+      toggle (that's the Phase 5 customization panel below) and regenerating
+      the icons/OG card with the sibling's `scripts/make-brand-assets.php` —
+      the existing sibling-generated assets were copied as-is
 - [x] Design system: copy the token block and `@apply` classes from the
       sibling's `head.blade.php`, the Tabler-icon admin shell
       (`components/{layout,sidebar}.blade.php`), and `public/vendor/tabler-icons/`;
       follow `docs/design-guidelines.md` (`govviolet` / `govsaffron`, Inter,
-      GIGW accessibility baseline). Since this app has no public route
-      (`web/plan/webui.md` §3), the one admin shell uses `govviolet` as its
-      accent rather than the sibling's public/admin split; Chart.js colours
-      per §Charts wait on the first screen that renders a Chart.js chart
+      GIGW accessibility baseline). The admin shell uses `govviolet` as its
+      accent, same as the one public landing page (`web/plan/webui.md` §3);
+      Chart.js colours per §Charts wait on the first screen that renders a
+      Chart.js chart
 - [ ] Customization panel: a FAB + Display panel (theme, font family via
       on-demand Google Fonts, text size, line spacing, content width, density,
       accent, high contrast, reduce-motion), `data-*` + one CSS var, anti-flash
@@ -417,7 +426,11 @@ the detail and the reasoning behind each decision below.
 - [x] `deploy/`: Apache vhost on `127.0.0.1:8084`, `DocumentRoot web/public`;
       owner runs `OPERATOR_SETUP.md` §Apache (append `ReadWritePaths`, incl.
       the `kb-uploads` disk path) — done ahead of schedule via
-      `deploy/root-setup.sh`
+      `deploy/root-setup.sh`. The queue worker, the orchestrator, and the
+      Cloudflare tunnel are all installed as `systemd --user` units and
+      verified running together against `visualizer.exciseup.in`
+      (`OPERATOR_SETUP.md`'s per-milestone sections had the unit files
+      written earlier but not installed until now)
 
 ### Tests
 - [x] Auth suite (ported): login, wrong password, wrong/expired OTP, the auth

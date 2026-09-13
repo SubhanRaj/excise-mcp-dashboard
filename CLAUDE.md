@@ -94,7 +94,22 @@ preset table (`role` + `privileges` + `designation_id` + free-text `post`)
 — the pattern four sibling Laravel apps converged on independently.
 Dependency installs so far: `web/`'s Composer + npm set, `etl/`'s venv
 (`+aiomysql`), `orchestrator/`'s venv — each the current milestone's
-`OPERATOR_SETUP.md` section at the time.
+`OPERATOR_SETUP.md` section at the time. A public `/` route now exists — a
+placeholder landing page on the trimmed GIGW/UX4G track ported from
+`upexcise-stats-dashboard` (identity strip, emblem header, skip link, no
+policy footer), since every other route stayed behind `/login` with nothing
+to land on. The department's brand assets (state emblem, favicons) moved
+from `assets/brand/` into `web/public/`, wired into `<x-head>`. The app is
+now live end to end on this box: the Apache vhost, the Cloudflare tunnel, the
+`web/` queue worker, and the orchestrator itself all run as `systemd --user`
+units (`OPERATOR_SETUP.md`'s per-milestone sections had each unit file
+written but not installed until now) and were verified together —
+`visualizer.exciseup.in` serves the home page, `/ask` redirects an
+unauthenticated request to `/login`, and `/health` on both `web/` and
+`orchestrator/` report `ok`. `OPERATOR_SETUP.md` also gained the bootstrap
+step for an empty `users` table's first Admin account, and the recovery
+command for the tunnel's one operational failure mode so far — a transient
+DNS lookup tripping systemd's restart-rate-limit, which does not self-clear.
 
 ## What this project is
 
