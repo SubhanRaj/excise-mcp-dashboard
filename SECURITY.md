@@ -178,10 +178,19 @@ read-only and least-privilege:
 ### Network
 
 `postgresql.conf` keeps `listen_addresses = 'localhost'` for this project. If
-DBeaver-over-Tailscale access to `excise_bank` is ever wanted, follow
+direct BI-client access to `excise_bank` is ever wanted — DBeaver, Power BI
+Desktop, or any SQL client, over Tailscale — follow
 `~/Sites/infra-notes/postgres-tailscale-remote-access.md` exactly — bind the
 Tailscale IP, scope the `ufw` rule to `tailscale0`, add a `pg_hba.conf` line
 for a **named read-only role only**, never `all`/`admin` over the tailnet.
+`DATA_PIPELINE.md` §BI access has the role grant (`excise_bi_ro`, a copy of
+`excise_ro`'s grants under its own name — never the same role the orchestrator
+uses). This path bypasses the orchestrator entirely: no SQL guard, no sandbox,
+no request-id logging, because it's a human running their own query, not the
+AI. Once it exists, add its connections to the audit checklist below. Power BI
+*Service* (the cloud product) is not this — publishing or scheduling a refresh
+there sends data off the box, which the no-egress hard constraint in
+`CLAUDE.md` rules out.
 
 ## 2. Code-execution sandbox
 
@@ -255,6 +264,16 @@ bwrap \
   unprivileged and cannot regain privilege.
 - `--die-with-parent` — if the orchestrator worker dies, the sandbox child
   dies with it.
+
+The command above is the Python engine's; the Octave engine's tail is
+`octave-cli --no-gui --norc --eval "source('/scratch/chart.m')"` instead, over
+a generated `data.m` rather than the Parquet file, with two additions found
+only by testing a real render: `--setenv LANG C.utf8` (Ghostscript's iconv
+step, reached via Octave's gnuplot print path, fails outright in the C/POSIX
+locale `--clearenv` otherwise leaves), and a conditional read-only
+`--ro-bind /etc/fonts /etc/fonts` (gnuplot's cairo print terminals need it for
+text rendering). Neither widens the writable surface or touches the network;
+`sandbox/bwrap.py`'s `_build_command` has the exact per-engine invocation.
 
 ### Resource limits
 
@@ -365,8 +384,15 @@ from the sibling. Rate limiters `login` / `two-factor` / `password-reset`
 ported (`AppServiceProvider`).
 
 Roles: `Admin` (manage users, see all ledgers, manage the ETL source registry)
-and `Analyst` (ask questions, see own ledger, export). RBAC copied and trimmed
-from the sibling.
+and `Analyst` (ask questions, see own ledger, export). The full shape —
+`role` + `privileges` JSON + `designation_id` (FK to a `designations` preset
+table) + a free-text `post` column — is ported from the pattern
+`excise-budget-tracker`, `UP-excise-mailer`, and `upexcise-stats-dashboard`
+converged on independently, trimmed to this app's two roles and four
+privileges (`web/plan/webui.md` §6 has the full design and the seeded
+designation data). A `designations.default_privileges` preset is copied onto
+`users.privileges` at account creation, not live-linked — editing a user's
+privileges afterward doesn't stay tied to their designation.
 
 The tunnel is the only inbound path — `cloudflared` dials out over loopback, no
 firewall port is opened, and Apache binds `127.0.0.1:8084`. The orchestrator's
@@ -376,7 +402,8 @@ firewall port is opened, and Apache binds `127.0.0.1:8084`. The orchestrator's
 
 - Port `SecurityHeaders` middleware: CSP allowing Tailwind Play CDN, jsDelivr
   (Chart.js / Plotly, the chat's `marked` + highlighter), Google Fonts, and
-  `connect-src 'self'` for the SSE endpoints; HSTS; `X-Frame-Options: DENY`;
+  `connect-src 'self'` for the streaming endpoints (`fetch()`-based, ndjson —
+  not `EventSource`, so no separate origin to allow); HSTS; `X-Frame-Options: DENY`;
   `X-Content-Type-Options: nosniff`; `Referrer-Policy: same-origin`;
   `X-Robots-Tag: noindex` on the whole site (this is not a public dashboard).
 - Port `LogMutation` — an `activity_logs` row for every non-GET authenticated
@@ -498,6 +525,7 @@ so a `queries` row links to its logs.
 | Knowledge upload / withdraw | `activity_logs` + `kb_uploads.status` | the "Knowledge base" screen |
 | ETL runs and quarantined rows | `etl.ingestion_runs` / `etl.quarantine` (Postgres) | `etl/` |
 | Orchestrator request/response, stage transitions, errors | `structlog` JSON to the systemd journal, `request_id` on every line | the orchestrator |
+| BI-client connections (`excise_bi_ro`, future — §1 Network) | PostgreSQL's own `log_connections`/`log_disconnections` — no `queries` row, since this path never touches the orchestrator | PostgreSQL, once the role exists |
 
 - **Never logged**: bearer tokens, DB passwords, Google OAuth tokens, full
   result row sets (a preview only), document text.

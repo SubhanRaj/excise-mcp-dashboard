@@ -5,13 +5,70 @@ Master rules for coding sessions on this repo. Read this, then `ARCHITECTURE.md`
 (`DATA_PIPELINE.md`, `MCP_ENGINES.md`, `SECURITY.md`). `ROADMAP.md` has the
 milestone checklist and the current position in it.
 
-Status: **Phase 4 approved; build underway.** Milestone 0 (groundwork) and the
-database half of Milestone 1 are done — the `web/` Laravel skeleton is in
-review (PR #1), the on-box infra is provisioned, and `db/` holds the
-PostgreSQL data bank (schema, `analytics.*` views, roles, reference seed). Work
-follows the `ROADMAP.md` milestone order. Still no dependency install —
-`composer create-project`, a venv, `pip`/`npm` add — outside what the current
-milestone's `OPERATOR_SETUP.md` section sanctions.
+Status: **Phase 4 approved; build underway.** Milestone 0, the database half
+of Milestone 1, and Milestone 2 (the orchestrator's one-shot pipeline) are
+done — the `web/` Laravel skeleton is merged, `excise_bank` is provisioned and
+role-verified live, and `orchestrator/`'s `/query` ran a real question
+end-to-end against real seed data (SQL -> Postgres -> a sandboxed Plotly
+render -> a narrated summary), tested green (`ruff` / `mypy --strict` /
+`pytest`, 32 tests including live `bwrap` runs). Static chart export
+(`chart.png` via `kaleido`) is a known gap — needs a headless Chrome the
+sandbox can't launch yet; see `engines/python_engine.py`. The `excise-sandbox`
+uid-separation layer is also still off (`bwrap`'s own confinement covers the
+same ground meanwhile) — `loginctl enable-linger excise-sandbox` turned out
+insufficient on its own; the sudoers fallback in `SECURITY.md` §2 is the
+untried real path. `OLLAMA_KEEP_ALIVE`/`OLLAMA_NUM_PARALLEL`/
+`OLLAMA_MAX_LOADED_MODELS` (`EVALUATION.md` §2) are now actually applied to
+the Ollama service, found missing after a loaded model sat resident well past
+its documented 30s. Milestone 3's retrieval plumbing is done — `etl/sources/
+pdf_pipeline.py` syncs the pdf-markdown-pipeline corpus (verified live against
+the real `pdf_markdown_pipeline_local`: 334 public+verified Excise rows) into
+`kb.documents`/`kb.chunks` via `etl/chunk.py`'s heading-aware chunker, with
+withdrawal handling; `orchestrator/app/kb/retrieve.py` and `/kb/search` run
+Postgres FTS over it, tested green (`ruff` / `mypy --strict` / `pytest`
+against the real local Postgres, both packages). `db/kb_indexes.sql` is
+written but not yet applied — needs `sudo -u postgres`, a pending
+`OPERATOR_SETUP.md` §Data bank step. What Milestone 3 leaves for later
+milestones: wiring `search_knowledge` into a chat tool loop (Milestone 5's
+Phase 2/3, not built yet), and Google Docs/Drive into `kb.*` (waits on
+Milestone 1's Google ingestion, not started) — the admin `.md` upload screen
+itself is now built (Milestone 5's Phase 4). Milestone 4
+(the Octave engine) is done — `engines/octave_engine.py` runs `octave-cli`
+under the same `bwrap` sandbox as the Python engine, tested green (`ruff` /
+`mypy --strict` / `pytest`, 45 tests) including a live render against the real
+`octave-cli` on the box. That live run surfaced three gaps `MCP_ENGINES.md`
+now documents: GNU Octave has no `table`/`readtable`, so the query result
+hands off as generated Octave variables instead; a new figure doesn't inherit
+the `graphics_toolkit` global default, fixed by pinning
+`__graphics_toolkit__` on the figure object directly; and `print()`'s
+`-dpng`/`-dpdf` route through Ghostscript, which fails inside the sandbox
+namespace, so the engine uses gnuplot's own cairo terminals
+(`-dpngcairo`/`-dsvg`/`-dpdfcairo`) instead. `matlab_engine.py` /
+`wolfram_engine.py` are documented, unconfigured stubs behind
+`ENABLE_MATLAB` / `ENABLE_WOLFRAM` (default off). Work follows the
+`ROADMAP.md` milestone order; Milestone 5 (Laravel UI) is underway, built
+against the full design in `web/plan/webui.md` (reuse map, RBAC and data
+model, the Ask and Chat flows, the orchestrator `/chat` design, the model
+picker, a security checklist). Phase 0 (shell, RBAC, auth) and Phase 4
+(admin — users, Google connect, knowledge base, activity log) are built on
+branch `m5-phase-0-4-admin`: OTP-email login and onboarding ported from
+`upexcise-stats-dashboard`, `SecurityHeaders`/`LogMutation`/privilege
+middleware, the `designations`-backed RBAC model, and four full-page
+Livewire admin screens, each gated by route middleware and a per-write
+`abort_unless()` re-check — tested green (`pint`, 39 PHPUnit tests) and a
+new orchestrator `GET /kb/documents` endpoint for the Knowledge base
+screen's browse view (`ruff` / `mypy --strict` / `pytest`, 48 tests).
+Phases 1-3 (the Ask form, the orchestrator `/chat` endpoint, the Chat
+window) and Phase 5 (customization panel, brand assets) are next. Two
+decisions from the design correct this file: the chat stream is
+newline-delimited JSON (`application/x-ndjson`, matching `/query`'s
+existing wire format), not `text/event-stream` — every "SSE" reference
+below to `/chat`'s transport means that; and RBAC carries a `designations`
+preset table (`role` + `privileges` + `designation_id` + free-text `post`)
+— the pattern four sibling Laravel apps converged on independently.
+Dependency installs so far: `web/`'s Composer + npm set, `etl/`'s venv
+(`+aiomysql`), `orchestrator/`'s venv — each the current milestone's
+`OPERATOR_SETUP.md` section at the time.
 
 ## What this project is
 
@@ -114,7 +171,7 @@ consumer appears.
 - **Chat window: native Livewire.** OpenWebUI is a separate Svelte app with
   its own database and needs Docker (absent). What is wanted is its UX —
   streaming, history, markdown/code rendering, a model picker — which Livewire
-  + Alpine + an SSE stream from the orchestrator cover. All LLM logic (chat
+  + Alpine + a streamed ndjson response from the orchestrator cover. All LLM logic (chat
   loop, tool calls, retrieval, SQL) stays in the Python orchestrator; `web/`
   renders and streams. If the LLM logic ever moves to PHP, `prism-php/prism`
   is the package to use, replacing the Python orchestrator rather than running
@@ -161,6 +218,16 @@ consumer appears.
   heavy dependency, some with default telemetry, built around self-editing
   memory the model should not have. `EVALUATION.md` §Right-sizing item 14,
   `MCP_ENGINES.md` §Memory.
+- **XLSX export: `openspout/openspout`, matching the sibling apps.** It is
+  already the one Excel library across the Laravel fleet —
+  `upexcise-stats-dashboard`'s `ExportService` writes `.xlsx` with it,
+  `UP-excise-mailer`'s `RecipientImportParser` reads `.xlsx` with it — real
+  OOXML streaming I/O, not an `.xls`/HTML-table export. `web/`'s own
+  `ExportService` (Milestone 7, `DATA_PIPELINE.md` §Export) ports the
+  sibling's `xlsx()` method rather than introducing PhpSpreadsheet or
+  Maatwebsite Excel, neither of which appears anywhere in the fleet. `etl/`'s
+  own `.xlsx` ingestion is a separate, already-settled choice: `openpyxl` on
+  the Python side (`etl/etl/sources/excel.py`).
 
 ## Laravel conventions (`web/`)
 
@@ -221,14 +288,16 @@ the 11/12 + Livewire 3 named in the original brief.
   and `chat` (per message) keyed by user id — start at 10/min, tune from the
   ledger.
 - **Chat UI**: a full-page Livewire `Chat` component. Conversation list in a
-  left rail, the active thread in the main pane, an Alpine-driven SSE reader
-  appending assistant token deltas. Markdown + fenced code render client-side
+  left rail, the active thread in the main pane, a `fetch()` + `ReadableStream`
+  reader (not `EventSource`, which is GET-only and would put the message in a
+  query string) parsing the orchestrator's ndjson lines and appending
+  assistant token deltas. Markdown + fenced code render client-side
   (`marked` + a highlighter from jsDelivr, on the CSP allowlist). Tool calls
   the model makes (`run_sql_query`, `search_knowledge`, `make_chart`) render
   as inline cards — the SQL, the retrieved snippets with links to
   `docsrepo.exciseup.in`, the chart. History persists in `conversations` /
   `messages` / `message_tool_calls`. No streaming LLM logic in PHP — `web/`
-  reads the orchestrator's `/chat` SSE and relays it.
+  reads the orchestrator's `/chat` ndjson stream and pipes it through.
 - **Model picker**: a `config/models.php` registry (`key`, `label`, `role`,
   Ollama tag), mirroring `~/Sites/pdf-markdown-pipeline`'s `config/ocr.php` and
   its "Run OCR" dropdown. The chat composer shows a dropdown of the registry
@@ -273,7 +342,7 @@ the 11/12 + Livewire 3 named in the original brief.
   adds an `analysis_runs` row — that history is the trend, shown with the
   sibling `Sparkline`. `reports` order saved analyses + Markdown blocks into a
   presentation. Export a chart (PNG/SVG/PDF/`plotly.json`), a result
-  (CSV/XLSX via the sibling `ExportService`), or a report (dompdf PDF / XLSX /
+  (CSV/XLSX via the sibling `ExportService`, `openspout`), or a report (dompdf PDF / XLSX /
   ZIP bundle, stamped with the ETL vintage). `DATA_PIPELINE.md` §Output store.
 - **Tailwind + Alpine**: Tailwind Play CDN and Chart.js / Plotly from jsDelivr,
   same as the siblings. Add every CDN host to the CSP. Chart.js line colours
@@ -317,8 +386,9 @@ the 11/12 + Livewire 3 named in the original brief.
 - **Styling/UX**: split-view is a two-pane flex layout, chat left, canvas
   right, stacking to one column under `lg`. Streaming stage updates
   (`Querying database -> Running analysis -> Rendering chart -> Complete`) come
-  over SSE from a Laravel route that polls the job/orchestrator; fall back to
-  `wire:poll` if SSE behind the tunnel misbehaves.
+  from a plain Laravel route the browser polls via `fetch()`, which itself
+  polls the job's DB status; fall back to `wire:poll` if the tunnel handles
+  the fetch-based polling badly.
 
 ## Python conventions (`orchestrator/`, `etl/`)
 
@@ -357,9 +427,10 @@ to copy — this is the first. Set the house style here.
   web app renders `stage` in the UI.
 - **No broad `except Exception: pass`.** Catch what you can handle; let the rest
   surface to the request-id'd handler.
-- **Streaming** (`/chat`): FastAPI `StreamingResponse` yielding SSE events
-  (`token`, `tool_call`, `tool_result`, `done`, `error`). Generation is
-  cancellable — a client disconnect aborts the Ollama call and any in-flight
+- **Streaming** (`/chat`): FastAPI `StreamingResponse` yielding newline-delimited
+  JSON lines (`application/x-ndjson`, matching `/query`'s existing format, not
+  `text/event-stream`) — `token`, `tool_call`, `tool_result`, `done`, `error`.
+  Generation is cancellable — a client disconnect aborts the Ollama call and any in-flight
   tool.
 - **Tool loop**: the chat agent loop lives in `orchestrator/app/chat/`. Tools
   are the same primitives the one-shot pipeline uses (`sql/`, `kb/`,
@@ -419,7 +490,7 @@ End with the co-author trailer the session is configured for.
   `/login`.
 - Customization panel: a changed preference persists across reload (cookie +
   `users.ui_prefs`) and Reset restores defaults; timestamps render in IST.
-- The SSE/poll stage endpoint returns the stage sequence for a running job.
+- The stage-polling endpoint returns the stage sequence for a running job.
 
 **`orchestrator/` (pytest, `pytest-asyncio`):**
 - Every tool schema round-trips: model -> JSON Schema -> sample LLM payload ->
@@ -448,7 +519,7 @@ End with the co-author trailer the session is configured for.
   call routed through the same guard + read-only run + sandbox; a law question
   emits `search_knowledge`; a mixed question emits both; the loop terminates
   at a max tool-call count with a typed error.
-- Streaming: `/chat` yields SSE token deltas and tool-call events in order;
+- Streaming: `/chat` yields ndjson token-delta and tool-call lines in order;
   a client disconnect cancels the in-flight generation.
 
 **`etl/` (pytest):**

@@ -41,7 +41,7 @@ orchestrator/
     config.py          pydantic-settings Settings (one object)
     auth.py            bearer-token dependency
     schemas.py         Pydantic v2: QueryRequest/Response, SqlPlan, PlotPlan, Stage,
-                       ChatRequest, chat SSE events, tool schemas, errors
+                       ChatRequest, chat wire-event models, tool schemas, errors
     llm/
       client.py        Ollama async client, structured-output loop, retry, streaming
       prompts.py       system prompts, schema card, few-shot examples, chat system prompt
@@ -53,12 +53,15 @@ orchestrator/
       retrieve.py      FTS query over kb.chunks (+ pgvector path when enabled)
       embed.py         local Ollama embed model client (only when KB_EMBEDDINGS_ENABLED)
     chat/
-      loop.py          agentic tool-calling loop, streams SSE events
+      loop.py          agentic tool-calling loop, streams ndjson events
       tools.py         tool defs: run_sql_query, search_knowledge, make_chart
+      prompts.py       chat system prompt, tool JSON schemas for Ollama's `tools=`
     engines/
       base.py          IVisualizationEngine protocol + registry + errors
-      python_engine.py the one implemented engine
-      octave_engine.py Milestone 4
+      python_engine.py implemented
+      octave_engine.py implemented
+      matlab_engine.py  documented stub, behind ENABLE_MATLAB (default off)
+      wolfram_engine.py documented stub, behind ENABLE_WOLFRAM (default off)
     sandbox/
       bwrap.py         build + run the bubblewrap command, collect artifacts
     pipeline.py        the one-shot analytical flow: orchestrates stages, emits Stage events
@@ -73,8 +76,9 @@ orchestrator/
 | `GET` | `/health` | — | `{status, ollama, postgres, engines, models, kb_docs, embeddings}` — no auth; `models` is the registry with a pulled/not-pulled flag each |
 | `POST` | `/query` | `QueryRequest` | streamed `Stage` lines then a final `QueryResponse` (chunked), or a typed error |
 | `GET` | `/query/{id}/status` | — | last `Stage` for a running query (poll fallback) |
-| `POST` | `/chat` | `ChatRequest` | `text/event-stream` — `token` / `tool_call` / `tool_result` / `chart` / `done` / `error` events |
-| `POST` | `/kb/search` | `{query: str, k: int}` | `{chunks: [...]}` — retrieval only, no LLM (used by tests and the "cite sources" panel) |
+| `POST` | `/chat` | `ChatRequest` | streamed newline-delimited JSON (`application/x-ndjson`, matching `/query`) — `token` / `tool_call` / `tool_result` / `chart` / `done` / `error` lines |
+| `POST` | `/kb/search` | `{query: str, k: int}` | `{chunks: [...]}` — ranked FTS retrieval, no LLM (used by tests and the "cite sources" panel) |
+| `GET` | `/kb/documents` | — (paginated: `?page`) | `{documents: [...], total}` — unranked listing of `kb.documents` for the admin "browse the corpus" screen |
 
 Both `/query` and `/chat` require the bearer token. `/query` is the one-shot
 analytical form (question in, chart + table + SQL + summary out). `/chat` is
@@ -123,7 +127,7 @@ flowchart TD
     G{"guard_sql<br/>one SELECT / WITH, analytics.* only,<br/>no DML/DDL/COPY/volatile fn, LIMIT enforced"}:::app
     RS["run_sql<br/>asyncpg as excise_ro, BEGIN READ ONLY,<br/>statement_timeout 10s, fetch, ROLLBACK"]:::db
     P2["plan_plot<br/>Ollama qwen2.5-coder, structured PlotPlan,<br/>engine must be in the live registry"]:::ai
-    R["render<br/>engines/&lt;engine&gt;.py — script + Parquet into scratch,<br/>run under bwrap, collect declared outputs"]:::viz
+    R["render<br/>engines/&lt;engine&gt;.py — script + data into scratch<br/>(Parquet, or a generated .m for Octave),<br/>run under bwrap, collect declared outputs"]:::viz
     S["summarize<br/>Ollama llama3.1, 2-4 sentence reading"]:::ai
     Out(["chart + table + SQL + summary + per-stage timings"]):::app
     Err["typed error<br/>(error, request_id, stage)"]:::err
@@ -157,10 +161,12 @@ flowchart TD
    and the question; require a `PlotPlan`
    (`{engine: str, script: str, outputs: list["plotly_json"|"png"|"svg"|"pdf"],
    title: str}`). `engine` must be in the live registry; default `python`.
-5. **render** — `engines/<engine>.py` writes `script` + the result data
-   (Parquet) into a fresh scratch dir, runs it through `sandbox/bwrap.py`,
-   collects the declared outputs. Missing output -> `render produced no
-   output`. Timeout / namespace violation -> `sandbox timeout` /
+5. **render** — `engines/<engine>.py` writes `script` + the result data into a
+   fresh scratch dir (Parquet for Python, a generated `.m` variable file for
+   Octave — it has no Parquet or table reader), runs it through
+   `sandbox/bwrap.py`, collects the declared outputs. Missing output ->
+   `render produced no output`. Timeout / namespace violation -> `sandbox
+   timeout` /
    `sandbox violation`.
 6. **summarize** — prompt Ollama (`llama3.1:8b`) for a 2–4 sentence reading of
    the numbers; plain text, `/general-english` tone rules apply on the Laravel
@@ -302,13 +308,16 @@ same idea as `~/Sites/pdf-markdown-pipeline`'s `config/ocr.php`: `key`,
 which registry models are actually pulled, and the Livewire picker offers only
 those.
 
-### SSE events
+### Streamed events
 
-`token` (assistant text delta), `tool_call` (`{name, arguments}` as the model
-emits it), `tool_result` (`{name, ok, summary}` — never the full row set),
-`chart` (`{plotly_json?, files}` when `make_chart` ran), `done`
-(`{message_id, tool_calls_count}`), `error` (`{stage, message}`). Laravel
-relays these to the browser and persists `messages` + `message_tool_calls`.
+One JSON object per line (`application/x-ndjson`, the same wire format
+`/query` already streams — not `text/event-stream`; `web/plan/webui.md` §9
+has the reasoning): `token` (assistant text delta), `tool_call` (`{name,
+arguments}` as the model emits it), `tool_result` (`{name, ok, summary}` —
+never the full row set), `chart` (`{plotly_json?, files}` when `make_chart`
+ran), `done` (`{message_id, tool_calls_count}`), `error` (`{stage,
+message}`). Laravel pipes these lines to the browser unmodified and persists
+`messages` + `message_tool_calls` as they arrive.
 
 ### Tools (`chat/tools.py`)
 
@@ -350,19 +359,19 @@ sequenceDiagram
     loop up to CHAT_MAX_TOOL_CALLS
         O->>M: stream a model turn
         M-->>O: token deltas
-        O-->>L: SSE token events
+        O-->>L: ndjson line: {"token": ...}
         L-->>B: append assistant text
         alt the turn made a tool call
-            O-->>L: SSE tool_call
+            O-->>L: ndjson line: {"tool_call": ...}
             O->>T: dispatch — same guard + read-only role + sandbox
             T-->>O: result (preview only, never the full row set)
-            O-->>L: SSE tool_result (+ chart if make_chart)
+            O-->>L: ndjson line: {"tool_result": ...} (+ {"chart": ...} if make_chart)
             O->>M: append the tool result and continue
         else no tool call
-            O-->>L: SSE done
+            O-->>L: ndjson line: {"done": ...}
         end
     end
-    Note over O: cap exceeded -> SSE error {stage: tool_loop}
+    Note over O: cap exceeded -> ndjson line: {"error": {stage: tool_loop}}
     L->>L: persist messages + message_tool_calls
 ```
 
@@ -541,26 +550,42 @@ Contract every engine keeps:
   `stdout_tail`; wall-clock -> `SandboxTimeout`; `MemoryError` / OOM-kill ->
   `SandboxViolation` (rlimit); no `chart.*` produced -> `RenderEmpty`.
 
-### 2. GNU Octave — `octave_engine.py` — Milestone 4, only if needed
+### 2. GNU Octave — `octave_engine.py` — implemented
 
 [octave.org](https://octave.org) — open-source, MATLAB-compatible `.m` syntax.
 
-- **Availability**: `octave-cli --version` exits 0. **Not installed on the box
-  now** — needs `sudo apt install octave` (root; give the command, do not work
-  around). `is_available()` returns false until then, and the router simply
-  never offers it.
+- **Availability**: `octave-cli --version` exits 0 (`OPERATOR_SETUP.md`
+  §Octave installs it). `is_available()` returns false without it, and the
+  router simply never offers it.
 - **Execution**: sandbox runs `octave-cli --no-gui --norc --eval
-  "source('/scratch/chart.m')"` with `HOME=/scratch`.
-- **Data hand-off**: the engine writes the result as CSV (`/scratch/data.csv`)
-  alongside Parquet; the Octave preamble does `T = readtable('/scratch/data.csv');`.
-- **Outputs**: Octave's `print()` to `chart.png` / `chart.svg` / `chart.pdf`
-  via the `gnuplot` or `qt` toolkit (`qt` needs no X with
-  `graphics_toolkit("gnuplot")` — use gnuplot headless). No interactive JSON —
-  `supported_outputs = {"png", "svg", "pdf"}`; the pipeline falls back to a
-  static chart when the chosen engine can't do Plotly JSON.
-- **When to add it**: a real `.m` analysis script arrives that is not
-  trivially portable to NumPy/SciPy. Until then it is a false choice for the
-  LLM and stays unregistered.
+  "source('/scratch/chart.m')"` with `HOME=/scratch` and `LANG=C.utf8` —
+  `bwrap`'s `--clearenv` drops locale along with everything else, and
+  Ghostscript's iconv step (see below) fails outright without one.
+- **Data hand-off**: GNU Octave has no `table` type and does not implement
+  `readtable` — it names that MATLAB function outright as not yet
+  implemented, and the `octave-io` package doesn't add it either, only
+  spreadsheet I/O. The engine writes the query result as a generated `.m`
+  file instead (`/scratch/data.m`, alongside the Parquet the Python engine
+  uses): each column becomes a plain Octave variable, a numeric column
+  vector or a cell array of strings, named after its SQL column alias. The
+  Octave preamble does `source('/scratch/data.m');`.
+- **Figure setup**: a new `figure()` does not inherit the
+  `graphics_toolkit("gnuplot")` global default — it silently falls back to
+  `fltk`, which needs a real display and fails `print()` with "requires
+  visible figure" in the sandbox's headless namespace. The preamble creates
+  the one figure the script draws into and sets `__graphics_toolkit__` on
+  that figure object directly, so the LLM-written body only calls a plotting
+  function (`plot`/`bar`/...) and never creates its own figure.
+- **Outputs**: Octave's `print()` to `chart.png` / `chart.svg` / `chart.pdf`,
+  using gnuplot's own cairo terminals — `-dpngcairo`, `-dsvg`, `-dpdfcairo`.
+  `-dpng` and `-dpdf` route through Ghostscript in Octave's gnuplot toolkit,
+  and that Ghostscript step fails inside the sandbox namespace with a plain
+  `EPERM` on its own output file (not a bwrap bind-mount gap — plain file
+  writes and gnuplot's own terminals both work in the same sandbox); the
+  cairo terminals write the file directly and never reach Ghostscript. No
+  interactive JSON — `supported_outputs = {"png", "svg", "pdf"}`; the
+  pipeline falls back to a static chart when the chosen engine can't do
+  Plotly JSON.
 
 ### 3. MATLAB via `matlab-mcp-server` — Milestone 4, behind a config flag,
      currently blocked
@@ -619,8 +644,10 @@ its value here would be symbolic math, not charting.
 2. Else use the LLM's `engine` if it is in `available()`.
 3. Else fall back to `"python"`.
 
-No heuristic on data volume or "task complexity". The LLM is given the
-one-line capability list (`python`: interactive + static, all output types)
-and picks; with one engine registered the pick is always `python`. When Octave
-is added, the prompt gains one line and the same mechanism handles it.
+No heuristic on data volume or "task complexity". The LLM is given a one-line
+capability list per engine actually in the live registry (`python`:
+interactive + static, all output types; `octave`: static only, no
+`table`/`readtable`, gnuplot's cairo print devices) and picks —
+`llm/prompts.py`'s `build_plot_prompt`. A future engine only adds one more
+line the same way; the routing logic itself doesn't change.
 `EVALUATION.md` §Right-sizing point 3.
