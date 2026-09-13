@@ -24,8 +24,8 @@ class SecurityHeaders
         // Disable browser APIs unused by this application
         $response->headers->set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
 
-        // This app defines no public route (web/plan/webui.md §3) — every page is internal
-        // staff tooling, so noindex applies site-wide rather than scoped to an admin prefix.
+        // Every page here is either internal staff tooling or the placeholder public landing
+        // page (web/plan/webui.md §3) — noindex applies site-wide, not scoped to an admin prefix.
         $response->headers->set('X-Robots-Tag', 'noindex, nofollow, noarchive');
 
         // Content Security Policy. unsafe-inline covers the inline <script> blocks in the

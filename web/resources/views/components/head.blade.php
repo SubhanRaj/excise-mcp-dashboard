@@ -15,8 +15,17 @@
     <title>{{ $fullTitle }}</title>
     <meta name="description" content="{{ $metaDesc }}">
 
-    {{-- Every route in this app is internal staff tooling — never indexed. --}}
+    {{-- Nothing here is ready for search yet — the public landing page is a placeholder
+         and everything else is internal staff tooling. --}}
     <meta name="robots" content="noindex, nofollow">
+
+    <link rel="icon" href="{{ asset('favicon.ico') }}" sizes="any">
+    <link rel="icon" type="image/svg+xml" href="{{ asset('assets/img/up-gov-emblem.svg') }}">
+    <link rel="icon" type="image/png" sizes="32x32" href="{{ asset('favicon-32.png') }}">
+    <link rel="icon" type="image/png" sizes="16x16" href="{{ asset('favicon-16.png') }}">
+    <link rel="apple-touch-icon" href="{{ asset('apple-touch-icon.png') }}">
+    <link rel="manifest" href="{{ asset('site.webmanifest') }}">
+    <meta name="theme-color" content="#4a2bc2">
 
     {{-- Anti-flash: runs synchronously before paint to prevent theme flicker, mirroring the
          color_scheme cookie so a server-rendered wire:navigate swap already carries the right

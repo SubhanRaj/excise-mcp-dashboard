@@ -15,8 +15,10 @@ use App\Livewire\Ask;
 use App\Livewire\Chat;
 use Illuminate\Support\Facades\Route;
 
-// The only route the perimeter leaves open (ROADMAP Milestone 6). Every other
-// route lands behind auth once the auth port arrives.
+// The public landing page — a placeholder until this app has real public content
+// (web/plan/webui.md §3). Everything past it is either the guest auth flow or behind auth.
+Route::get('/', fn () => view('home'))->name('home');
+
 Route::get('/health', fn () => response()->json([
     'app' => config('app.name'),
     'status' => 'ok',
