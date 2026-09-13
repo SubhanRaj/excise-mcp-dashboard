@@ -15,9 +15,9 @@ class LogMutation
      *
      * 'livewire.update' is excluded because it's Livewire's one shared transport route for
      * every component interaction — clicks, model updates, and wire:poll ticks alike — so
-     * logging it here would produce one row per poll tick with no indication of what actually
-     * happened, not a per-action audit trail. A Livewire action worth auditing calls
-     * ActivityLog::record() itself with a real action name, the same way a controller does.
+     * logging it here would produce one row per poll tick that says nothing about what
+     * actually happened. A Livewire action worth auditing calls ActivityLog::record() itself
+     * with a real action name, the same way a controller does.
      */
     private const SKIP_ROUTES = [
         'otp.verify',

@@ -45,9 +45,9 @@ class RbacTest extends TestCase
     }
 
     /**
-     * A designation's default_privileges is a preset copied onto the user at creation time,
-     * not a live-applied grant (web/plan/webui.md §6) — editing the user afterward must not
-     * stay linked back to the designation.
+     * A designation's default_privileges copies onto the user at creation time
+     * (web/plan/webui.md §6). Editing the user's privileges afterward doesn't stay linked
+     * back to the designation.
      */
     public function test_designation_default_privileges_is_a_copied_preset_not_a_live_link(): void
     {

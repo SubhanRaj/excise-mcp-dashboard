@@ -51,9 +51,9 @@ class UserForm extends Component
     }
 
     /**
-     * A designation's default_privileges is a preset copied onto the user's own privileges
-     * the moment it's picked — not a live-applied grant (web/plan/webui.md §6). Only fires
-     * on create, where there's no existing privilege selection to clobber.
+     * A designation's default_privileges copies onto the user's own privileges the moment
+     * it's picked (web/plan/webui.md §6) — a one-time starting point, so this only fires on
+     * create, where there's no existing privilege selection to clobber.
      */
     public function updatedDesignationId(): void
     {
