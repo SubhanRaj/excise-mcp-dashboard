@@ -428,7 +428,7 @@ and `Analyst` (ask questions, see own ledger, export). The full shape —
 `role` + `privileges` JSON + `designation_id` (FK to a `designations` preset
 table) + a free-text `post` column — is ported from the pattern
 `excise-budget-tracker`, `UP-excise-mailer`, and `upexcise-stats-dashboard`
-converged on independently, trimmed to this app's two roles and four
+converged on independently, trimmed to this app's two roles and five
 privileges (`web/plan/webui.md` §6 has the full design and the seeded
 designation data). A `designations.default_privileges` preset is copied onto
 `users.privileges` at account creation, not live-linked — editing a user's
@@ -437,6 +437,37 @@ privileges afterward doesn't stay tied to their designation.
 The tunnel is the only inbound path — `cloudflared` dials out over loopback, no
 firewall port is opened, and Apache binds `127.0.0.1:8084`. The orchestrator's
 `/health` is loopback-only and never passes through the tunnel.
+
+### Pulse and Telescope — locked to Admin regardless of `APP_ENV`
+
+Both ship a default authorization that grants access to anyone at all —
+including an unauthenticated request — when `app()->environment('local')` is
+true. That's this box's real `APP_ENV` (nothing here runs as `production`
+yet), and the app is simultaneously reachable by the entire internet through
+the Cloudflare Tunnel, so the shipped default would leave both dashboards
+open to any visitor. Neither is left at that default:
+
+- **Telescope**: `TelescopeServiceProvider::authorization()` (`app/Providers/
+  TelescopeServiceProvider.php`) is overridden entirely, not just its
+  `gate()` — the vendor scaffold's `authorization()` calls
+  `app()->environment('local') || Gate::check('viewTelescope', ...)`, so
+  overriding `gate()` alone leaves that `||` bypass in place. The override
+  calls `Telescope::auth()` directly: `$request->user()?->isAdmin() ?? false`,
+  no environment check at all. Request-parameter and header redaction
+  (`_token`, `password`, `otp`, cookies, `Authorization`) is applied
+  unconditionally for the same reason — the scaffold's version only ran
+  outside `local` env.
+- **Pulse** has no equivalent auth-closure hook to override, only a
+  `Gate::define('viewPulse', ...)` ability that Pulse's own service provider
+  also defines a default for on the same `environment('local')` basis —
+  redefining the same ability name from `AppServiceProvider` would work only
+  if it runs after Pulse's own registration, which isn't guaranteed. Instead
+  `config/pulse.php`'s `middleware` array gets `'auth'` and the existing
+  `IsAdmin` middleware ahead of Pulse's own `Authorize::class`, which enforces
+  admin-only access unconditionally regardless of that registration order.
+
+Verified against real accounts, not just read from the source: a signed-in
+non-admin gets 403 on both `/pulse` and `/telescope`; an Admin gets 200.
 
 ### Headers, logging, rate limits
 

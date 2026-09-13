@@ -23,14 +23,17 @@ are merged into `dev`. **Milestone 5 (Laravel UI)** is underway on
 users, Google connect, knowledge base, activity log), Phase 1 (the Ask
 form), Phase 2 (the orchestrator `/chat` endpoint and tool loop), and Phase
 3 (the Chat window) are merged into `dev` — tested green,
-`pint`/PHPUnit 52 tests on `web/`, `ruff`/`mypy --strict`/`pytest` 70 tests on
+`pint`/PHPUnit 58 tests on `web/`, `ruff`/`mypy --strict`/`pytest` 73 tests on
 `orchestrator/`. A public `/` landing page and the brand assets (state
 emblem, favicons, moved from `assets/brand/` into `web/public/`) are also
 built, ahead of the rest of Phase 5. The app is live end to end on this box —
 Apache vhost, Cloudflare tunnel, `web/` queue worker, and the orchestrator
 all running as `systemd --user` units, verified together against the real
-`visualizer.exciseup.in` URL. Phase 5's remaining piece (the customization
-panel) is next.
+`visualizer.exciseup.in` URL. A super-admin System health screen, AI
+token-usage tracking, Ask feedback capture, and Pulse/Telescope (both
+locked to Admin regardless of `APP_ENV`) are built too, ahead of schedule —
+none of this was part of the original Phase 0-4 scope. Phase 5's remaining
+piece (the customization panel) is next.
 
 Every `sudo` / install / external-console step is collected, copy-pasteable,
 in [`OPERATOR_SETUP.md`](OPERATOR_SETUP.md), grouped by the milestone that
@@ -378,11 +381,12 @@ the detail and the reasoning behind each decision below.
       Cleave.js `currency-input` component for money inputs
 - [x] `/admin/activity-logs` (Admin only) ported; the audit table in
       `SECURITY.md` §5 is the coverage checklist
-- [x] Migrations: `conversations` (ULID), `messages` (incl. `model`),
-      `message_tool_calls`, `queries` (prompt, sql, engine, `model`,
-      `tables_used`, row_count, timings JSON, status, request_id),
-      `chart_artifacts` (`spec` JSON + disk file paths) are built (Phases 1-3).
-      `query_feedback` (thumbs + note) isn't — no screen calls for it yet.
+- [x] Migrations: `conversations` (ULID), `messages` (incl. `model`,
+      `prompt_tokens`, `completion_tokens`), `message_tool_calls`, `queries`
+      (prompt, sql, engine, `model`, `tables_used`, row_count, timings JSON,
+      status, request_id, `prompt_tokens`, `completion_tokens`),
+      `chart_artifacts` (`spec` JSON + disk file paths), and `query_feedback`
+      (thumbs + note, one row per person per query) are all built.
       `kb_uploads`, `google_connections`, and `users.ui_prefs` (JSON) are
       built (Phase 4)
 - [x] Orchestrator `orchestrator/app/chat/` (`tools.py`, `loop.py`,
@@ -414,7 +418,9 @@ the detail and the reasoning behind each decision below.
       export of the artifact files isn't built — CSV / XLSX (rows, the
       sibling `ExportService`, `openspout`) is
 - [ ] Query ledger view: every past `/query` with prompt, SQL, timing, engine,
-      model, status, thumbs + note; Admin sees all, Analyst sees own
+      model, status; Admin sees all, Analyst sees own. Thumbs + note itself is
+      built, captured directly on Ask's own result screen (`giveFeedback()`)
+      rather than waiting on this list view
 - [ ] Admin: user CRUD (built); "Connected sources" (Google connect /
       disconnect, show "reconnect needed" — built; the Drive folder / Sheets /
       Docs `source_registry` picker waits on Milestone 1's Google ingestion);
@@ -422,6 +428,15 @@ the detail and the reasoning behind each decision below.
       orchestrator `GET /kb/documents` — paginated, no ranking, alongside the
       existing ranked `/kb/search` — withdraw an upload — built); a read-only
       view of `etl.ingestion_runs` / `etl.quarantine` — not built
+- [x] System health (Admin -> System health, privilege `system.monitor`,
+      not part of the original Phase 4 admin set): orchestrator reachability,
+      queue depth, server vitals, recent error counts, and AI usage by model
+      (query/message counts, summed prompt/completion tokens now that the
+      orchestrator reports them). Laravel Pulse and Telescope both installed
+      alongside it, both locked to Admin regardless of `APP_ENV` (`SECURITY.md`
+      §3 has the reasoning) — `telescope:prune` is scheduled but needs a
+      `schedule:run` cron entry that doesn't exist on this box yet
+      (`OPERATOR_SETUP.md` §Monitoring)
 - [x] `deploy/`: Apache vhost on `127.0.0.1:8084`, `DocumentRoot web/public`;
       owner runs `OPERATOR_SETUP.md` §Apache (append `ReadWritePaths`, incl.
       the `kb-uploads` disk path) — done ahead of schedule via
@@ -454,6 +469,14 @@ the detail and the reasoning behind each decision below.
       row; disconnect deletes it; a token never appears in a log or response
 - [x] `SecurityHeaders` present; `activity_logs` on non-GET; the stage-polling
       endpoint returns the sequence
+- [x] System health: a non-privileged user is forbidden; an admin (or an
+      analyst granted `system.monitor`) sees it, with token usage correctly
+      summed per model; `ask` feedback persists thumbs + an optional note.
+      Pulse/Telescope's admin-only guard is asserted on their `config()`
+      middleware arrays, not over HTTP — both are disabled in the test
+      environment (`phpunit.xml`, the standard Laravel setup), so their
+      routes don't exist to hit there; verified live against real accounts
+      instead (`SECURITY.md` §3)
 - [ ] customization panel: a pref change persists across reload (cookie +
       `users.ui_prefs`), Reset restores defaults, timestamps render IST —
       Phase 5, not built yet (`->ist()` itself is already covered by

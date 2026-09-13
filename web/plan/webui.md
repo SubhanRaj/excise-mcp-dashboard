@@ -253,11 +253,13 @@ public function hasPrivilege(string $privilege): bool
 **Privileges this milestone actually checks** (the `User::PRIVILEGES`
 whitelist, validated on every admin write per `SECURITY.md` §3): `kb.manage`
 (knowledge upload/withdraw), `google.manage` (connect/disconnect, register
-sources), `users.manage`, `activity-logs.view`. `Admin` has everything
-(`isAdmin()` short-circuits `hasPrivilege()`, matching every sibling);
-`Analyst` has none of the above but can use Ask and Chat and see their own
-ledger — a designation preset only ever grants a subset of these four, never
-Ask/Chat access, since that isn't privilege-gated in this app.
+sources), `users.manage`, `activity-logs.view`, and `system.monitor` (the
+System health screen, added after this design's original four). `Admin` has
+everything (`isAdmin()` short-circuits `hasPrivilege()`, matching every
+sibling); `Analyst` has none of the above by default but can use Ask and Chat
+and see their own ledger — a designation preset only ever grants a subset of
+these five, never Ask/Chat access, since that isn't privilege-gated in this
+app.
 
 **Seed data**: the two other UP Excise apps already seed the department's
 real designation ladder (`excise-budget-tracker`'s `DesignationSeeder` has 22
@@ -954,7 +956,9 @@ points.
    a `designations` preset table (§6), matching the pattern independently
    converged on by `excise-budget-tracker`, `UP-excise-mailer`, and
    `upexcise-stats-dashboard`, all descended from `pdf-markdown-pipeline`'s
-   original. Two roles (`Admin`/`Analyst`), four privileges, and a
+   original. Two roles (`Admin`/`Analyst`), five privileges (a `system.monitor`
+   one arrived with the System health screen, after this design's original
+   four), and a
    `DesignationSeeder` reusing the excise-specific rank names the other two
    UP Excise apps already seed.
 4. **Admin "browse the ingested corpus" screen**: a new orchestrator

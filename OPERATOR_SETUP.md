@@ -669,6 +669,41 @@ only gate, the same as the other four apps. No Cloudflare Access step.
 
 ---
 
+## §Monitoring: system health, Pulse, Telescope (Milestone 5)
+
+Admin -> System health (`/admin/system-health`) needs nothing beyond the
+migrations already applied by `php artisan migrate` — it reads the existing
+`jobs`/`failed_jobs` tables, `/proc`, and `sys_getloadavg()` directly.
+
+`/pulse` and `/telescope` are both locked to `isAdmin()` regardless of
+`APP_ENV` (`SECURITY.md` has the reasoning — both packages default to
+allowing anyone through when the environment is `local`, which this box's
+real `APP_ENV` is, while also being genuinely public through the tunnel).
+Nothing to configure beyond what's already committed; verify after a deploy:
+
+```bash
+# as a non-admin, then an admin — see OPERATOR_SETUP.md's own account
+curl -s -o /dev/null -w '%{http_code}\n' https://visualizer.exciseup.in/pulse
+curl -s -o /dev/null -w '%{http_code}\n' https://visualizer.exciseup.in/telescope
+```
+
+Telescope records every request/query/job by design and has no size cap on
+its own — `telescope:prune` is scheduled daily (`routes/console.php`,
+48-hour retention), but Laravel's scheduler only actually runs if something
+calls `schedule:run` every minute. Nothing does yet on this box — add once:
+
+```bash
+crontab -e
+# add this line:
+* * * * * cd /home/subhan/Sites/excise-mcp-dashboard/web && php artisan schedule:run >> /dev/null 2>&1
+```
+
+Verify: `php artisan schedule:list` shows `telescope:prune`; after the cron
+line is in place, `SELECT count(*) FROM telescope_entries` should stop
+growing unbounded once entries pass 48 hours old.
+
+---
+
 ## §After each deploy (Milestone 5+)
 
 Same as the sibling apps — `git pull` on the live checkout is the deploy step:

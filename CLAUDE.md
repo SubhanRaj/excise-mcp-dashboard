@@ -141,6 +141,36 @@ router never observes, so a `wire:navigate` click back to a path it still
 thinks it's already on silently no-ops — the conversation-rail links are
 plain navigation now.
 
+A super-admin "System health" screen followed (Admin -> System health,
+privilege `system.monitor`), Livewire-native with `wire:poll` — this app's
+own convention for every screen. It shows orchestrator reachability, queue
+depth, server vitals (load, memory, CPU temp, direct `/proc` reads matching
+`pdf-markdown-pipeline`'s own health dashboard), recent error counts, and —
+new this round — AI usage by model. The orchestrator now tracks prompt/
+completion token counts per request (`TokenUsage` in `llm/client.py`,
+accumulated across however many Ollama calls one turn makes and returned on
+`QueryResponse` and the chat stream's `done` event), persisted onto
+`queries`/`messages` and totalled on the health screen. Fixing this also
+caught that `structlog` was never actually `.configure()`'d despite
+`CLAUDE.md` already claiming JSON-to-stdout logging — it ran on plain-text
+defaults; now configured for real, with an info-level line on every
+successful `/query` and `/chat` turn, not just exceptions. Ask also gained a
+minimal thumbs-up/down + note capture (`query_feedback`, one row per person
+per query) — `ROADMAP.md` had this planned since Phase 1 but nothing built
+it until the health screen needed something to show.
+
+Laravel Pulse and Telescope are both installed, and both needed the same
+fix before they were safe to leave running: each ships a default
+authorization that allows anyone through — no login at all — when
+`app()->environment('local')` is true, which is this box's real `APP_ENV`
+while it's also genuinely public through the tunnel. `SECURITY.md`'s new
+subsection under §3 has the full detail; the short version is both are now
+locked to `isAdmin()` unconditionally, verified against real accounts
+(non-admin 403, admin 200) rather than trusted from reading the source.
+`telescope:prune` runs daily via `routes/console.php`'s new `Schedule::`
+call — the first one in this app — but needs a `schedule:run` cron entry
+that doesn't exist on this box yet (`OPERATOR_SETUP.md` §Monitoring).
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures
@@ -248,6 +278,17 @@ consumer appears.
   is the package to use, replacing the Python orchestrator rather than running
   beside it. Running OpenWebUI itself in Docker against the orchestrator's
   OpenAI-compatible endpoint stays a documented backlog option.
+- **Real-time transport: plain HTTP streaming now, Laravel Reverb the
+  documented upgrade.** Chat already streams live token-by-token over a
+  `fetch()` + `ReadableStream` reader against an ndjson response — no
+  WebSocket server needed for that. A genuine broadcast need (two people
+  watching the same conversation update live, say) is the trigger to add
+  one, not before; the Cloudflare Tunnel this box runs behind is meant for
+  testing and proof-of-concept work, with a dedicated server planned later,
+  and standing up a WebSocket server through a tunnel today would be
+  infrastructure ahead of any actual need. Reverb, specifically, over Pusher
+  or Ably — self-hosted and first-party, so it stays inside the no-egress
+  rule the same way everything else here does.
 - **Retrieval: Postgres full-text search first, `pgvector` as the documented
   upgrade.** The policy/acts corpus is small (a few hundred verified docs).
   Built-in `tsvector` + `websearch_to_tsquery` needs no extension and no
