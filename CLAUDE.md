@@ -12,11 +12,15 @@ role-verified live, and `orchestrator/`'s `/query` ran a real question
 end-to-end against real seed data (SQL -> Postgres -> a sandboxed Plotly
 render -> a narrated summary), tested green (`ruff` / `mypy --strict` /
 `pytest`, 32 tests including live `bwrap` runs). Static chart export
-(`chart.png`/`svg`/`pdf`) goes through matplotlib's `plt.savefig()` —
-Plotly's own static export (`fig.write_image`, via `kaleido`'s headless
-Chrome) is rejected before a sandboxed process runs, since a live render
-showed Chrome repeatedly OOM-killing the sandbox instead of erroring; see
-`engines/python_engine.py`. The `excise-sandbox`
+(`chart.png`/`svg`/`pdf`) never runs Plotly's own `fig.write_image()` inside
+the per-script sandbox — that repeatedly OOM-killed the render's cgroup
+launching a fresh headless Chrome. A matplotlib script still calls
+`plt.savefig()` directly, inside the sandbox. A Plotly script only ever
+calls `fig.write_json()`; `engines/static_render.py` then derives any
+requested static format from that JSON afterward, outside the sandbox, via
+one persistent, isolated browser kept running for the orchestrator's whole
+lifetime — it never executes LLM-authored code, only rasterizes an
+already-produced chart spec. The `excise-sandbox`
 uid-separation layer is also still off (`bwrap`'s own confinement covers the
 same ground meanwhile) — `loginctl enable-linger excise-sandbox` turned out
 insufficient on its own; the sudoers fallback in `SECURITY.md` §2 is the
