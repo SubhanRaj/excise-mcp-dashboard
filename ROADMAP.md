@@ -19,13 +19,13 @@ and Google ingestion (M1). Milestone 4 (the Octave engine) is done, tested
 live against a real `octave-cli` render in the sandbox. The `db/` data bank,
 `etl/` core, and `orchestrator/`'s pipeline + knowledge base + second engine
 are merged into `dev`. **Milestone 5 (Laravel UI)** is underway on
-`web/plan/webui.md`'s design: Phase 0 (shell, RBAC, auth) and Phase 4 (admin —
-users, Google connect, knowledge base, activity log) are built (branch
-`m5-phase-0-4-admin`, tested green — `pint`/PHPUnit 39 tests on `web/`,
-`ruff`/`mypy --strict`/`pytest` 48 tests on `orchestrator/`, including the new
-`GET /kb/documents` endpoint). Phases 1-3 (the Ask form, the orchestrator
-`/chat` endpoint, the Chat window) and Phase 5 (customization panel, brand
-assets) are next.
+`web/plan/webui.md`'s design, all on branch `m5-phase-0-4-admin` (held there
+pending an explicit go-ahead to merge into `dev`): Phase 0 (shell, RBAC,
+auth), Phase 4 (admin — users, Google connect, knowledge base, activity log),
+Phase 1 (the Ask form), Phase 2 (the orchestrator `/chat` endpoint and tool
+loop), and Phase 3 (the Chat window) are built — tested green,
+`pint`/PHPUnit 51 tests on `web/`, `ruff`/`mypy --strict`/`pytest` 62 tests on
+`orchestrator/`. Phase 5 (customization panel, brand assets) is next.
 
 Every `sudo` / install / external-console step is collected, copy-pasteable,
 in [`OPERATOR_SETUP.md`](OPERATOR_SETUP.md), grouped by the milestone that
@@ -370,38 +370,41 @@ the detail and the reasoning behind each decision below.
       Cleave.js `currency-input` component for money inputs
 - [x] `/admin/activity-logs` (Admin only) ported; the audit table in
       `SECURITY.md` §5 is the coverage checklist
-- [ ] Migrations: `conversations` (ULID), `messages` (incl. `model`),
+- [x] Migrations: `conversations` (ULID), `messages` (incl. `model`),
       `message_tool_calls`, `queries` (prompt, sql, engine, `model`,
       `tables_used`, row_count, timings JSON, status, request_id),
-      `chart_artifacts` (`spec` JSON + disk file paths), `query_feedback` are
-      Phase 1-3 scope, not built yet. `kb_uploads`, `google_connections`, and
-      `users.ui_prefs` (JSON) are built (Phase 4)
-- [ ] Orchestrator `orchestrator/app/chat/` (`tools.py`, `loop.py`,
+      `chart_artifacts` (`spec` JSON + disk file paths) are built (Phases 1-3).
+      `query_feedback` (thumbs + note) isn't — no screen calls for it yet.
+      `kb_uploads`, `google_connections`, and `users.ui_prefs` (JSON) are
+      built (Phase 4)
+- [x] Orchestrator `orchestrator/app/chat/` (`tools.py`, `loop.py`,
       `prompts.py`; `ChatRequest` + tool schemas in the existing root
       `schemas.py`) and one new route, `POST /chat` — the bounded tool loop
       over the existing `sql/`, `kb/`, `engines/` primitives, no parallel
       implementation (`MCP_ENGINES.md` §Chat and retrieval,
       `web/plan/webui.md` §9). Streams the same newline-delimited JSON
       `/query` already uses, not `text/event-stream`
-- [ ] `RunExciseQuery` job (one-shot `/query`); queue worker systemd `--user`
+- [x] `RunExciseQuery` job (one-shot `/query`); queue worker systemd `--user`
       unit with `--timeout` above the orchestrator timeout
-- [ ] Livewire `Ask` component: split-view (chat left, canvas right, one
+- [x] Livewire `Ask` component: split-view (chat left, canvas right, one
       column under `lg`); submit -> job -> a plain route the browser polls via
       `fetch()` for DB-status stage changes
-      (`Querying database -> Running analysis -> Rendering chart -> Complete`),
-      `wire:poll` fallback
-- [ ] Livewire `Chat` component: conversation list rail, active thread, a
+      (`Querying database -> Running analysis -> Rendering chart -> Complete`)
+- [x] Livewire `Chat` component: conversation list rail, active thread, a
       `fetch()` + `ReadableStream` reader (not `EventSource`, which is
       GET-only and would put the message in a query string) appending
-      assistant tokens; tool-call cards (SQL, cited knowledge snippets with
-      `docsrepo.exciseup.in` links, chart); history persists and resumes;
-      markdown/code render client-side, sanitised; model picker
-      (`config/models.php` registry, offered entries filtered by orchestrator
-      `/health`, sent as `model`, server-validated)
-- [ ] Chart canvas: interactive `chart.plotly.json`; data table
-      (`rows_preview`, paginated); generated SQL (collapsed, copyable); export
-      PNG / SVG / PDF (artifact files) + CSV / XLSX (rows, reuse the sibling
-      `ExportService`, `openspout`)
+      assistant tokens; tool-call cards (SQL, cited knowledge snippets,
+      chart); history persists and resumes; markdown/code render
+      client-side, sanitised; model picker (`config/models.php` registry,
+      offered entries filtered by orchestrator `/health`, sent as `model`,
+      server-validated). Cited knowledge snippets don't carry a
+      `docsrepo.exciseup.in` link yet — `search_knowledge`'s tool result is
+      a plain text preview, not a structured per-chunk `source_url` field
+- [ ] Chart canvas: interactive `chart.plotly.json` and a data table
+      (`rows_preview`) are built for Ask and Chat's `make_chart` card;
+      generated SQL (collapsed, copyable) is built for Ask. PNG / SVG / PDF
+      export of the artifact files isn't built — CSV / XLSX (rows, the
+      sibling `ExportService`, `openspout`) is
 - [ ] Query ledger view: every past `/query` with prompt, SQL, timing, engine,
       model, status, thumbs + note; Admin sees all, Analyst sees own
 - [ ] Admin: user CRUD (built); "Connected sources" (Google connect /
@@ -420,18 +423,21 @@ the detail and the reasoning behind each decision below.
 - [x] Auth suite (ported): login, wrong password, wrong/expired OTP, the auth
       gate redirecting an unauthenticated request, onboarding link, password
       reset
-- [ ] `ask` flow: submit -> ledger rows; mocked orchestrator success -> chart
-      artifact + ledger row; mocked error -> failed stage shown + ledger row
-- [ ] chat flow: streamed tokens; a tool call persisted and rendered; history
-      loads and resumes; `chat` rate limit; model picker lists only pulled
-      registry models and sends the choice as `model`
+- [x] `ask` flow: submit -> a pending `queries` row + dispatched job; a mocked
+      orchestrator success persists the result + a chart artifact; a mocked
+      error marks the row failed with its stage; the stream endpoint is
+      owner-only
+- [x] chat flow: a mocked orchestrator stream persists assistant tokens and a
+      tool call with its chart; an unknown model key is refused; sending to
+      another user's conversation is forbidden; reopening a conversation
+      resumes its history. The `chat` rate limit itself has no dedicated test
+      yet (neither does `ask`'s)
 - [x] knowledge upload: valid `.md` accepted + `kb_uploads` row; non-`.md` /
       oversize rejected; path traversal blocked
 - [x] Google OAuth: connect redirect scopes; callback stores encrypted token +
       row; disconnect deletes it; a token never appears in a log or response
-- [ ] `SecurityHeaders` present (built); `activity_logs` on non-GET (built);
-      the stage-polling endpoint returns the sequence — Phase 1 (Ask), not
-      built yet
+- [x] `SecurityHeaders` present; `activity_logs` on non-GET; the stage-polling
+      endpoint returns the sequence
 - [ ] customization panel: a pref change persists across reload (cookie +
       `users.ui_prefs`), Reset restores defaults, timestamps render IST —
       Phase 5, not built yet (`->ist()` itself is already covered by
