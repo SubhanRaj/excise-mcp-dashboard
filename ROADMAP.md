@@ -443,7 +443,11 @@ the detail and the reasoning behind each decision below.
       tool call with its chart; an unknown model key is refused; sending to
       another user's conversation is forbidden; reopening a conversation
       resumes its history. The `chat` rate limit itself has no dedicated test
-      yet (neither does `ask`'s)
+      yet (neither does `ask`'s). These all drive `ChatController::send()`
+      directly — none exercise the browser-side bridge from the Livewire
+      `send()` call to that route, which is exactly where a real bug shipped
+      undetected (`CLAUDE.md`'s Status paragraph has the detail); no browser
+      JS test tooling is in place to close that gap yet
 - [x] knowledge upload: valid `.md` accepted + `kb_uploads` row; non-`.md` /
       oversize rejected; path traversal blocked
 - [x] Google OAuth: connect redirect scopes; callback stores encrypted token +

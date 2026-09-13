@@ -109,6 +109,22 @@ unauthenticated request to `/login`, and `/health` on both `web/` and
 step for an empty `users` table's first Admin account, and the recovery
 command for the tunnel's one operational failure mode so far — a transient
 DNS lookup tripping systemd's restart-rate-limit, which does not self-clear.
+Hand-testing the live site past `/health` surfaced what its test suite
+couldn't see, since `ChatTest` drives `ChatController::send()` directly and
+never exercises the browser-side bridge to it: sending a first chat message
+never reached the orchestrator at all. The thread panel's `wire:key` included
+`$activeConversation->id`, which `send()` sets in the same request it
+dispatches `chat-message-ready` — Livewire saw the key change and tore down
+and rebuilt that DOM node, destroying the very Alpine listener meant to
+catch that event before the browser's `fetch()` to `ChatController::send()`
+ever fired. Keyed off a mount-time-only property instead. The same pass
+found the composer clipped off-screen behind a hardcoded `calc(100vh-11rem)`
+guess and `overflow-hidden` (moved it inside the scrolling area with
+`sticky bottom-0`, immune to the guess being wrong), and the Users/Activity
+log search boxes' left icon overlapping the input text — `field-input`'s own
+padding, compiled via the Tailwind Play CDN's runtime `@apply`, was beating
+a plain `pl-9` override in the cascade; `excise-budget-tracker` hit the same
+thing and fixed it with Tailwind's `!` modifier, applied the same way here.
 
 ## What this project is
 
