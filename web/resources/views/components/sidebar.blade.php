@@ -74,6 +74,19 @@
             <span class="sidebar-text">System health</span>
         </a>
         @endif
+
+        @if(auth()->user()->isAdmin())
+        {{-- Plain links, not wire:navigate — /pulse and /telescope are their own
+             Livewire-less dashboards, not this app's routes. --}}
+        <a href="{{ url('/pulse') }}" data-tooltip="Pulse" class="nav-link nav-link-idle">
+            <i class="ti ti-activity-heartbeat w-5 text-center text-base flex-shrink-0"></i>
+            <span class="sidebar-text">Pulse</span>
+        </a>
+        <a href="{{ url('/telescope') }}" data-tooltip="Telescope" class="nav-link nav-link-idle">
+            <i class="ti ti-telescope w-5 text-center text-base flex-shrink-0"></i>
+            <span class="sidebar-text">Telescope</span>
+        </a>
+        @endif
         @endauth
 
     </nav>
