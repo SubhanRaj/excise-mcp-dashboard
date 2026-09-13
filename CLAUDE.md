@@ -29,9 +29,10 @@ Postgres FTS over it, tested green (`ruff` / `mypy --strict` / `pytest`
 against the real local Postgres, both packages). `db/kb_indexes.sql` is
 written but not yet applied — needs `sudo -u postgres`, a pending
 `OPERATOR_SETUP.md` §Data bank step. What Milestone 3 leaves for later
-milestones: the admin `.md` upload screen and wiring `search_knowledge` into
-a chat tool loop (both need `web/`, Milestone 5+), and Google Docs/Drive into
-`kb.*` (waits on Milestone 1's Google ingestion, not started). Milestone 4
+milestones: wiring `search_knowledge` into a chat tool loop (Milestone 5's
+Phase 2/3, not built yet), and Google Docs/Drive into `kb.*` (waits on
+Milestone 1's Google ingestion, not started) — the admin `.md` upload screen
+itself is now built (Milestone 5's Phase 4). Milestone 4
 (the Octave engine) is done — `engines/octave_engine.py` runs `octave-cli`
 under the same `bwrap` sandbox as the Python engine, tested green (`ruff` /
 `mypy --strict` / `pytest`, 45 tests) including a live render against the real
@@ -45,20 +46,29 @@ namespace, so the engine uses gnuplot's own cairo terminals
 (`-dpngcairo`/`-dsvg`/`-dpdfcairo`) instead. `matlab_engine.py` /
 `wolfram_engine.py` are documented, unconfigured stubs behind
 `ENABLE_MATLAB` / `ENABLE_WOLFRAM` (default off). Work follows the
-`ROADMAP.md` milestone order; Milestone 5 (Laravel UI) is next — its full
-design is written up in `web/plan/webui.md` (reuse map, RBAC and data model,
-the Ask and Chat flows, the orchestrator `/chat` design, the model picker,
-a security checklist), so `ROADMAP.md`'s checklist for it now reflects real
-decisions rather than a draft. Two of those decisions correct this file:
-the chat stream is newline-delimited JSON (`application/x-ndjson`, matching
-`/query`'s existing wire format), not `text/event-stream` — every "SSE"
-reference below to `/chat`'s transport means that; and RBAC carries a
-`designations` preset table (`role` + `privileges` + `designation_id` +
-free-text `post`) — the pattern four sibling Laravel apps converged on
-independently. Dependency installs so far: `web/`'s Composer + npm set,
-`etl/`'s venv (`+aiomysql`),
-`orchestrator/`'s venv — each the current milestone's `OPERATOR_SETUP.md`
-section at the time.
+`ROADMAP.md` milestone order; Milestone 5 (Laravel UI) is underway, built
+against the full design in `web/plan/webui.md` (reuse map, RBAC and data
+model, the Ask and Chat flows, the orchestrator `/chat` design, the model
+picker, a security checklist). Phase 0 (shell, RBAC, auth) and Phase 4
+(admin — users, Google connect, knowledge base, activity log) are built on
+branch `m5-phase-0-4-admin`: OTP-email login and onboarding ported from
+`upexcise-stats-dashboard`, `SecurityHeaders`/`LogMutation`/privilege
+middleware, the `designations`-backed RBAC model, and four full-page
+Livewire admin screens, each gated by route middleware and a per-write
+`abort_unless()` re-check — tested green (`pint`, 39 PHPUnit tests) and a
+new orchestrator `GET /kb/documents` endpoint for the Knowledge base
+screen's browse view (`ruff` / `mypy --strict` / `pytest`, 48 tests).
+Phases 1-3 (the Ask form, the orchestrator `/chat` endpoint, the Chat
+window) and Phase 5 (customization panel, brand assets) are next. Two
+decisions from the design correct this file: the chat stream is
+newline-delimited JSON (`application/x-ndjson`, matching `/query`'s
+existing wire format), not `text/event-stream` — every "SSE" reference
+below to `/chat`'s transport means that; and RBAC carries a `designations`
+preset table (`role` + `privileges` + `designation_id` + free-text `post`)
+— the pattern four sibling Laravel apps converged on independently.
+Dependency installs so far: `web/`'s Composer + npm set, `etl/`'s venv
+(`+aiomysql`), `orchestrator/`'s venv — each the current milestone's
+`OPERATOR_SETUP.md` section at the time.
 
 ## What this project is
 
