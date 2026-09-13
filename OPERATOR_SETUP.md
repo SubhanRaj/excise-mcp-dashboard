@@ -612,6 +612,20 @@ systemctl --user status excise-mcp-dashboard-tunnel
 curl -s -o /dev/null -w '%{http_code}\n' https://visualizer.exciseup.in/    # 302 to /login (the app's own auth)
 ```
 
+A visitor hitting Cloudflare error 530 means this tunnel process itself isn't
+running — check `systemctl --user status excise-mcp-dashboard-tunnel` for
+`inactive (dead)`. A transient DNS failure on the box (systemd-resolved
+returning "server misbehaving" for a moment) can crash `cloudflared` a few
+times in quick succession; systemd's restart-rate-limit then gives up
+("Start request repeated too quickly") and leaves it dead until told
+otherwise — it does not recover on its own once the DNS blip passes:
+
+```bash
+systemctl --user reset-failed excise-mcp-dashboard-tunnel.service
+systemctl --user restart excise-mcp-dashboard-tunnel.service
+systemctl --user status excise-mcp-dashboard-tunnel   # confirm active (running)
+```
+
 The site is public on the subdomain; the app's Fortify email-OTP login is the
 only gate, the same as the other four apps. No Cloudflare Access step.
 
