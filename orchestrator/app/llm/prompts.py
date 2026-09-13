@@ -96,10 +96,11 @@ financial years, a bar for a comparison across districts/categories.
 _ENGINE_CAPABILITIES = {
     "python": (
         "python: a pandas DataFrame `df` is already loaded, `OUT` is the output "
-        "directory. Interactive and static output. For an interactive chart, "
-        'build a Plotly figure and call `fig.write_json(f"{OUT}/chart.plotly.json")` '
-        'with outputs=["plotly_json"]. For a static chart, call `fig.write_image(...)` '
-        'or `plt.savefig(...)` into OUT with outputs=["png"|"svg"|"pdf"].'
+        "directory. For an interactive chart, build a Plotly figure and call "
+        '`fig.write_json(f"{OUT}/chart.plotly.json")` with outputs=["plotly_json"]. '
+        "For a static chart, use matplotlib and call `plt.savefig(...)` into OUT "
+        'with outputs=["png"|"svg"|"pdf"]. Never call a Plotly figure\'s '
+        "`fig.write_image()` — it needs a headless Chrome this sandbox cannot launch."
     ),
     "octave": (
         "octave: each result column is already loaded as a plain variable "
