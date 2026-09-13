@@ -38,6 +38,17 @@ return [
             'report' => false,
         ],
 
+        // Knowledge base .md uploads. Never publicly served — the ETL role reads this
+        // path directly (web/plan/webui.md §13); the Knowledge base screen only ever
+        // writes kb_uploads rows, never kb.* directly.
+        'kb-uploads' => [
+            'driver' => 'local',
+            'root' => storage_path('app/private/kb-uploads'),
+            'serve' => false,
+            'throw' => false,
+            'report' => false,
+        ],
+
         'public' => [
             'driver' => 'local',
             'root' => storage_path('app/public'),

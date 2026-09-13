@@ -22,6 +22,19 @@ return [
         'key' => env('RESEND_API_KEY'),
     ],
 
+    'google' => [
+        'client_id' => env('GOOGLE_CLIENT_ID'),
+        'client_secret' => env('GOOGLE_CLIENT_SECRET'),
+        'redirect' => env('GOOGLE_REDIRECT_URI'),
+    ],
+
+    // web/ never talks to Postgres/Ollama directly — every data/AI operation is one HTTP
+    // call to the orchestrator with this shared bearer token (CLAUDE.md, web/plan/webui.md §12).
+    'orchestrator' => [
+        'base_url' => env('ORCHESTRATOR_BASE_URL', 'http://127.0.0.1:8085'),
+        'token' => env('ORCHESTRATOR_TOKEN'),
+    ],
+
     'ses' => [
         'key' => env('AWS_ACCESS_KEY_ID'),
         'secret' => env('AWS_SECRET_ACCESS_KEY'),

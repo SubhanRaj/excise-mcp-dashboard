@@ -1,0 +1,12 @@
+[Unit]
+Description=excise-mcp-dashboard queue worker (RunExciseQuery, RefreshAnalysis, report exports)
+After=network.target mariadb.service
+
+[Service]
+WorkingDirectory=%h/Sites/excise-mcp-dashboard/web
+ExecStart=/usr/bin/php artisan queue:work --tries=1 --timeout=1900
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target

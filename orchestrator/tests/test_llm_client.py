@@ -58,3 +58,35 @@ async def test_ollama_unreachable_raises_typed_error() -> None:
     client = OllamaClient("http://fake-ollama", http_client)
     with pytest.raises(OllamaUnreachableError):
         await client.generate_text(model="m", prompt="p")
+
+
+async def test_chat_stream_parses_content_and_tool_call_chunks() -> None:
+    lines = [
+        json.dumps({"message": {"role": "assistant", "content": "Hel"}, "done": False}),
+        json.dumps({"message": {"role": "assistant", "content": "lo."}, "done": False}),
+        json.dumps(
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [
+                        {"function": {"name": "search_knowledge", "arguments": {"query": "MGQ"}}}
+                    ],
+                },
+                "done": True,
+            }
+        ),
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=("\n".join(lines) + "\n").encode())
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = OllamaClient("http://fake-ollama", http_client)
+
+    messages: list[dict[str, object]] = [{"role": "user", "content": "hi"}]
+    chunks = [c async for c in client.chat_stream(model="m", messages=messages, tools=[])]
+
+    assert [c.content for c in chunks] == ["Hel", "lo.", ""]
+    assert chunks[-1].tool_calls[0].name == "search_knowledge"
+    assert chunks[-1].tool_calls[0].arguments == {"query": "MGQ"}

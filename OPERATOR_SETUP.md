@@ -302,9 +302,13 @@ In <https://console.cloud.google.com>:
    `GOOGLE_APPLICATION_CREDENTIALS` in `etl/.env` at it, and share the target
    sheets with the service-account email as Viewer.
 
-Verify: from `web/` (once Milestone 1's minimal Socialite wiring exists),
-visit `/google/connect`, complete consent, and confirm a `google_connections`
-row is written with an encrypted `refresh_token`.
+Verify: the Connected sources screen's `/google/connect` and `/google/callback`
+routes are built (Milestone 5's Phase 4, `web/plan/webui.md` §15 decision 5,
+superseding this section's original "Milestone 1" placement) but need this
+section's `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` filled in before they can
+run. Once done, sign in as an Admin, visit Admin -> Connected sources ->
+Connect, complete consent, and confirm a `google_connections` row is written
+with an encrypted `refresh_token`.
 
 ---
 
@@ -316,7 +320,7 @@ python3.12 -m venv .venv
 .venv/bin/pip install -r requirements-dev.txt
 cp .env.example .env && chmod 600 .env
 # fill in DATABASE_URL_READONLY with the ro_pw set in db/roles.sql (§Data bank)
-# and a real ORCH_BEARER_TOKEN — also put the same token in web/.env once web/ exists
+# and a real ORCH_BEARER_TOKEN — also put the same token in web/.env's ORCHESTRATOR_TOKEN
 ```
 
 Verify:
@@ -326,6 +330,20 @@ Verify:
 .venv/bin/mypy
 .venv/bin/pytest
 ```
+
+Runs as a persistent `--user` service, no `sudo` needed — `web/` calls it over
+loopback HTTP, so nothing in `/ask` or `/chat` works until this is up:
+
+```bash
+cp ~/Sites/excise-mcp-dashboard/deploy/excise-orchestrator.service \
+   ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now excise-orchestrator.service
+```
+
+Verify: `systemctl --user status excise-orchestrator.service` shows
+`active (running)`; `curl http://127.0.0.1:8085/health` returns
+`{"status": "ok", ...}` with `ollama`/`postgres` both `ok`.
 
 ---
 
@@ -359,6 +377,28 @@ sudo visudo -f /etc/sudoers.d/excise-sandbox
 
 Never `tee`/hand-edit a sudoers file — `visudo` validates before saving
 (`~/Sites/infra-notes/cpu-thermal-and-apache-procfs.md` records why).
+
+---
+
+## §Chart rendering (Milestone 2, optional)
+
+Static chart export (PNG/SVG/PDF) runs through a persistent, isolated
+browser the orchestrator starts once at boot (`engines/static_render.py`,
+`SECURITY.md` §Static image export). It already works against the box's
+existing Google Chrome — no action needed. Installing open-source Chromium
+instead is optional and preferred:
+
+```bash
+sudo apt install chromium-browser
+```
+
+The orchestrator looks for `chromium`/`chromium-browser` on `PATH` first and
+only falls back to Chrome if neither is installed; no config change or
+restart-order dependency either way — just install it and restart
+`excise-orchestrator.service` (`systemctl --user restart
+excise-orchestrator.service`) to pick it up. Either browser gets a fresh,
+private profile per launch (never the operator's own Chrome profile or
+signed-in account — `SECURITY.md` has the detail).
 
 ---
 
@@ -442,6 +482,48 @@ mariadb -h127.0.0.1 -u excise_mcp_dashboard_local -p'CHANGE_ME_web_db' \
   -e "SHOW TABLES FROM excise_mcp_dashboard_local;"    # migrations, users, sessions, cache, jobs
 curl -s http://127.0.0.1:8084/health                   # {"app":"Excise Data Visualization","status":"ok"}
 ```
+
+**The first admin account.** A fresh `users` table is empty, and the Admin →
+Users screen that creates accounts is itself behind an existing Admin login
+— nothing self-registers. Bootstrap the first one from a shell:
+
+```bash
+cd ~/Sites/excise-mcp-dashboard/web
+php artisan tinker --execute="
+  \$user = App\Models\User::create([
+      'name' => 'Your Name', 'username' => 'your_username', 'email' => 'you@example.com',
+      'role' => 'Admin', 'privileges' => [],
+      'password' => Hash::make(Str::random(40)), 'email_verified_at' => null,
+  ]);
+  \$url = URL::temporarySignedRoute('onboarding.show', now()->addHours(72), ['user' => \$user->id]);
+  Mail::to(\$user->email)->send(new App\Mail\AccountOnboarding(\$user, \$url));
+"
+```
+
+This is the same path `Admin → Users → Add User` uses for every account after
+this one — a placeholder password plus a 72-hour signed onboarding link, not
+a real password set here. With `MAIL_MAILER=log` (the default) the link lands
+in `storage/logs/laravel.log`; with Resend configured (§ above) it reaches
+the real inbox. Every later account goes through the Users screen once this
+one can sign in.
+
+---
+
+## §web/ queue worker (Milestone 5, Phase 1)
+
+`RunExciseQuery` (the Ask flow's one-shot `/query` job) runs on `QUEUE_CONNECTION=database`
+— nothing processes it until this worker is running. No `sudo` needed, `--user` units only:
+
+```bash
+cp ~/Sites/excise-mcp-dashboard/deploy/excise-mcp-dashboard-queue.service \
+   ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now excise-mcp-dashboard-queue.service
+```
+
+Verify: `systemctl --user status excise-mcp-dashboard-queue.service` shows `active (running)`;
+submitting a question on `/ask` moves a `queries` row from `pending` through `running` to
+`complete` within a few seconds (watch it with `php artisan tinker` or the MariaDB CLI).
 
 ---
 
@@ -566,6 +648,20 @@ Verify:
 ```bash
 systemctl --user status excise-mcp-dashboard-tunnel
 curl -s -o /dev/null -w '%{http_code}\n' https://visualizer.exciseup.in/    # 302 to /login (the app's own auth)
+```
+
+A visitor hitting Cloudflare error 530 means this tunnel process itself isn't
+running — check `systemctl --user status excise-mcp-dashboard-tunnel` for
+`inactive (dead)`. A transient DNS failure on the box (systemd-resolved
+returning "server misbehaving" for a moment) can crash `cloudflared` a few
+times in quick succession; systemd's restart-rate-limit then gives up
+("Start request repeated too quickly") and leaves it dead until told
+otherwise — it does not recover on its own once the DNS blip passes:
+
+```bash
+systemctl --user reset-failed excise-mcp-dashboard-tunnel.service
+systemctl --user restart excise-mcp-dashboard-tunnel.service
+systemctl --user status excise-mcp-dashboard-tunnel   # confirm active (running)
 ```
 
 The site is public on the subdomain; the app's Fortify email-OTP login is the

@@ -17,17 +17,29 @@ from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 
 from app.auth import require_bearer_token
+from app.chat.loop import (
+    ChartEvent,
+    DoneEvent,
+    TokenEvent,
+    ToolCallEvent,
+    ToolResultEvent,
+    run_chat,
+)
 from app.config import settings
 from app.engines.base import available as available_engines
 from app.engines.base import register
 from app.engines.matlab_engine import MatlabEngine
 from app.engines.octave_engine import OctaveEngine
 from app.engines.python_engine import PythonEngine
+from app.engines.static_render import get_renderer as get_static_renderer
 from app.engines.wolfram_engine import WolframEngine
+from app.kb.retrieve import list_documents as kb_list_documents
 from app.kb.retrieve import retrieve as kb_retrieve
 from app.llm.client import OllamaClient
 from app.pipeline import run_query
 from app.schemas import (
+    ChatRequest,
+    KbDocumentsResponse,
     KbSearchRequest,
     KbSearchResponse,
     OrchestratorError,
@@ -71,8 +83,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         ctx.schema_card = await render_schema_card(ctx.pool)
     except Exception as e:  # noqa: BLE001 — startup must not crash if Postgres isn't up yet
         logger.warning("postgres unavailable at startup, will retry per-request", error=str(e))
+    try:
+        await get_static_renderer().start()
+    except Exception as e:  # noqa: BLE001 — static export is a nice-to-have, not required to boot
+        logger.warning("static renderer failed to start, static export disabled", error=str(e))
     app_context = ctx
     yield
+    await get_static_renderer().stop()
     await http_client.aclose()
     await close_pool()
 
@@ -127,6 +144,13 @@ async def health() -> dict[str, object]:
 async def kb_search(request: KbSearchRequest) -> KbSearchResponse:
     await _ensure_ready(_ctx())
     return KbSearchResponse(chunks=await kb_retrieve(request.query, request.k))
+
+
+@app.get("/kb/documents", dependencies=[Depends(require_bearer_token)])
+async def kb_documents(page: int = 1, per_page: int = 20) -> KbDocumentsResponse:
+    await _ensure_ready(_ctx())
+    documents, total = await kb_list_documents(page, per_page)
+    return KbDocumentsResponse(documents=documents, total=total)
 
 
 @app.post("/query", dependencies=[Depends(require_bearer_token)])
@@ -187,6 +211,67 @@ async def _stream_query(
                 ).encode()
             else:
                 yield (json.dumps({"result": item.model_dump()}) + "\n").encode()
+    finally:
+        if not task.done():
+            task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
+@app.post("/chat", dependencies=[Depends(require_bearer_token)])
+async def chat(request: ChatRequest) -> StreamingResponse:
+    if request.model is not None and request.model not in settings.allowed_models:
+        raise HTTPException(status_code=400, detail=f"model not in registry: {request.model}")
+    return StreamingResponse(_stream_chat(_ctx(), request), media_type="application/x-ndjson")
+
+
+def _chat_event_line(item: object) -> bytes:
+    line: dict[str, object]
+    if isinstance(item, TokenEvent):
+        line = {"token": item.delta}
+    elif isinstance(item, ToolCallEvent):
+        line = {"tool_call": {"name": item.name, "arguments": item.arguments}}
+    elif isinstance(item, ToolResultEvent):
+        line = {"tool_result": {"name": item.name, "ok": item.ok, "summary": item.summary}}
+    elif isinstance(item, ChartEvent):
+        line = {"chart": item.chart.model_dump()}
+    elif isinstance(item, DoneEvent):
+        line = {"done": {"tool_calls_count": item.tool_calls_count}}
+    else:
+        assert isinstance(item, OrchestratorError)
+        line = {"error": {"stage": item.stage, "message": item.message}}
+    return (json.dumps(line) + "\n").encode()
+
+
+async def _stream_chat(ctx: AppContext, request: ChatRequest) -> AsyncIterator[bytes]:
+    queue: asyncio.Queue[object | None] = asyncio.Queue()
+
+    async def runner() -> None:
+        try:
+            await _ensure_ready(ctx)
+            assert ctx.pool is not None
+            assert ctx.schema_card is not None
+            async for event in run_chat(
+                request, pool=ctx.pool, ollama=ctx.ollama, schema_card=ctx.schema_card
+            ):
+                await queue.put(event)
+        except OrchestratorError as e:
+            await queue.put(e)
+        except Exception as e:  # noqa: BLE001 — last resort so the stream always terminates
+            logger.exception(
+                "unhandled error in /chat loop", conversation_id=request.conversation_id
+            )
+            await queue.put(OrchestratorError(str(e), stage="internal", http_status=500))
+        finally:
+            await queue.put(None)
+
+    task = asyncio.create_task(runner())
+    try:
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            yield _chat_event_line(item)
     finally:
         if not task.done():
             task.cancel()

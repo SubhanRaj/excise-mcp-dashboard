@@ -5,23 +5,26 @@ path; there is no web/ artifact disk to copy them into yet (Milestone 5) and
 no sweep timer yet (Milestone 6) — OPERATOR_SETUP.md / ROADMAP.md already
 track the sweep as a Milestone 6 item.
 
-Static export (png/svg/pdf) is a supported output on paper but not exercised
-yet: plotly's fig.write_image needs kaleido>=1.0, which drives a real headless
-Chrome (the box's own /opt/google/chrome, bind-mounted read-only by
-sandbox/bwrap.py) instead of the old pure-binary renderer — it fails to launch
-inside the bwrap sandbox even with /dev/shm mounted (BrowserFailedError, exit
-immediately after start). llm/prompts.py currently asks the model for
-plotly_json only until this is debugged further. matplotlib's plt.savefig
-doesn't have this dependency and should work for a static PNG if the LLM picks
-Matplotlib instead of Plotly — untried.
+Static export (png/svg/pdf) has two paths. A script that builds a matplotlib
+figure calls plt.savefig directly, inside the sandbox — no extra runtime
+dependency. A script that builds a Plotly figure only ever calls
+fig.write_json(); render() below derives any requested png/svg/pdf from that
+JSON afterward, outside the sandbox, via engines/static_render.py's
+persistent, isolated browser. Plotly's own in-script static export
+(fig.write_image, which needs a real headless Chrome) is never called from
+inside the sandbox: a live render showed Chrome repeatedly OOM-killing the
+render's cgroup there instead of just erroring, so llm/prompts.py doesn't
+offer fig.write_image() to the model, and render() below rejects a script
+that calls it anyway before a sandboxed process ever runs.
 """
 
 import importlib.util
 from pathlib import Path
 
 from app.engines.base import RenderRequest, RenderResult
+from app.engines.static_render import get_renderer as get_static_renderer
 from app.sandbox.bwrap import run_in_sandbox
-from app.schemas import RenderEmptyError
+from app.schemas import RenderEmptyError, SandboxViolationError
 
 PREAMBLE = """import pandas as pd
 import numpy as np
@@ -54,6 +57,17 @@ class PythonEngine:
         )
 
     async def render(self, req: RenderRequest) -> RenderResult:
+        # Defense in depth alongside the prompt instruction above (SECURITY.md's SQL
+        # guard follows the same "don't rely on the LLM alone" pattern): a script that
+        # still calls Plotly's own static export launches a headless Chrome that fails
+        # to start in this sandbox and has repeatedly OOM-killed the render cgroup
+        # instead of just erroring — caught here, before a sandboxed process ever runs.
+        if "write_image(" in req.script:
+            raise SandboxViolationError(
+                "fig.write_image() needs a headless Chrome this sandbox cannot launch; "
+                "use plt.savefig() for a static export instead"
+            )
+
         full_script = PREAMBLE + req.script
         scratch_dir, stdout_tail = await run_in_sandbox(script=full_script, data_path=req.data_path)
 
@@ -70,6 +84,15 @@ class PythonEngine:
                 plotly_json = path.read_text()
             else:
                 files[output] = path
+
+        static_renderer = get_static_renderer()
+        if plotly_json is not None and static_renderer.is_available():
+            for output in ("png", "svg", "pdf"):
+                if output in req.outputs and output not in files:
+                    data = await static_renderer.render(plotly_json, output)
+                    out_path = scratch_dir / _OUTPUT_FILENAMES[output]
+                    out_path.write_bytes(data)
+                    files[output] = out_path
 
         if plotly_json is None and not files:
             raise RenderEmptyError(stdout_tail)

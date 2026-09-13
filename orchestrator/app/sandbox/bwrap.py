@@ -127,11 +127,10 @@ def _build_command(*, run_dir: Path, venv_root: str, unit_name: str, engine: str
     if Path("/etc/alternatives").exists():
         bwrap_cmd += ["--ro-bind", "/etc/alternatives", "/etc/alternatives"]
     if engine == "python":
-        if Path("/opt/google/chrome").exists():
-            # kaleido>=1.0 (plotly static image export) drives a real Chrome via
-            # choreographer instead of the old pure-binary renderer — the box's
-            # system Chrome, otherwise outside every other bind mount here.
-            bwrap_cmd += ["--ro-bind", "/opt/google/chrome", "/opt/google/chrome"]
+        # No Chrome bind-mount here: a script that calls Plotly's own
+        # fig.write_image() is rejected before it ever reaches this sandbox
+        # (python_engine.py) — static export runs in engines/static_render.py's
+        # persistent browser, entirely outside bwrap.
         # `venv_root/bin/python` is a symlink to the pyenv-managed interpreter
         # outside the venv (pyenv installs venvs with symlinked, not copied,
         # binaries) — bind that real target too so the symlink resolves. Python's
@@ -158,7 +157,7 @@ def _build_command(*, run_dir: Path, venv_root: str, unit_name: str, engine: str
         "--dev",
         "/dev",
         "--tmpfs",
-        "/dev/shm",  # headless Chrome (kaleido's PNG/SVG/PDF export) needs shared memory
+        "/dev/shm",
         "--tmpfs",
         "/tmp",
         "--bind",

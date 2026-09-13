@@ -27,7 +27,9 @@ def test_preserves_existing_limit() -> None:
 
 def test_rejects_multiple_statements() -> None:
     with pytest.raises(SqlRejectedError, match="exactly one statement"):
-        guard_sql("SELECT * FROM analytics.districts; SELECT * FROM analytics.revenues", row_limit=10)
+        guard_sql(
+            "SELECT * FROM analytics.districts; SELECT * FROM analytics.revenues", row_limit=10
+        )
 
 
 def test_rejects_insert() -> None:
