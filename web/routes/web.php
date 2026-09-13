@@ -4,6 +4,7 @@ use App\Http\Controllers\AskController;
 use App\Http\Controllers\Auth\ForgotPasswordController;
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\Auth\OnboardingController;
+use App\Http\Controllers\ChatController;
 use App\Http\Controllers\GoogleConnectionController;
 use App\Livewire\Admin\ActivityLogIndex;
 use App\Livewire\Admin\GoogleConnectionIndex;
@@ -11,6 +12,7 @@ use App\Livewire\Admin\KnowledgeBaseIndex;
 use App\Livewire\Admin\UserForm;
 use App\Livewire\Admin\UserIndex;
 use App\Livewire\Ask;
+use App\Livewire\Chat;
 use Illuminate\Support\Facades\Route;
 
 // The only route the perimeter leaves open (ROADMAP Milestone 6). Every other
@@ -53,9 +55,14 @@ Route::middleware('auth')->group(function () {
     Route::get('/ask/{query}/stream', [AskController::class, 'stream'])->name('ask.stream');
     Route::get('/ask/{query}/export/{format}', [AskController::class, 'export'])->name('ask.export');
 
-    // Phase 2/3 build these for real; stubbed here so the shell/nav/RBAC have somewhere
-    // to route to (web/plan/webui.md §1's build order).
-    Route::view('/chat', 'stubs.coming-soon', ['feature' => 'Chat'])->name('chat');
+    Route::get('/chat', Chat::class)->name('chat');
+    Route::get('/chat/{conversation}', Chat::class)->name('chat.show');
+    Route::post('/chat/{conversation}/send', [ChatController::class, 'send'])
+        ->middleware('throttle:chat')
+        ->name('chat.send');
+
+    // A later milestone builds this for real; stubbed here so the shell/nav/RBAC have
+    // somewhere to route to (web/plan/webui.md §1's build order).
     Route::view('/ledger', 'stubs.coming-soon', ['feature' => 'Ledger'])->name('ledger');
 
     Route::prefix('admin')->name('admin.')->group(function () {

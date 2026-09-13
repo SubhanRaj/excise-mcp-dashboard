@@ -27,6 +27,16 @@ class OrchestratorClient
     }
 
     /**
+     * @return array<string, mixed>
+     *
+     * @throws ConnectionException|RequestException
+     */
+    public function health(): array
+    {
+        return $this->request()->get('/health')->throw()->json();
+    }
+
+    /**
      * @return array<int, array<string, mixed>>
      *
      * @throws ConnectionException|RequestException
@@ -93,6 +103,43 @@ class OrchestratorClient
         }
 
         return $result;
+    }
+
+    /**
+     * Yields POST /chat's ndjson lines one decoded event at a time ({"token": ...},
+     * {"tool_call": ...}, {"tool_result": ...}, {"chart": ...}, {"done": ...},
+     * {"error": ...}). ChatSendController is the only caller — it pipes each event
+     * to the browser unmodified and persists it, so this stays a plain decoder
+     * with no buffering-to-a-final-result the way runQuery() has.
+     *
+     * @param  array<string, mixed>  $payload
+     * @return \Generator<int, array<string, mixed>>
+     *
+     * @throws ConnectionException|RequestException
+     */
+    public function chatStream(array $payload): \Generator
+    {
+        $response = Http::baseUrl(config('services.orchestrator.base_url'))
+            ->withToken(config('services.orchestrator.token'))
+            ->withOptions(['stream' => true])
+            ->timeout(300)
+            ->post('/chat', $payload)
+            ->throw();
+
+        $body = $response->toPsrResponse()->getBody();
+        $buffer = '';
+
+        while (! $body->eof()) {
+            $buffer .= $body->read(8192);
+            while (($newlineAt = strpos($buffer, "\n")) !== false) {
+                $line = trim(substr($buffer, 0, $newlineAt));
+                $buffer = substr($buffer, $newlineAt + 1);
+                if ($line === '') {
+                    continue;
+                }
+                yield json_decode($line, true, 512, JSON_THROW_ON_ERROR);
+            }
+        }
     }
 
     private function request()
