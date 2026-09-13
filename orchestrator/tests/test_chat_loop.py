@@ -25,7 +25,7 @@ class _FakeOllama:
         self._turns = list(turns)
 
     async def chat_stream(
-        self, *, model: str, messages: object, tools: object
+        self, *, model: str, messages: object, tools: object, usage: object = None
     ) -> AsyncIterator[object]:
         for chunk in self._turns.pop(0):
             yield chunk

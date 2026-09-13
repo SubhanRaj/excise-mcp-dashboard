@@ -51,6 +51,19 @@ from app.schemas import (
 from app.sql.runner import close_pool, get_pool
 from app.sql.schema_card import render_schema_card
 
+# CLAUDE.md's Python conventions call for "structlog to stdout as JSON lines" — this was
+# never actually configured, so it ran on structlog's plain-text defaults instead. journald
+# (which systemd captures stdout into) copes fine with either, but JSON lines are what let
+# an admin's health screen or a log-shipper parse a request_id/model/tokens back out.
+structlog.configure(
+    processors=[
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.add_log_level,
+        structlog.processors.JSONRenderer(),
+    ],
+    logger_factory=structlog.PrintLoggerFactory(),
+)
+
 logger = structlog.get_logger()
 
 
@@ -185,8 +198,19 @@ async def _stream_query(
                 schema_card=ctx.schema_card,
                 on_stage=on_stage,
             )
+            logger.info(
+                "query complete",
+                request_id=request_id,
+                model=result.model,
+                engine=result.engine,
+                row_count=result.row_count,
+                timings_ms=result.timings_ms,
+                prompt_tokens=result.prompt_tokens,
+                completion_tokens=result.completion_tokens,
+            )
             await queue.put(result)
         except OrchestratorError as e:
+            logger.warning("query failed", request_id=request_id, stage=e.stage, error=e.message)
             await queue.put(e)
         except Exception as e:  # noqa: BLE001 — last resort so the stream always terminates
             logger.exception("unhandled error in /query pipeline", request_id=request_id)
@@ -236,7 +260,13 @@ def _chat_event_line(item: object) -> bytes:
     elif isinstance(item, ChartEvent):
         line = {"chart": item.chart.model_dump()}
     elif isinstance(item, DoneEvent):
-        line = {"done": {"tool_calls_count": item.tool_calls_count}}
+        line = {
+            "done": {
+                "tool_calls_count": item.tool_calls_count,
+                "prompt_tokens": item.prompt_tokens,
+                "completion_tokens": item.completion_tokens,
+            }
+        }
     else:
         assert isinstance(item, OrchestratorError)
         line = {"error": {"stage": item.stage, "message": item.message}}
@@ -254,8 +284,23 @@ async def _stream_chat(ctx: AppContext, request: ChatRequest) -> AsyncIterator[b
             async for event in run_chat(
                 request, pool=ctx.pool, ollama=ctx.ollama, schema_card=ctx.schema_card
             ):
+                if isinstance(event, DoneEvent):
+                    logger.info(
+                        "chat turn complete",
+                        conversation_id=request.conversation_id,
+                        model=request.model,
+                        tool_calls_count=event.tool_calls_count,
+                        prompt_tokens=event.prompt_tokens,
+                        completion_tokens=event.completion_tokens,
+                    )
                 await queue.put(event)
         except OrchestratorError as e:
+            logger.warning(
+                "chat turn failed",
+                conversation_id=request.conversation_id,
+                stage=e.stage,
+                error=e.message,
+            )
             await queue.put(e)
         except Exception as e:  # noqa: BLE001 — last resort so the stream always terminates
             logger.exception(

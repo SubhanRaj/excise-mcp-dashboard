@@ -17,6 +17,23 @@ T = TypeVar("T", bound=BaseModel)
 
 
 @dataclass
+class TokenUsage:
+    """Accumulates prompt/completion token counts across however many Ollama
+    calls one /query or /chat request makes. Passed by reference into
+    OllamaClient's methods so pipeline.py and chat/loop.py can total usage
+    across multiple stages/tool-loop turns without changing every call
+    site's return type.
+    """
+
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+
+    def add(self, prompt_tokens: int, completion_tokens: int) -> None:
+        self.prompt_tokens += prompt_tokens
+        self.completion_tokens += completion_tokens
+
+
+@dataclass
 class ChatChunk:
     """One /api/chat streamed line, decoded: a content delta, or the tool
     calls Ollama attaches to a turn's final message. Internal to the chat
@@ -33,13 +50,22 @@ class OllamaClient:
         self.http = http_client
 
     async def generate_structured(
-        self, *, model: str, prompt: str, response_model: type[T], stage: str
+        self,
+        *,
+        model: str,
+        prompt: str,
+        response_model: type[T],
+        stage: str,
+        usage: TokenUsage | None = None,
     ) -> T:
         current_prompt = prompt
         last_error = ""
         for attempt in (1, 2):
             raw = await self._generate(
-                model=model, prompt=current_prompt, format_schema=response_model.model_json_schema()
+                model=model,
+                prompt=current_prompt,
+                format_schema=response_model.model_json_schema(),
+                usage=usage,
             )
             try:
                 return response_model.model_validate_json(raw)
@@ -55,11 +81,18 @@ class OllamaClient:
                 )
         raise AssertionError("unreachable")  # loop always returns or raises
 
-    async def generate_text(self, *, model: str, prompt: str) -> str:
-        return await self._generate(model=model, prompt=prompt, format_schema=None)
+    async def generate_text(
+        self, *, model: str, prompt: str, usage: TokenUsage | None = None
+    ) -> str:
+        return await self._generate(model=model, prompt=prompt, format_schema=None, usage=usage)
 
     async def chat_stream(
-        self, *, model: str, messages: list[dict[str, object]], tools: list[dict[str, object]]
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, object]],
+        tools: list[dict[str, object]],
+        usage: TokenUsage | None = None,
     ) -> AsyncIterator[ChatChunk]:
         payload = {"model": model, "messages": messages, "tools": tools, "stream": True}
         try:
@@ -70,17 +103,25 @@ class OllamaClient:
                 async for line in resp.aiter_lines():
                     if not line.strip():
                         continue
-                    message = json.loads(line).get("message", {})
+                    data = json.loads(line)
+                    message = data.get("message", {})
                     tool_calls = [
                         ToolCall(name=tc["function"]["name"], arguments=tc["function"]["arguments"])
                         for tc in message.get("tool_calls") or []
                     ]
+                    if usage is not None and data.get("done"):
+                        usage.add(data.get("prompt_eval_count", 0), data.get("eval_count", 0))
                     yield ChatChunk(content=message.get("content") or "", tool_calls=tool_calls)
         except httpx.HTTPError as e:
             raise OllamaUnreachableError(str(e) or f"{type(e).__name__} calling Ollama") from e
 
     async def _generate(
-        self, *, model: str, prompt: str, format_schema: dict[str, object] | None
+        self,
+        *,
+        model: str,
+        prompt: str,
+        format_schema: dict[str, object] | None,
+        usage: TokenUsage | None = None,
     ) -> str:
         payload: dict[str, object] = {"model": model, "prompt": prompt, "stream": False}
         if format_schema is not None:
@@ -92,8 +133,10 @@ class OllamaClient:
             resp.raise_for_status()
         except httpx.HTTPError as e:
             raise OllamaUnreachableError(str(e) or f"{type(e).__name__} calling Ollama") from e
-        response_text = resp.json().get("response", "")
-        return str(response_text)
+        data = resp.json()
+        if usage is not None:
+            usage.add(data.get("prompt_eval_count", 0), data.get("eval_count", 0))
+        return str(data.get("response", ""))
 
     async def pulled_models(self) -> set[str]:
         try:

@@ -10,7 +10,7 @@ import asyncpg
 from app.chat.prompts import CHAT_SYSTEM_PROMPT, CHAT_TOOL_SCHEMAS
 from app.chat.tools import dispatch
 from app.config import settings
-from app.llm.client import OllamaClient
+from app.llm.client import OllamaClient, TokenUsage
 from app.pipeline import _select_model
 from app.schemas import ChartArtifact, ChatRequest, ChatToolLoopExceededError, ChatTurn, ToolCall
 
@@ -41,6 +41,8 @@ class ChartEvent:
 @dataclass
 class DoneEvent:
     tool_calls_count: int
+    prompt_tokens: int
+    completion_tokens: int
 
 
 ChatEvent = TokenEvent | ToolCallEvent | ToolResultEvent | ChartEvent | DoneEvent
@@ -63,12 +65,13 @@ async def run_chat(
     model = _select_model(request.model, settings.ollama_chat_model)
     messages = _build_messages(request.message, request.history)
     tool_calls_made = 0
+    usage = TokenUsage()
 
     for _ in range(settings.chat_max_tool_calls + 1):
         assistant_text = ""
         pending_calls: list[ToolCall] = []
         async for chunk in ollama.chat_stream(
-            model=model, messages=messages, tools=CHAT_TOOL_SCHEMAS
+            model=model, messages=messages, tools=CHAT_TOOL_SCHEMAS, usage=usage
         ):
             if chunk.content:
                 assistant_text += chunk.content
@@ -77,7 +80,11 @@ async def run_chat(
         messages.append({"role": "assistant", "content": assistant_text})
 
         if not pending_calls:
-            yield DoneEvent(tool_calls_count=tool_calls_made)
+            yield DoneEvent(
+                tool_calls_count=tool_calls_made,
+                prompt_tokens=usage.prompt_tokens,
+                completion_tokens=usage.completion_tokens,
+            )
             return
 
         for call in pending_calls:
@@ -87,6 +94,7 @@ async def run_chat(
                 ollama=ollama,
                 schema_card=schema_card,
                 conversation_id=request.conversation_id,
+                usage=usage,
             )
             tool_calls_made += 1
             yield ToolResultEvent(name=call.name, ok=result.ok, summary=result.summary)

@@ -13,7 +13,7 @@ from app.config import settings
 from app.engines.base import RenderRequest
 from app.engines.base import get as get_engine
 from app.kb.retrieve import retrieve as kb_retrieve
-from app.llm.client import OllamaClient
+from app.llm.client import OllamaClient, TokenUsage
 from app.llm.prompts import build_sql_prompt
 from app.pipeline import _json_safe_rows, _write_parquet
 from app.schemas import ChartArtifact, ChatToolArgumentError, SqlPlan, ToolCall, ToolResult
@@ -53,7 +53,12 @@ async def _search_knowledge(args: SearchKnowledgeArgs) -> ToolResult:
 
 
 async def _run_sql_query(
-    args: RunSqlQueryArgs, *, conversation_id: str, ollama: OllamaClient, schema_card: str
+    args: RunSqlQueryArgs,
+    *,
+    conversation_id: str,
+    ollama: OllamaClient,
+    schema_card: str,
+    usage: TokenUsage | None,
 ) -> ToolResult:
     if args.sql is None and args.question is None:
         raise ChatToolArgumentError("run_sql_query", "one of sql or question is required")
@@ -65,6 +70,7 @@ async def _run_sql_query(
             prompt=prompt,
             response_model=SqlPlan,
             stage="tool_call",
+            usage=usage,
         )
         sql = plan.sql
     guard_result = guard_sql(sql, settings.query_row_limit_default)
@@ -115,6 +121,7 @@ async def dispatch(
     ollama: OllamaClient,
     schema_card: str,
     conversation_id: str,
+    usage: TokenUsage | None = None,
 ) -> ToolResult:
     try:
         if call.name == "search_knowledge":
@@ -125,6 +132,7 @@ async def dispatch(
                 conversation_id=conversation_id,
                 ollama=ollama,
                 schema_card=schema_card,
+                usage=usage,
             )
         return await _make_chart(
             MakeChartArgs.model_validate(call.arguments), conversation_id=conversation_id

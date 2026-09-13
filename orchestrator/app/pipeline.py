@@ -17,7 +17,7 @@ from app.config import settings
 from app.engines.base import RenderRequest
 from app.engines.base import available as available_engines
 from app.engines.base import get as get_engine
-from app.llm.client import OllamaClient
+from app.llm.client import OllamaClient, TokenUsage
 from app.llm.prompts import build_plot_prompt, build_sql_prompt, build_summary_prompt
 from app.schemas import (
     ChartArtifact,
@@ -82,6 +82,7 @@ async def run_query(
 ) -> QueryResponse:
     stages: list[Stage] = []
     timings_ms: dict[str, int] = {}
+    usage = TokenUsage()
     sql_model = _select_model(request.model, settings.ollama_sql_model)
     chat_model = settings.ollama_chat_model  # summarize always narrates with the chat-role model
 
@@ -93,7 +94,7 @@ async def run_query(
     t0 = time.monotonic()
     prompt = build_sql_prompt(request.question, schema_card, request.history)
     sql_plan = await ollama.generate_structured(
-        model=sql_model, prompt=prompt, response_model=SqlPlan, stage="plan_sql"
+        model=sql_model, prompt=prompt, response_model=SqlPlan, stage="plan_sql", usage=usage
     )
     try:
         guard_result = guard_sql(sql_plan.sql, request.row_limit)
@@ -103,7 +104,7 @@ async def run_query(
             "Write a corrected single read-only SELECT."
         )
         sql_plan = await ollama.generate_structured(
-            model=sql_model, prompt=reprompt, response_model=SqlPlan, stage="plan_sql"
+            model=sql_model, prompt=reprompt, response_model=SqlPlan, stage="plan_sql", usage=usage
         )
         guard_result = guard_sql(sql_plan.sql, request.row_limit)  # a second rejection propagates
     timings_ms["plan_sql"] = int((time.monotonic() - t0) * 1000)
@@ -128,7 +129,11 @@ async def run_query(
             request.question, list(df.columns), [str(t) for t in df.dtypes], row_count, avail
         )
         plot_plan = await ollama.generate_structured(
-            model=sql_model, prompt=plot_prompt, response_model=PlotPlan, stage="plan_plot"
+            model=sql_model,
+            prompt=plot_prompt,
+            response_model=PlotPlan,
+            stage="plan_plot",
+            usage=usage,
         )
         engine_used = request.engine_hint or (
             plot_plan.engine if plot_plan.engine in avail else "python"
@@ -163,7 +168,7 @@ async def run_query(
     summary_prompt = build_summary_prompt(
         request.question, list(df.columns), row_count, rows_preview
     )
-    summary = await ollama.generate_text(model=chat_model, prompt=summary_prompt)
+    summary = await ollama.generate_text(model=chat_model, prompt=summary_prompt, usage=usage)
     timings_ms["summarize"] = int((time.monotonic() - t0) * 1000)
     await emit(Stage(name="summarize", status="ok", ms=timings_ms["summarize"]))
 
@@ -178,4 +183,6 @@ async def run_query(
         model=sql_model,
         timings_ms=timings_ms,
         stages=stages,
+        prompt_tokens=usage.prompt_tokens,
+        completion_tokens=usage.completion_tokens,
     )

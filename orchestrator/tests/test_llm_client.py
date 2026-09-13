@@ -6,7 +6,7 @@ import httpx
 import pytest
 from pydantic import BaseModel
 
-from app.llm.client import OllamaClient
+from app.llm.client import OllamaClient, TokenUsage
 from app.schemas import LLMStructuredOutputError, OllamaUnreachableError
 
 
@@ -90,3 +90,66 @@ async def test_chat_stream_parses_content_and_tool_call_chunks() -> None:
     assert [c.content for c in chunks] == ["Hel", "lo.", ""]
     assert chunks[-1].tool_calls[0].name == "search_knowledge"
     assert chunks[-1].tool_calls[0].arguments == {"query": "MGQ"}
+
+
+async def test_generate_text_accumulates_token_usage() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, json={"response": "hi", "prompt_eval_count": 12, "eval_count": 3}
+        )
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = OllamaClient("http://fake-ollama", http_client)
+    usage = TokenUsage()
+
+    await client.generate_text(model="m", prompt="p", usage=usage)
+
+    assert usage.prompt_tokens == 12
+    assert usage.completion_tokens == 3
+
+
+async def test_generate_structured_sums_usage_across_a_retry() -> None:
+    remaining = [
+        {"response": "not json", "prompt_eval_count": 10, "eval_count": 5},
+        {"response": json.dumps({"value": 1}), "prompt_eval_count": 20, "eval_count": 8},
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=remaining.pop(0))
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = OllamaClient("http://fake-ollama", http_client)
+    usage = TokenUsage()
+
+    await client.generate_structured(
+        model="m", prompt="p", response_model=_Thing, stage="plan_sql", usage=usage
+    )
+
+    assert usage.prompt_tokens == 30
+    assert usage.completion_tokens == 13
+
+
+async def test_chat_stream_reports_usage_only_on_the_final_chunk() -> None:
+    lines = [
+        json.dumps({"message": {"role": "assistant", "content": "Hi"}, "done": False}),
+        json.dumps(
+            {
+                "message": {"role": "assistant", "content": "!"},
+                "done": True,
+                "prompt_eval_count": 40,
+                "eval_count": 6,
+            }
+        ),
+    ]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=("\n".join(lines) + "\n").encode())
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = OllamaClient("http://fake-ollama", http_client)
+    usage = TokenUsage()
+
+    _ = [c async for c in client.chat_stream(model="m", messages=[], tools=[], usage=usage)]
+
+    assert usage.prompt_tokens == 40
+    assert usage.completion_tokens == 6

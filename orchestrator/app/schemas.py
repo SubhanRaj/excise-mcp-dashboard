@@ -113,6 +113,8 @@ class QueryResponse(BaseModel):
     model: str
     timings_ms: dict[str, int]
     stages: list[Stage]
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
 
 
 # --- Typed errors -----------------------------------------------------------
