@@ -1,13 +1,17 @@
 <div class="flex flex-col lg:flex-row gap-4 h-[calc(100vh-11rem)]">
     {{-- Conversation rail --}}
     <div class="lg:w-64 flex-shrink-0 flex flex-col gap-2">
-        <a href="{{ route('chat') }}" wire:navigate
+        {{-- Plain navigation, not wire:navigate: sendToOrchestrator() below updates the
+             address bar with history.replaceState() after a live send, which Livewire's
+             SPA router never sees — a wire:navigate click back to a path it still thinks
+             it's already on then silently no-ops. A full page load always works. --}}
+        <a href="{{ route('chat') }}"
            class="flex items-center justify-center gap-2 text-sm font-semibold text-govviolet-600 border border-govviolet-200 dark:border-govviolet-800 rounded-lg py-2 hover:bg-govviolet-50 dark:hover:bg-govviolet-900/20 transition-colors">
             <i class="ti ti-plus"></i> New conversation
         </a>
         <div class="flex-1 overflow-y-auto space-y-1">
             @forelse($conversations as $c)
-            <a href="{{ route('chat.show', $c) }}" wire:navigate
+            <a href="{{ route('chat.show', $c) }}"
                class="block px-3 py-2 rounded-lg text-sm truncate {{ $activeConversation?->id === $c->id ? 'bg-govviolet-50 dark:bg-govviolet-900/30 text-govviolet-700 dark:text-govviolet-300 font-medium' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800' }}">
                 {{ $c->title ?? 'New conversation' }}
             </a>

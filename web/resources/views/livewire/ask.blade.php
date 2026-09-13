@@ -75,7 +75,15 @@
         @elseif($activeQuery->status === 'failed')
         <div class="flex items-start gap-2 text-sm text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-700 rounded-lg px-4 py-3">
             <i class="ti ti-alert-circle flex-shrink-0 mt-0.5"></i>
-            <span>{{ $activeQuery->error_message ?? 'The query failed. Please try again.' }}</span>
+            <div>
+                <span>{{ $activeQuery->error_message ?: 'The query failed. Please try again.' }}</span>
+                @if(config('app.debug'))
+                <p class="text-xs text-red-600/70 dark:text-red-400/70 mt-1 font-mono">
+                    stage: {{ $activeQuery->current_stage ?? 'unknown' }}
+                    @if($activeQuery->request_id) &middot; request_id: {{ $activeQuery->request_id }} @endif
+                </p>
+                @endif
+            </div>
         </div>
         @else
             @if($activeQuery->chartArtifact?->spec)

@@ -123,6 +123,11 @@ class QueryResponse(BaseModel):
 
 class OrchestratorError(Exception):
     def __init__(self, message: str, *, stage: str, http_status: int = 400) -> None:
+        # Some lower-level exceptions (httpx/httpcore timeouts in particular) have an
+        # empty str() when raised without an explicit message — wrapping one of those
+        # via e.g. OllamaUnreachableError(str(e)) would otherwise surface as a blank
+        # error to the user instead of the underlying exception's own type name.
+        message = message or type(self).__name__
         super().__init__(message)
         self.message = message
         self.stage = stage

@@ -77,7 +77,7 @@ class OllamaClient:
                     ]
                     yield ChatChunk(content=message.get("content") or "", tool_calls=tool_calls)
         except httpx.HTTPError as e:
-            raise OllamaUnreachableError(str(e)) from e
+            raise OllamaUnreachableError(str(e) or f"{type(e).__name__} calling Ollama") from e
 
     async def _generate(
         self, *, model: str, prompt: str, format_schema: dict[str, object] | None
@@ -91,7 +91,7 @@ class OllamaClient:
             )
             resp.raise_for_status()
         except httpx.HTTPError as e:
-            raise OllamaUnreachableError(str(e)) from e
+            raise OllamaUnreachableError(str(e) or f"{type(e).__name__} calling Ollama") from e
         response_text = resp.json().get("response", "")
         return str(response_text)
 
