@@ -30,3 +30,4 @@ web/node_modules/
 # nothing committed but the README. Same convention as the recovery-portal repos.
 /scripts_and_data/*
 !/scripts_and_data/README.md
+debug/

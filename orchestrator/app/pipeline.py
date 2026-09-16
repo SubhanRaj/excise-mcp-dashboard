@@ -192,10 +192,16 @@ async def run_query(
         await emit(Stage(name="render", status="ok", ms=timings_ms["render"]))
 
     t0 = time.monotonic()
-    summary_prompt = build_summary_prompt(
-        request.question, list(df.columns), row_count, rows_preview
-    )
-    summary = await ollama.generate_text(model=chat_model, prompt=summary_prompt, usage=usage)
+    if row_count == 0:
+        # Asking the model to narrate zero rows invites exactly what an LLM does with
+        # nothing to work from: an invented trend. Same no-hallucination rule kb/retrieve.py
+        # already follows for an empty corpus — say so, don't summarize.
+        summary = "No rows matched this question."
+    else:
+        summary_prompt = build_summary_prompt(
+            request.question, list(df.columns), row_count, rows_preview
+        )
+        summary = await ollama.generate_text(model=chat_model, prompt=summary_prompt, usage=usage)
     timings_ms["summarize"] = int((time.monotonic() - t0) * 1000)
     await emit(Stage(name="summarize", status="ok", ms=timings_ms["summarize"]))
 

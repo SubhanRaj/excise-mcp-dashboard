@@ -183,6 +183,19 @@ arrives directly as the tool call's own argument, with no separate planning
 step to reprompt, so a render failure there comes back as a failed tool
 result instead of ending the turn. The model sees why its script failed and
 can call `make_chart` again within its own `CHAT_MAX_TOOL_CALLS` budget.
+A zero-row result had the same hallucination risk the knowledge base's empty
+corpus already guards against: the summarize step was handing the model an
+empty result set and still asking for "a plain-language reading of the
+numbers," and it obliged with an invented trend. `run_query` now skips that
+call entirely on zero rows and returns a fixed "No rows matched this
+question." instead.
+
+`public/vendor/flasher/` — the toast-notification package's published JS and
+CSS, referenced on every page by `@flasher_render` — was missing from the
+repository since the original skeleton commit: the browser's request 404'd
+and the browser refused to execute the HTML error page it got back instead,
+on every single page load. `php artisan flasher:install` publishes it, and
+it is committed the same way `public/vendor/tabler-icons/` already is.
 
 ## What this project is
 
