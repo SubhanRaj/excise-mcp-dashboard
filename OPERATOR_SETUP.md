@@ -218,6 +218,58 @@ SQL
 Then `etl/.venv/bin/python -m etl sync --source pdf_pipeline_docs` (`etl/README.md`
 §Knowledge base has the module notes).
 
+**Apply the `dispatches` / `dispatch_strength_lines` tables** (Milestone 5:
+`etl/sources/iescms_dispatch.py`, `DATA_PIPELINE.md` §Dispatches). All three
+scripts are idempotent — re-running the full file only adds what's new:
+
+```bash
+cd ~/Sites/excise-mcp-dashboard/db
+sudo -u postgres psql -d excise_bank -f schema.sql
+sudo -u postgres psql -d excise_bank -f analytics_views.sql
+sudo -u postgres psql -d excise_bank -f seed_reference.sql
+```
+
+**Register an IESCMS shop-wise dispatch report as a source, then sync it**
+(one registry row per report file — the layout, `fl` or `cl`, rides in
+`source_ref` after `#`, the same way the plain excel source's sheet name
+does):
+
+```bash
+PGPASSWORD='CHANGE_ME_etl' psql -h 127.0.0.1 -U excise_etl -d excise_bank <<'SQL'
+INSERT INTO etl.source_registry (name, source, source_ref, target_table, schedule, enabled)
+VALUES
+  ('iescms_dispatch_fl_202608', 'iescms_dispatch',
+   '/home/subhan/Sites/excise-mcp-dashboard/scripts_and_data/sample_data/Shop_Wise_Dispatch_Report_WH_to_Retail-FL5D,FL4A,FL4C,FL5B,FL5DB.CL5CC___12_Sep_2026_110221.xlsx#fl',
+   'dispatches', 'manual', true),
+  ('iescms_dispatch_cl_202608', 'iescms_dispatch',
+   '/home/subhan/Sites/excise-mcp-dashboard/scripts_and_data/sample_data/Country_Liquor_Shop_Wise_Dispatch_Report_12_Sep_2026_233114.xlsx#cl',
+   'dispatches', 'manual', true)
+ON CONFLICT (name) DO NOTHING;
+SQL
+
+cd ~/Sites/excise-mcp-dashboard/etl
+.venv/bin/python -m etl sync --source iescms_dispatch_fl_202608
+.venv/bin/python -m etl sync --source iescms_dispatch_cl_202608
+```
+
+Verify:
+
+```bash
+PGPASSWORD='CHANGE_ME_ro' psql -h 127.0.0.1 -U excise_ro -d excise_bank -c \
+  "SELECT count(*), sum(dispatched_bulk_litres) FROM analytics.dispatches;"
+psql -h 127.0.0.1 -U excise_etl -d excise_bank -c \
+  "SELECT status, rows_seen, rows_upserted, rows_quarantined FROM etl.ingestion_runs \
+   WHERE source = 'iescms_dispatch' ORDER BY id DESC LIMIT 2;"
+```
+
+A `schedule` of `'manual'` (not a real cron expression) is a note to the
+operator, not something `etl` itself reads — there's no systemd timer for
+this source, since a new month's export is a file an operator downloads and
+registers by hand, not a feed `etl` pulls on its own. Re-running it (on
+purpose, or swept up in an `etl sync --all`) is harmless either way: the
+loader upserts on `indent_number`, so a second pass over the same file
+changes no row counts.
+
 ---
 
 ## §ETL package (Milestone 1)

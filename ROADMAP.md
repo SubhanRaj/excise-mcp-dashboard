@@ -123,6 +123,16 @@ pulled, the sandbox user exists.
 - [x] `etl.source_registry` / `etl.ingestion_runs` / `etl.quarantine` writing
       on every run; Postgres advisory lock so timers cannot overlap
 - [x] `etl/sources/excel.py`, `etl/sources/csv.py`
+- [x] `etl/sources/iescms_dispatch.py` — the IESCMS shop-wise wholesale-to-
+      retail dispatch report (a live-system monthly export, not the NITI
+      annual reconciliation below), into the new `dispatches` /
+      `dispatch_strength_lines` tables (`DATA_PIPELINE.md` §Dispatches).
+      August 2026, Lucknow, both report layouts (foreign-liquor-family and
+      country-liquor with its per-strength breakdown). `db/schema.sql` /
+      `analytics_views.sql` / `seed_reference.sql` (FY2026-27, the seven
+      retail/wholesale license codes the report uses) are written; applying
+      them and running the import is pending the operator's `sudo -u
+      postgres` step (`OPERATOR_SETUP.md` §Data bank)
 - [ ] Excel adapter loads the NITI submission workbooks from
       `~/mentor_portal_db/UP Excise Data Collection/` and reconciles counts
       against the sibling's verified import (75 districts; 900 rows/series on

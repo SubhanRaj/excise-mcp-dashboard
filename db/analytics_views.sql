@@ -96,6 +96,37 @@ JOIN districts d        ON d.id = s.district_id
                         AND d.deleted_at IS NULL AND d.published_at IS NOT NULL
 JOIN financial_years fy ON fy.id = sy.financial_year_id;
 
+CREATE OR REPLACE VIEW analytics.dispatches AS
+SELECT dp.id, dp.district_id, dp.financial_year_id, dp.shop_id,
+       dp.wholesale_license_type, dp.wholesale_license_number, dp.wholesale_entity_name,
+       dp.circle_sector, dp.indent_number, dp.indent_received_at, dp.indent_accepted_at,
+       dp.transport_pass_issued_at, dp.tp_reference_no,
+       dp.requested_cases, dp.requested_bottles, dp.requested_bulk_litres,
+       dp.dispatched_cases, dp.dispatched_bottles, dp.dispatched_bulk_litres,
+       dp.duty_fee_inr, dp.source_ref, dp.published_at, dp.created_at, dp.updated_at,
+       d.name AS district, d.slug AS district_slug,
+       fy.label AS financial_year, fy.start_year,
+       s.shop_number, s.display_name AS shop_name,
+       lc.code AS retail_license_category
+FROM dispatches dp
+JOIN districts d        ON d.id = dp.district_id
+                        AND d.deleted_at IS NULL AND d.published_at IS NOT NULL
+JOIN financial_years fy ON fy.id = dp.financial_year_id
+JOIN shops s            ON s.id = dp.shop_id
+                        AND s.deleted_at IS NULL AND s.published_at IS NOT NULL
+LEFT JOIN license_categories lc ON lc.id = s.license_category_id
+WHERE dp.deleted_at IS NULL AND dp.published_at IS NOT NULL;
+
+-- visibility inherited from the parent dispatches row, same as shop_years from shops
+CREATE OR REPLACE VIEW analytics.dispatch_strength_lines AS
+SELECT sl.id, sl.dispatch_id, sl.strength_label,
+       sl.requested_cases, sl.requested_bulk_litres,
+       sl.dispatched_cases, sl.dispatched_bulk_litres,
+       dp.indent_number, dp.district_id, dp.financial_year_id, dp.shop_id
+FROM dispatch_strength_lines sl
+JOIN dispatches dp ON dp.id = sl.dispatch_id
+                   AND dp.deleted_at IS NULL AND dp.published_at IS NOT NULL;
+
 CREATE OR REPLACE VIEW analytics.brands AS
 SELECT b.id, b.name, b.license_category_id, b.segment, b.manufacturer,
        b.published_at, b.created_at, b.updated_at,

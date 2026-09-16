@@ -181,6 +181,71 @@ CREATE TABLE shop_years (                  -- quota / settlement per shop per FY
 );
 ```
 
+### Dispatches (IESCMS wholesale-to-retail transport-pass log)
+
+`sales_volumes` above holds one row per district+year+category — the annual
+reconciled NITI figure. This is a different, finer-grained source: IESCMS
+(the department's live supply-chain system) exports a shop-wise dispatch
+report per month, one row per individual transport pass/indent, not an
+aggregate. A country-liquor indent's quantities come broken down by liquor
+strength (25% V/V, 36% V/V, ...); a foreign-liquor indent's don't, so that
+breakdown lives in a child table instead of six columns a foreign-liquor row
+never fills in.
+
+```sql
+CREATE TABLE dispatches (
+    id                       BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    district_id              BIGINT NOT NULL REFERENCES districts(id),
+    financial_year_id        BIGINT NOT NULL REFERENCES financial_years(id),
+    shop_id                  BIGINT NOT NULL REFERENCES shops(id),          -- retail side
+    wholesale_license_type   CITEXT NOT NULL,     -- 'FL2' | 'CL2', as printed on the wholesale license
+    wholesale_license_number TEXT NOT NULL,
+    wholesale_entity_name    TEXT NOT NULL,
+    circle_sector            CITEXT,
+    indent_number            TEXT NOT NULL UNIQUE,
+    indent_received_at       TIMESTAMPTZ,
+    indent_accepted_at       TIMESTAMPTZ,
+    transport_pass_issued_at TIMESTAMPTZ,
+    tp_reference_no          TEXT,
+    requested_cases          NUMERIC(18,3),       -- NULL for a country-liquor indent: see dispatch_strength_lines
+    requested_bottles        NUMERIC(18,3),       -- foreign-liquor indents only
+    requested_bulk_litres    NUMERIC(18,3),       -- NULL for a country-liquor indent: see dispatch_strength_lines
+    dispatched_cases         NUMERIC(18,3),
+    dispatched_bottles       NUMERIC(18,3),
+    dispatched_bulk_litres   NUMERIC(18,3) NOT NULL,
+    duty_fee_inr             NUMERIC(18,2) NOT NULL,
+    published_at             TIMESTAMPTZ NULL,
+    source_ref               TEXT,
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+    deleted_at               TIMESTAMPTZ NULL
+);
+
+CREATE TABLE dispatch_strength_lines (     -- country-liquor per-strength breakdown
+    id                     BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    dispatch_id            BIGINT NOT NULL REFERENCES dispatches(id) ON DELETE CASCADE,
+    strength_label         TEXT NOT NULL,        -- '25% V/V' | '36% V/V' | '42.8% V/V 100 ML' | ...
+    requested_cases        NUMERIC(18,3),
+    requested_bulk_litres  NUMERIC(18,3),
+    dispatched_cases       NUMERIC(18,3),
+    dispatched_bulk_litres NUMERIC(18,3),
+    UNIQUE (dispatch_id, strength_label)
+    -- visibility inherited from dispatches.published_at, same as shop_years from shops
+);
+```
+
+`etl/sources/iescms_dispatch.py` reads both report layouts (`read_fl_rows`,
+`read_cl_rows`) and upserts a `shops` row for the retail side alongside each
+`dispatches` row — the shop dimension isn't seeded separately for this
+source, it's built from the same report. `indent_number` is the natural key
+for `dispatches`; the IESCMS report already guarantees it's unique, so a
+re-run of the same file changes no counts. Both tables set `published_at`
+at import time — an IESCMS export is the department's own live system
+record, not a draft submission that needs a separate review step before an
+analyst can query it. Registered as two `etl.source_registry` rows (source
+`iescms_dispatch`, one per report layout), same as any other source;
+`OPERATOR_SETUP.md` §Data bank has the exact commands.
+
 ### Reference tables
 
 ```sql

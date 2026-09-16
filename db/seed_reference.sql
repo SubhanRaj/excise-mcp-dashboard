@@ -139,16 +139,27 @@ INSERT INTO financial_years (label, start_year) VALUES
   ('FY2022-23', 2022),
   ('FY2023-24', 2023),
   ('FY2024-25', 2024),
-  ('FY2025-26', 2025)
+  ('FY2025-26', 2025),
+  ('FY2026-27', 2026)
 ON CONFLICT (start_year) DO NOTHING;
 
--- license_categories. No published_at column.
+-- license_categories. No published_at column. CL/FL/BEER/BWFL/MODEL are the
+-- broad kinds; the retail-license-plate codes below (added for the IESCMS
+-- shop-wise dispatch import, DATA_PIPELINE.md §Dispatches) are the specific
+-- sub-types those broad kinds cover on an actual license.
 INSERT INTO license_categories (code, name, kind) VALUES
   ('CL', 'Country Liquor', 'country_liquor'),
   ('FL', 'Foreign Liquor', 'foreign_liquor'),
   ('BEER', 'Beer', 'beer'),
   ('BWFL', 'Bottled Wholesale Foreign Liquor', 'foreign_liquor'),
-  ('MODEL', 'Model Shop', 'model_shop')
+  ('MODEL', 'Model Shop', 'model_shop'),
+  ('FL2', 'Foreign Liquor Wholesale', 'wholesale'),
+  ('CL2', 'Country Liquor Wholesale', 'wholesale'),
+  ('FL5DB', 'Composite (Foreign + Country Liquor)', 'composite'),
+  ('FL4A', 'Model Shop', 'model_shop'),
+  ('FL4C', 'Premium Retail Vend', 'premium_retail_vend'),
+  ('CL5C', 'Country Liquor', 'country_liquor'),
+  ('CL5CC', 'Country Liquor with Beer', 'composite')
 ON CONFLICT (code) DO NOTHING;
 
 -- Reconciliation: the counts the ROADMAP Milestone 1 "Done when" calls for.

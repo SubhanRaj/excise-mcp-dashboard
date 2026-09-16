@@ -172,6 +172,53 @@ CREATE TABLE IF NOT EXISTS shop_years (                  -- quota / settlement p
 );
 
 -- ---------------------------------------------------------------------------
+-- Dispatches (IESCMS wholesale-to-retail transport-pass log, DATA_PIPELINE.md
+-- §Dispatches) — one row per indent/transport pass, not an aggregate. A
+-- country-liquor indent breaks its quantities down by liquor strength; that
+-- part lives in dispatch_strength_lines instead of widening this table with
+-- six mostly-empty columns a foreign-liquor indent never uses.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS dispatches (
+    id                       BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    district_id              BIGINT NOT NULL REFERENCES districts(id),
+    financial_year_id        BIGINT NOT NULL REFERENCES financial_years(id),
+    shop_id                  BIGINT NOT NULL REFERENCES shops(id),          -- retail side
+    wholesale_license_type   CITEXT NOT NULL,     -- 'FL2' | 'CL2', as printed on the wholesale license
+    wholesale_license_number TEXT NOT NULL,
+    wholesale_entity_name    TEXT NOT NULL,
+    circle_sector            CITEXT,
+    indent_number            TEXT NOT NULL UNIQUE,
+    indent_received_at       TIMESTAMPTZ,
+    indent_accepted_at       TIMESTAMPTZ,
+    transport_pass_issued_at TIMESTAMPTZ,
+    tp_reference_no          TEXT,
+    requested_cases          NUMERIC(18,3),       -- NULL for a country-liquor indent: see dispatch_strength_lines
+    requested_bottles        NUMERIC(18,3),       -- foreign-liquor indents only; country liquor has no bottle count
+    requested_bulk_litres    NUMERIC(18,3),       -- NULL for a country-liquor indent: see dispatch_strength_lines
+    dispatched_cases         NUMERIC(18,3),
+    dispatched_bottles       NUMERIC(18,3),
+    dispatched_bulk_litres   NUMERIC(18,3) NOT NULL,
+    duty_fee_inr             NUMERIC(18,2) NOT NULL,
+    published_at             TIMESTAMPTZ NULL,
+    source_ref               TEXT,
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+    deleted_at               TIMESTAMPTZ NULL
+);
+
+CREATE TABLE IF NOT EXISTS dispatch_strength_lines (     -- country-liquor per-strength breakdown
+    id                     BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    dispatch_id            BIGINT NOT NULL REFERENCES dispatches(id) ON DELETE CASCADE,
+    strength_label         TEXT NOT NULL,        -- '25% V/V' | '36% V/V' | '42.8% V/V 100 ML' | ...
+    requested_cases        NUMERIC(18,3),
+    requested_bulk_litres  NUMERIC(18,3),
+    dispatched_cases       NUMERIC(18,3),
+    dispatched_bulk_litres NUMERIC(18,3),
+    UNIQUE (dispatch_id, strength_label)
+);
+
+-- ---------------------------------------------------------------------------
 -- Reference tables
 -- ---------------------------------------------------------------------------
 

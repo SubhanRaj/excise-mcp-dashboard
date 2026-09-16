@@ -12,7 +12,7 @@ import structlog
 from etl import db, loader, quarantine
 from etl.sources import csv as csv_source
 from etl.sources import excel as excel_source
-from etl.sources import pdf_pipeline
+from etl.sources import iescms_dispatch, pdf_pipeline
 from etl.sources.base import RawRow
 
 log = structlog.get_logger()
@@ -94,11 +94,26 @@ async def _run_source(conn: asyncpg.Connection, registry_row: asyncpg.Record) ->
         registry_row["source_ref"],
     )
 
-    if registry_row["source"] == "pdf_pipeline":
+    if registry_row["source"] in ("pdf_pipeline", "iescms_dispatch"):
         error: str | None = None
         try:
-            counts = await pdf_pipeline.sync(conn, run_id)
-            seen, upserted, quarantined = counts.seen, counts.upserted, counts.quarantined
+            if registry_row["source"] == "pdf_pipeline":
+                pdf_counts = await pdf_pipeline.sync(conn, run_id)
+                seen, upserted, quarantined = (
+                    pdf_counts.seen,
+                    pdf_counts.upserted,
+                    pdf_counts.quarantined,
+                )
+            else:
+                # source_ref is "<workbook path>#fl" or "#cl" — the report layout
+                # rides in source_ref the same way the plain excel source's sheet name does.
+                path, _, report_kind = registry_row["source_ref"].rpartition("#")
+                iescms_counts = await iescms_dispatch.sync(conn, run_id, path, report_kind)
+                seen, upserted, quarantined = (
+                    iescms_counts.seen,
+                    iescms_counts.upserted,
+                    iescms_counts.quarantined,
+                )
         except Exception as exc:  # noqa: BLE001 — surfaced via the typed run row, not a crash
             seen = upserted = quarantined = 0
             error = str(exc)

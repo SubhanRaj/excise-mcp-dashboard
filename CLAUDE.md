@@ -197,6 +197,21 @@ and the browser refused to execute the HTML error page it got back instead,
 on every single page load. `php artisan flasher:install` publishes it, and
 it is committed the same way `public/vendor/tabler-icons/` already is.
 
+The first real data import landed: an IESCMS shop-wise wholesale-to-retail
+dispatch report for August 2026, Lucknow — a live-system export, one row per
+transport pass, not the annual NITI reconciliation `sales_volumes` was built
+for. It doesn't fit either existing fact table, so it gets two new ones,
+`dispatches` and a `dispatch_strength_lines` child table for the
+country-liquor report's per-strength breakdown (`DATA_PIPELINE.md`
+§Dispatches). `license_categories` gained the specific retail/wholesale
+codes the report actually uses (FL2, CL2, FL5DB, FL4A, FL4C, CL5C, CL5CC)
+alongside the five broad kinds already there, and `financial_years` gained
+FY2026-27. `etl/sources/iescms_dispatch.py` upserts the retail shop
+dimension and the dispatch rows together, keyed on the report's own indent
+number so a re-run changes nothing. Applying the schema changes needs the
+operator's `sudo -u postgres` step (`OPERATOR_SETUP.md` §Data bank) before
+the import itself can run.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures
