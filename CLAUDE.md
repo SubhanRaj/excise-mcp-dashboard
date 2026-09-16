@@ -208,9 +208,56 @@ codes the report actually uses (FL2, CL2, FL5DB, FL4A, FL4C, CL5C, CL5CC)
 alongside the five broad kinds already there, and `financial_years` gained
 FY2026-27. `etl/sources/iescms_dispatch.py` upserts the retail shop
 dimension and the dispatch rows together, keyed on the report's own indent
-number so a re-run changes nothing. Applying the schema changes needs the
-operator's `sudo -u postgres` step (`OPERATOR_SETUP.md` §Data bank) before
-the import itself can run.
+number so a re-run changes nothing. The August 2026 Lucknow import has run:
+9,322 dispatch rows and 25,200 country-liquor strength-line rows are live in
+`analytics.dispatches` / `analytics.dispatch_strength_lines`, with one
+trailing blank row correctly quarantined rather than inserted.
+
+Hand-testing surfaced two more live bugs past what the merged test suites
+covered. Chat's composer went missing on screen (the textarea and Send
+button were still in the rendered HTML, just squeezed to a few pixels wide):
+the model-picker `<select>` carries `w-auto` to keep its own width, but
+`field-input`'s `@apply w-full` (`resources/views/components/head.blade.php`)
+comes later in the Tailwind Play CDN's runtime stylesheet and wins the
+cascade at equal specificity, so the select claimed close to the full row
+width with `flex-shrink-0` refusing to give any of it back. Same fix as the
+admin search boxes' padding override before it: Tailwind's `!` modifier,
+`!w-auto` instead of `w-auto` (`chat.blade.php`).
+
+Pulse and Telescope both started 401ing a genuinely logged-in admin,
+underneath — not instead of — the `IsAdmin`/`Telescope::auth()` checks
+already documented in `SECURITY.md` §3. Both packages now ship
+`laravel/sentinel`, a bundled middleware that runs before session/auth even
+starts and denies any request reaching them through a trusted reverse proxy
+from a public IP while `APP_ENV=local` — a guard against a local-only
+dashboard leaking through a forgotten tunnel. This box's Cloudflare Tunnel
+exposure is deliberate and already gated by real login, so the heuristic was
+a false positive: `AppServiceProvider::configureSentinel()` registers a
+`Sentinel::extend()` driver for both `pulse` and `telescope` that always
+authorizes, leaving the actual admin check — which the false positive ran
+ahead of, not in place of — as the only gate.
+
+A round of hands-on Chat testing surfaced four more fixes. The model
+picker offered Qwen alongside Llama — `Chat::render()` filtered the
+registry only by whether Ollama reported a model pulled, not by `role`, so
+the coder model meant only for SQL/plot planning showed up as a
+conversational choice; it now filters to `role: chat` first
+(`MCP_ENGINES.md` §`ChatRequest`). A plain "hi" got back Llama's own
+tool-call deliberation instead of a greeting — "No tool call is needed as
+it's a greeting..." — since every token the model emits is streamed
+straight to the user with nothing held back; `CHAT_SYSTEM_PROMPT` now tells
+it directly not to narrate that decision (`MCP_ENGINES.md` §Tools). The
+composer textarea stayed one fixed row regardless of message length —
+it now grows with the message up to a capped height, and Enter sends while
+Shift+Enter still inserts a newline, matching the composer conventions of
+other chat products. And a new conversation had no title, staying
+"New conversation" in the rail forever — `Chat::send()` now sets `title`
+from the first message, truncated to 60 characters. Neither Claude,
+ChatGPT, nor Gemini actually put a readable slug in the chat URL despite
+that being the ask that prompted this — all three keep an opaque id there
+too — so the URL itself stays the plain ULID (`CLAUDE.md`'s existing
+ULID route-binding convention, restated below, is unchanged); only the
+title was missing.
 
 ## What this project is
 

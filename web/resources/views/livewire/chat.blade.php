@@ -93,14 +93,16 @@
             <form wire:submit="send" x-on:submit="onSubmit()"
                   class="sticky bottom-0 -mx-4 -mb-4 mt-2 bg-white dark:bg-slate-800 border-t border-slate-200 dark:border-slate-700 p-3 flex items-end gap-2">
                 @if(count($models) > 1)
-                <select wire:model="model" class="field-input w-auto text-xs flex-shrink-0">
+                <select wire:model="model" class="field-input !w-auto text-xs flex-shrink-0">
                     @foreach($models as $key => $m)
                     <option value="{{ $key }}">{{ $m['label'] }}</option>
                     @endforeach
                 </select>
                 @endif
-                <textarea wire:model="message" rows="1" placeholder="Ask anything..."
-                          class="field-input flex-1 resize-none @error('message') field-error @enderror"></textarea>
+                <textarea wire:model="message" x-ref="composer" rows="1" placeholder="Ask anything..."
+                          x-on:input="autoGrow($el)"
+                          x-on:keydown.enter="if (! $event.shiftKey) { $event.preventDefault(); $el.closest('form').requestSubmit(); }"
+                          class="field-input flex-1 resize-none max-h-40 overflow-y-auto @error('message') field-error @enderror"></textarea>
                 @error('message') <p class="field-err-msg">{{ $message }}</p> @enderror
                 <button type="submit" wire:loading.attr="disabled" wire:target="send"
                         class="bg-govviolet-600 hover:bg-govviolet-700 disabled:opacity-50 text-white text-sm font-semibold py-2.5 px-4 rounded-lg transition-colors flex-shrink-0">
@@ -141,12 +143,17 @@
             renderMarkdown(text) {
                 return DOMPurify.sanitize(marked.parse(text ?? ''));
             },
+            autoGrow(el) {
+                el.style.height = 'auto';
+                el.style.height = el.scrollHeight + 'px';
+            },
             onSubmit() {
                 this.streaming = true;
                 this.liveUserMessage = '';
                 this.liveAssistantText = '';
                 this.liveToolCalls = [];
                 this.liveError = null;
+                this.$nextTick(() => this.$refs.composer.style.height = 'auto');
             },
             init() {
                 // wire:key changes the DOM node (and re-runs init()) on every conversation

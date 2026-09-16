@@ -304,9 +304,10 @@ class ChatRequest(BaseModel):
 `model` is a key from the model registry (`config.py`), not a free-form Ollama
 tag. An unknown key is rejected before any Ollama call. The registry is the
 same idea as `~/Sites/pdf-markdown-pipeline`'s `config/ocr.php`: `key`,
-`label`, `role` (`sql` / `chat` / `embed`), Ollama tag. `/health` reports
-which registry models are actually pulled, and the Livewire picker offers only
-those.
+`label`, `role` (`sql` / `chat` / `embed`), Ollama tag. The Livewire picker
+offers only registry entries with `role: chat` that `/health` also reports as
+pulled — the coder model that plans SQL and plot scripts is never a
+conversational choice, regardless of what `/health` reports for it.
 
 ### Streamed events
 
@@ -328,7 +329,13 @@ message}`). Laravel pipes these lines to the browser unmodified and persists
 | `make_chart` | `{spec: str, data_ref: str}` | Runs a generated Python plot script over the last `run_sql_query` result in the `bwrap` sandbox; returns artifact refs | same sandbox, same caps; `data_ref` must point at a result from this conversation |
 
 Ollama's native tool-calling (`tools=[...]` on `/api/chat`) drives this;
-Qwen 2.5 and Llama 3.1 both support it. The loop:
+Qwen 2.5 and Llama 3.1 both support it. A live chat turn on a plain greeting
+surfaced Llama narrating its own tool-call decision as if it were the reply
+— "No tool call is needed as it's a greeting..." streamed to the user token
+by token, since every `content` delta the model emits is streamed as-is
+with nothing held back. `CHAT_SYSTEM_PROMPT` now tells the model directly
+not to narrate that decision: call a tool silently or write the answer
+itself, nothing else. The loop:
 
 ```
 messages = system + history + [user message]
@@ -425,6 +432,10 @@ Same as `/query`: an in-memory `deque` per `conversation_id`, capped at
 `CHAT_CONTEXT_TURNS` or ~3k tokens. Laravel also resends trimmed history and
 owns the durable record (`conversations` / `messages` / `message_tool_calls`
 in its MariaDB). An orchestrator restart loses only the in-memory window.
+A new conversation's `title` (shown in the conversation rail and the browser
+tab) is the Laravel side's own concern — `Chat::send()` sets it from the
+first message, truncated to 60 characters, entirely independent of the
+orchestrator.
 
 ### Model roles, restated
 

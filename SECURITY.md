@@ -469,6 +469,20 @@ open to any visitor. Neither is left at that default:
 Verified against real accounts, not just read from the source: a signed-in
 non-admin gets 403 on both `/pulse` and `/telescope`; an Admin gets 200.
 
+Both packages also bundle `laravel/sentinel`, a middleware that runs before
+session/auth starts and denies any request reaching them through a trusted
+reverse proxy from a public IP while `APP_ENV=local` — a guard against a
+local-only dashboard leaking through a forgotten tunnel. This box's tunnel
+exposure is deliberate, so the heuristic is a false positive here: it denied
+a genuinely signed-in Admin with a 401, ahead of the `IsAdmin` /
+`Telescope::auth()` checks above, not in place of them.
+`AppServiceProvider::configureSentinel()` registers a `Sentinel::extend()`
+driver for `pulse` and `telescope` that always authorizes, leaving those
+checks as the only real gate. Flipping `APP_ENV` away from `local` instead
+would silently break Pulse further: its own default `viewPulse` gate
+(`fn ($user = null) => $app->environment('local')`) would deny everyone,
+Admin included, the moment the environment stopped reading as `local`.
+
 ### Headers, logging, rate limits
 
 - Port `SecurityHeaders` middleware: CSP allowing Tailwind Play CDN, jsDelivr

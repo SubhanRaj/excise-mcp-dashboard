@@ -7,6 +7,7 @@ use App\Services\OrchestratorClient;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Str;
 use Livewire\Component;
 
 class Chat extends Component
@@ -43,7 +44,11 @@ class Chat extends Component
         $this->validate(['message' => ['required', 'string', 'max:4000']]);
 
         if (! $this->conversationId) {
-            $conversation = Conversation::create(['user_id' => Auth::id(), 'model' => $this->model]);
+            $conversation = Conversation::create([
+                'user_id' => Auth::id(),
+                'model' => $this->model,
+                'title' => Str::limit(trim($this->message), 60),
+            ]);
             $this->conversationId = $conversation->id;
         }
 
@@ -71,7 +76,7 @@ class Chat extends Component
             ? Conversation::with('messages.toolCalls.chartArtifact')->find($this->conversationId)
             : null;
 
-        $models = config('models.models');
+        $models = collect(config('models.models'))->where('role', 'chat')->all();
         try {
             $pulled = collect(app(OrchestratorClient::class)->health()['models'] ?? [])
                 ->where('pulled', true)
@@ -89,6 +94,9 @@ class Chat extends Component
             'conversations' => $conversations,
             'activeConversation' => $activeConversation,
             'models' => $models,
-        ])->layout('components.layout', ['pageTitle' => 'Chat', 'title' => 'Chat']);
+        ])->layout('components.layout', [
+            'pageTitle' => $activeConversation?->title ?? 'Chat',
+            'title' => $activeConversation?->title ?? 'Chat',
+        ]);
     }
 }

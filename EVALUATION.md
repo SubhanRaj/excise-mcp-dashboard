@@ -139,8 +139,10 @@ Sources: [Qwen2.5-LLM blog](https://qwenlm.github.io/blog/qwen2.5-llm/),
 - **Model registry + UI picker.** The allowed models are a config registry
   (`key`, `label`, `role`, Ollama tag), the same pattern as
   `~/Sites/pdf-markdown-pipeline`'s `config/ocr.php` and its "Run OCR" dropdown.
-  The chat composer shows a picker over the registry entries that `/health`
-  confirms are pulled; the choice rides on the `/chat` call as `model` and is
+  The chat composer shows a picker over the registry entries tagged
+  `role: chat` that `/health` also confirms are pulled — the coder model is
+  never offered there, only the one-shot form's advanced override can reach
+  it directly; the choice rides on the `/chat` call as `model` and is
   validated server-side against the registry. The one-shot analytical form
   keeps an advanced `model` override alongside `engine`. Default follows the
   task; switching mid-session costs a reload (`OLLAMA_MAX_LOADED_MODELS=1`),

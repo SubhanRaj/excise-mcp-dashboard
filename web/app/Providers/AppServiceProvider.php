@@ -14,6 +14,8 @@ use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Route;
 use Illuminate\Support\ServiceProvider;
 use Illuminate\Validation\Rules\Password;
+use Laravel\Sentinel\Drivers\Driver as SentinelDriver;
+use Laravel\Sentinel\Sentinel;
 use Livewire\Livewire;
 use Livewire\Mechanisms\HandleRequests\RequireLivewireHeaders;
 
@@ -45,6 +47,7 @@ class AppServiceProvider extends ServiceProvider
 
         $this->configureRateLimiters();
         $this->configureActivityLogging();
+        $this->configureSentinel();
 
         // Store UTC, render IST (Asia/Kolkata) — CLAUDE.md's formatting convention.
         Carbon::macro('ist', function () {
@@ -83,6 +86,29 @@ class AppServiceProvider extends ServiceProvider
         RateLimiter::for('chat', function (Request $request) {
             return Limit::perMinute(10)->by($request->user()?->id ?: $request->ip());
         });
+    }
+
+    /**
+     * laravel/pulse and laravel/telescope each wire in a Sentinel middleware that denies
+     * any request arriving through a trusted reverse proxy from a public IP while
+     * APP_ENV=local — meant to stop a local-only dashboard from leaking through a tunnel
+     * left open by accident. This box's Cloudflare Tunnel exposure is deliberate, and
+     * Pulse/Telescope are already gated by IsAdmin / Telescope::auth() regardless of
+     * environment, so the proxy heuristic is redundant here and was 401ing real admins
+     * before the app's own auth ever ran.
+     */
+    private function configureSentinel(): void
+    {
+        $alwaysAuthorized = fn () => new class(fn () => app()) extends SentinelDriver
+        {
+            public function authorize(Request $request): bool
+            {
+                return true;
+            }
+        };
+
+        Sentinel::extend('pulse', $alwaysAuthorized);
+        Sentinel::extend('telescope', $alwaysAuthorized);
     }
 
     private function configureActivityLogging(): void

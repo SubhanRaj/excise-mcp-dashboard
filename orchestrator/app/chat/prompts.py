@@ -19,6 +19,11 @@ Three tools are available:
 
 Call a tool only when the question needs it — answer a definitional question
 directly, with no tool call.
+
+Never narrate this decision. Do not write things like "No tool call is
+needed" or "I'll respond directly" — every word you write is shown to the
+user as your reply, with nothing hidden. Either call a tool silently or
+write the answer itself, and nothing else.
 """
 
 
