@@ -60,8 +60,11 @@
             @endif
 
             {{-- Live in-flight turn — shown only while streaming, cleared once the
-                 turn's persisted rows come back via syncAfterStream(). --}}
-            <template x-if="streaming">
+                 turn's persisted rows come back via syncAfterStream(). Stays mounted
+                 on a failed send too (streaming already false by then) so liveError
+                 below has something to show instead of vanishing the instant the
+                 fetch's finally block flips streaming off. --}}
+            <template x-if="streaming || liveError">
                 <div class="space-y-4">
                     <div class="flex justify-end">
                         <div class="bg-govviolet-600 text-white rounded-2xl rounded-br-sm px-4 py-2 max-w-lg text-sm whitespace-pre-wrap" x-text="liveUserMessage"></div>
