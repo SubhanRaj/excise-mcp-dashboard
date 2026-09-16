@@ -16,7 +16,15 @@ from app.kb.retrieve import retrieve as kb_retrieve
 from app.llm.client import OllamaClient, TokenUsage
 from app.llm.prompts import build_sql_prompt
 from app.pipeline import _json_safe_rows, _write_parquet
-from app.schemas import ChartArtifact, ChatToolArgumentError, SqlPlan, ToolCall, ToolResult
+from app.schemas import (
+    ChartArtifact,
+    ChatToolArgumentError,
+    RenderEmptyError,
+    SandboxViolationError,
+    SqlPlan,
+    ToolCall,
+    ToolResult,
+)
 from app.sql.guard import guard_sql
 from app.sql.runner import run_sql
 
@@ -105,6 +113,11 @@ async def _make_chart(args: MakeChartArgs, *, conversation_id: str) -> ToolResul
                 scratch_dir=data_path.parent,
             )
         )
+    except (SandboxViolationError, RenderEmptyError) as e:
+        # Fed back as a failed tool result, not raised: the chat loop's own
+        # tool-call budget is the retry mechanism here — the model sees why its
+        # script failed and can call make_chart again with a corrected one.
+        return ToolResult(ok=False, summary=e.message)
     finally:
         data_path.unlink(missing_ok=True)
 

@@ -168,8 +168,21 @@ subsection under §3 has the full detail; the short version is both are now
 locked to `isAdmin()` unconditionally, verified against real accounts
 (non-admin 403, admin 200) rather than trusted from reading the source.
 `telescope:prune` runs daily via `routes/console.php`'s new `Schedule::`
-call — the first one in this app — but needs a `schedule:run` cron entry
-that doesn't exist on this box yet (`OPERATOR_SETUP.md` §Monitoring).
+call — the first one in this app — and a `schedule:run` cron entry now
+exists on this box to actually fire it (`OPERATOR_SETUP.md` §Monitoring).
+
+A live Ask question surfaced a gap in the render step: the plot-planning
+model occasionally writes a script Python rejects outright (an invalid
+Plotly keyword argument, a column name that doesn't exist), and that
+failure had no retry — the whole query failed on the model's first mistake.
+`pipeline.py`'s `run_query` now retries once, the same pattern `guard_sql`
+already uses for a rejected SQL statement: the render error and the failed
+script go back to the model, and only a second failure surfaces to the
+user. The chat `make_chart` tool had the same gap, fixed differently: its script
+arrives directly as the tool call's own argument, with no separate planning
+step to reprompt, so a render failure there comes back as a failed tool
+result instead of ending the turn. The model sees why its script failed and
+can call `make_chart` again within its own `CHAT_MAX_TOOL_CALLS` budget.
 
 ## What this project is
 

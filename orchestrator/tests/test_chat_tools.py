@@ -10,8 +10,9 @@ import pytest
 
 from app.chat import tools as chat_tools
 from app.chat.tools import MakeChartArgs, RunSqlQueryArgs, SearchKnowledgeArgs, dispatch
+from app.engines.base import RenderRequest, RenderResult
 from app.llm.client import OllamaClient
-from app.schemas import ChatToolArgumentError, SqlRejectedError, ToolCall
+from app.schemas import ChatToolArgumentError, SandboxViolationError, SqlRejectedError, ToolCall
 
 
 def _ollama_returning(response_text: str) -> OllamaClient:
@@ -81,3 +82,26 @@ async def test_make_chart_rejects_when_no_prior_result_exists() -> None:
         await dispatch(
             call, ollama=_ollama_returning("{}"), schema_card="(schema)", conversation_id="c-empty"
         )
+
+
+async def test_make_chart_returns_a_failed_tool_result_instead_of_raising(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A bad script (the model hallucinating a Plotly kwarg that doesn't exist,
+    # say) must come back as something the chat loop can feed to the model for
+    # a retry within its own tool-call budget, not end the whole turn.
+    class _FailingEngine:
+        supported_outputs = frozenset({"plotly_json"})
+
+        async def render(self, req: RenderRequest) -> RenderResult:
+            raise SandboxViolationError("exit 1: TypeError: bad kwarg")
+
+    monkeypatch.setattr(chat_tools, "get_engine", lambda name: _FailingEngine())
+    chat_tools._LAST_RESULT["c-fail"] = pd.DataFrame([{"a": 1}])
+    call = ToolCall(name="make_chart", arguments={"spec": "bad script", "data_ref": "c-fail"})
+    result = await dispatch(
+        call, ollama=_ollama_returning("{}"), schema_card="(schema)", conversation_id="c-fail"
+    )
+    assert result.ok is False
+    assert "bad kwarg" in result.summary
+    del chat_tools._LAST_RESULT["c-fail"]

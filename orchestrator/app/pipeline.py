@@ -25,6 +25,8 @@ from app.schemas import (
     PlotPlan,
     QueryRequest,
     QueryResponse,
+    RenderEmptyError,
+    SandboxViolationError,
     SqlPlan,
     SqlRejectedError,
     Stage,
@@ -146,15 +148,40 @@ async def run_query(
         outputs = _resolve_outputs([str(o) for o in plot_plan.outputs], engine.supported_outputs)
         data_path = _write_parquet(df, request_id)
         try:
-            render_result = await engine.render(
-                RenderRequest(
-                    script=plot_plan.script,
-                    data_path=data_path,
-                    outputs=outputs,
-                    title=plot_plan.title,
-                    scratch_dir=data_path.parent,
+            try:
+                render_result = await engine.render(
+                    RenderRequest(
+                        script=plot_plan.script,
+                        data_path=data_path,
+                        outputs=outputs,
+                        title=plot_plan.title,
+                        scratch_dir=data_path.parent,
+                    )
                 )
-            )
+            except (SandboxViolationError, RenderEmptyError) as first_failure:
+                reprompt = (
+                    f"{plot_prompt}\n\nThe previous script failed:\n{first_failure.message}\n"
+                    f"Previous script:\n{plot_plan.script}\n\nWrite a corrected script."
+                )
+                plot_plan = await ollama.generate_structured(
+                    model=sql_model,
+                    prompt=reprompt,
+                    response_model=PlotPlan,
+                    stage="plan_plot",
+                    usage=usage,
+                )
+                outputs = _resolve_outputs(
+                    [str(o) for o in plot_plan.outputs], engine.supported_outputs
+                )
+                render_result = await engine.render(  # a second failure propagates
+                    RenderRequest(
+                        script=plot_plan.script,
+                        data_path=data_path,
+                        outputs=outputs,
+                        title=plot_plan.title,
+                        scratch_dir=data_path.parent,
+                    )
+                )
             chart = ChartArtifact(
                 plotly_json=render_result.plotly_json,
                 files={k: str(v) for k, v in render_result.files.items()},
