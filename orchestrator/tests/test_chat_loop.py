@@ -172,6 +172,35 @@ async def test_a_bad_tool_call_argument_is_fed_back_instead_of_ending_the_turn(
     assert isinstance(events[-1], DoneEvent)
 
 
+async def test_a_silent_reply_after_a_tool_call_falls_back_to_the_tool_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Confirmed live: after a real run_sql_query call, an 8B model sometimes produces no
+    # follow-up content at all — not even a bare "{}" — on either the tool-aware attempt
+    # or the tools=[] retry. Before this fallback, the turn ended with a DoneEvent and
+    # nothing shown past the tool call card.
+    call = ToolCall(name="run_sql_query", arguments={"question": "x"})
+    ollama = _FakeOllama(
+        [
+            [_FakeChunk(content="", tool_calls=[call])],
+            [_FakeChunk(content="")],
+            [_FakeChunk(content="")],
+        ]
+    )
+
+    async def fake_dispatch(call: ToolCall, **kwargs: object) -> ToolResult:
+        return ToolResult(
+            ok=True, summary="560 row(s), columns: ['count']. Preview: [{'count': 560}]"
+        )
+
+    monkeypatch.setattr(chat_loop, "dispatch", fake_dispatch)
+
+    events = await _events(ollama)
+    tokens = "".join(e.delta for e in events if isinstance(e, TokenEvent))
+    assert tokens == "560 row(s), columns: ['count']. Preview: [{'count': 560}]"
+    assert isinstance(events[-1], DoneEvent)
+
+
 async def test_exceeding_the_tool_call_cap_raises_the_typed_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

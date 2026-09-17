@@ -376,6 +376,17 @@ that is a prefix of one of the three tool names, on the reasoning that both
 are the tool-calling template breaking down the same way, so both get the
 same one-retry-with-`tools=[]` recovery.
 
+A live turn surfaced a fourth shape of the same underlying weakness: after a
+real `run_sql_query` call succeeded, the follow-up turn produced no content
+at all — not a bare `"{}"`, genuinely empty — on both the tool-aware attempt
+and the `tools=[]` retry, leaving the user with a tool call card and nothing
+else, no answer and no `make_chart` call either. `CHAT_SYSTEM_PROMPT` already
+asks the model never to let a tool result be the last thing in the turn, but
+an 8B model cannot be relied on to follow that every time. `run_chat` now
+keeps the most recent tool result and, if both attempts still come back
+degenerate, surfaces that result's own summary as the turn's answer instead
+of ending on nothing.
+
 The loop:
 
 ```

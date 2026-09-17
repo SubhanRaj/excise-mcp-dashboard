@@ -364,6 +364,17 @@ rail — permanent delete also clears the chart artifact and its rendered
 files, which carry no database-level foreign key to their owner and would
 otherwise be left behind.
 
+A live Chat turn surfaced one more shape of the tool-calling reliability gap:
+a real `run_sql_query` call succeeded, but the model's follow-up turn came
+back with no content at all, on both the tool-aware attempt and the
+`tools=[]` retry — the user was left looking at a tool call card with no
+answer and no chart, since `make_chart` is also the model's own choice and
+it never got the chance to make one. `CHAT_SYSTEM_PROMPT` already says never
+to let a tool result be the last thing in the turn, but that's a request the
+model can silently fail, not a guarantee; `chat/loop.py` now falls back to
+the tool result's own summary as the turn's answer when both attempts come
+back empty (`MCP_ENGINES.md` §Tools).
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures

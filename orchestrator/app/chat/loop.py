@@ -97,6 +97,7 @@ async def run_chat(
     model = _select_model(request.model, settings.ollama_chat_model)
     messages = _build_messages(request.message, request.history)
     tool_calls_made = 0
+    last_tool_result: ToolResult | None = None
     usage = TokenUsage()
 
     for _ in range(settings.chat_max_tool_calls + 1):
@@ -126,6 +127,14 @@ async def run_chat(
                 if chunk.content:
                     assistant_text += chunk.content
                     yield TokenEvent(delta=chunk.content)
+            if _is_degenerate(assistant_text) and last_tool_result is not None:
+                # Both attempts came back empty — an 8B model can fail to produce any
+                # follow-up text at all after a tool result. Fall back to the tool's own
+                # summary rather than end the turn with nothing visible past the tool
+                # call card, which is what the system prompt asks the model to avoid but
+                # cannot itself guarantee.
+                assistant_text = last_tool_result.summary
+                yield TokenEvent(delta=assistant_text)
         messages.append({"role": "assistant", "content": assistant_text})
 
         if not pending_calls:
@@ -154,6 +163,7 @@ async def run_chat(
                 # end the whole turn the way it did before: the model sees why its
                 # arguments were rejected and can call the tool again correctly.
                 result = ToolResult(ok=False, summary=e.message)
+            last_tool_result = result
             tool_calls_made += 1
             yield ToolResultEvent(name=call.name, ok=result.ok, summary=result.summary)
             if result.chart is not None:
