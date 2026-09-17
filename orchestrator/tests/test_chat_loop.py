@@ -6,7 +6,14 @@ from dataclasses import dataclass, field
 import pytest
 
 from app.chat import loop as chat_loop
-from app.chat.loop import ChartEvent, DoneEvent, ToolCallEvent, ToolResultEvent, run_chat
+from app.chat.loop import (
+    ChartEvent,
+    DoneEvent,
+    TokenEvent,
+    ToolCallEvent,
+    ToolResultEvent,
+    run_chat,
+)
 from app.schemas import ChartArtifact, ChatRequest, ChatToolLoopExceededError, ToolCall, ToolResult
 
 
@@ -52,6 +59,24 @@ async def test_a_turn_with_no_tool_call_ends_at_done() -> None:
     events = await _events(ollama)
     assert isinstance(events[-1], DoneEvent)
     assert events[-1].tool_calls_count == 0
+
+
+async def test_a_bare_brace_reply_retries_once_without_tools() -> None:
+    # llama3.1's tool-calling template sometimes answers a trivial message
+    # with a bare "{}" instead of prose, once tool schemas are attached —
+    # confirmed live against Ollama. The loop must not show that to the
+    # user; it retries the same turn once with tools=[] instead.
+    ollama = _FakeOllama(
+        [
+            [_FakeChunk(content="{"), _FakeChunk(content="}")],
+            [_FakeChunk(content="Hello! How can I help?")],
+        ]
+    )
+    events = await _events(ollama)
+    tokens = "".join(e.delta for e in events if isinstance(e, TokenEvent))
+    assert tokens == "Hello! How can I help?"
+    assert not any(isinstance(e, ToolCallEvent) for e in events)
+    assert isinstance(events[-1], DoneEvent)
 
 
 async def test_a_turn_with_one_tool_call_dispatches_and_continues(

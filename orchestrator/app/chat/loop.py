@@ -48,6 +48,16 @@ class DoneEvent:
 ChatEvent = TokenEvent | ToolCallEvent | ToolResultEvent | ChartEvent | DoneEvent
 
 
+def _is_degenerate(text: str) -> bool:
+    """llama3.1's tool-calling template occasionally answers a trivial message
+    (e.g. "hi") with a bare "{}" instead of prose or a real tool call, once
+    CHAT_TOOL_SCHEMAS is attached to the turn — confirmed directly against
+    Ollama's /api/chat: the identical prompt without `tools` replies normally.
+    Brace/whitespace-only output is that failure, not a real answer.
+    """
+    return text.strip().strip("{}") == ""
+
+
 def _build_messages(message: str, history: list[ChatTurn]) -> list[dict[str, object]]:
     messages: list[dict[str, object]] = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}]
     messages.extend({"role": t.role, "content": t.content} for t in history)
@@ -69,14 +79,31 @@ async def run_chat(
 
     for _ in range(settings.chat_max_tool_calls + 1):
         assistant_text = ""
+        held = ""
         pending_calls: list[ToolCall] = []
         async for chunk in ollama.chat_stream(
             model=model, messages=messages, tools=CHAT_TOOL_SCHEMAS, usage=usage
         ):
             if chunk.content:
                 assistant_text += chunk.content
-                yield TokenEvent(delta=chunk.content)
+                held += chunk.content
+                if not _is_degenerate(held):
+                    yield TokenEvent(delta=held)
+                    held = ""
             pending_calls.extend(chunk.tool_calls)
+
+        if not pending_calls and _is_degenerate(assistant_text):
+            # The turn didn't need a tool and the model's tool-aware reply came
+            # back degenerate — retry once as a plain chat call, same
+            # retry-once shape guard_sql/render already use for a bad first
+            # attempt.
+            assistant_text = ""
+            async for chunk in ollama.chat_stream(
+                model=model, messages=messages, tools=[], usage=usage
+            ):
+                if chunk.content:
+                    assistant_text += chunk.content
+                    yield TokenEvent(delta=chunk.content)
         messages.append({"role": "assistant", "content": assistant_text})
 
         if not pending_calls:

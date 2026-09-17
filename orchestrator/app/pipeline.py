@@ -27,6 +27,7 @@ from app.schemas import (
     QueryResponse,
     RenderEmptyError,
     SandboxViolationError,
+    SqlExecutionError,
     SqlPlan,
     SqlRejectedError,
     Stage,
@@ -94,6 +95,7 @@ async def run_query(
             await on_stage(stage)
 
     t0 = time.monotonic()
+    await emit(Stage(name="plan_sql", status="running"))
     prompt = build_sql_prompt(request.question, schema_card, request.history)
     sql_plan = await ollama.generate_structured(
         model=sql_model, prompt=prompt, response_model=SqlPlan, stage="plan_sql", usage=usage
@@ -114,7 +116,23 @@ async def run_query(
     await emit(Stage(name="guard_sql", status="ok"))
 
     t0 = time.monotonic()
-    rows = await run_sql(guard_result.sql, request.row_limit)
+    await emit(Stage(name="run_sql", status="running"))
+    try:
+        rows = await run_sql(guard_result.sql, request.row_limit)
+    except SqlExecutionError as first_run_failure:
+        # Passing guard_sql only proves the statement is a single read-only
+        # SELECT — a hallucinated table/column or an ambiguous cast (ask
+        # Postgres, not a string filter) only surfaces once it actually runs.
+        # Same reprompt-and-retry-once shape as guard_sql's own rejection above.
+        reprompt = (
+            f"{prompt}\n\nThe previous SQL failed against the database: "
+            f"{first_run_failure.message}\nWrite a corrected single read-only SELECT."
+        )
+        sql_plan = await ollama.generate_structured(
+            model=sql_model, prompt=reprompt, response_model=SqlPlan, stage="plan_sql", usage=usage
+        )
+        guard_result = guard_sql(sql_plan.sql, request.row_limit)
+        rows = await run_sql(guard_result.sql, request.row_limit)  # a second failure propagates
     timings_ms["run_sql"] = int((time.monotonic() - t0) * 1000)
     await emit(Stage(name="run_sql", status="ok", ms=timings_ms["run_sql"]))
 
@@ -124,9 +142,14 @@ async def run_query(
 
     chart: ChartArtifact | None = None
     engine_used = "python"
-    if row_count > 0:
+    # A single-row result (typically a bare COUNT(*)) has no dimension to plot — asking
+    # the model for a chart script anyway is how a "how many X" question ended up
+    # crashing Octave's print() with "no axes object in figure": there was nothing to
+    # draw. Same no-hallucination reasoning as the zero-row summary skip below.
+    if row_count > 1:
         avail = available_engines()
         t0 = time.monotonic()
+        await emit(Stage(name="plan_plot", status="running"))
         plot_prompt = build_plot_prompt(
             request.question, list(df.columns), [str(t) for t in df.dtypes], row_count, avail
         )
@@ -144,6 +167,7 @@ async def run_query(
         await emit(Stage(name="plan_plot", status="ok", ms=timings_ms["plan_plot"]))
 
         t0 = time.monotonic()
+        await emit(Stage(name="render", status="running"))
         engine = get_engine(engine_used)
         outputs = _resolve_outputs([str(o) for o in plot_plan.outputs], engine.supported_outputs)
         data_path = _write_parquet(df, request_id)
@@ -192,6 +216,7 @@ async def run_query(
         await emit(Stage(name="render", status="ok", ms=timings_ms["render"]))
 
     t0 = time.monotonic()
+    await emit(Stage(name="summarize", status="running"))
     if row_count == 0:
         # Asking the model to narrate zero rows invites exactly what an LLM does with
         # nothing to work from: an invented trend. Same no-hallucination rule kb/retrieve.py

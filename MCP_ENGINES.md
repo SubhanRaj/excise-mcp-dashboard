@@ -136,7 +136,8 @@ flowchart TD
     G -->|reject, reason to planner| P1
     G -->|rejected twice| Err
     G -->|ok — tables_used recorded| RS
-    RS -->|DB error| Err
+    RS -->|DB error, reason to planner| P1
+    RS -->|DB error twice| Err
     RS --> P2 --> R
     R -->|sandbox timeout / violation / no output| Err
     R --> S --> Out
@@ -155,7 +156,11 @@ flowchart TD
 3. **run_sql** — `sql/runner.py`: acquire from the read-only `asyncpg` pool,
    `BEGIN READ ONLY`, `SET LOCAL statement_timeout = '10s'`,
    `SET LOCAL idle_in_transaction_session_timeout = '15s'`, execute, fetch up
-   to `row_limit`, rollback. DB errors surface as `SQL error` with the
+   to `row_limit`, rollback. `guard_sql` only proves the statement is a
+   single read-only `SELECT` — it does not know whether the tables and
+   columns it references exist, so a hallucinated table or an ambiguous cast
+   only surfaces here, as a genuine Postgres error. One re-plan with the
+   error message appended, then a second failure is `SQL error` with the
    Postgres message.
 4. **plan_plot** — prompt Ollama with the result columns, dtypes, row count,
    and the question; require a `PlotPlan`
@@ -325,7 +330,7 @@ message}`). Laravel pipes these lines to the browser unmodified and persists
 | Tool | Arguments | Does | Guardrails |
 |---|---|---|---|
 | `search_knowledge` | `{query: str, k?: int}` | Retrieves from `kb.chunks` (§Retrieval), returns chunk text + `heading_path` + `source_url` | read-only; `withdrawn_at IS NULL`; `k` capped at 12 |
-| `run_sql_query` | `{sql: str}` or `{question: str}` | If `question`, first plan SQL like `/query`'s `plan_sql`; then `guard.py` -> `runner.py` (READ ONLY txn, statement timeout, row cap); returns column list + row count + a small preview | identical guard + read-only role as the one-shot path; no writes possible |
+| `run_sql_query` | `{sql: str}` or `{question: str}` | If `question`, first plan SQL like `/query`'s `plan_sql`; then `guard.py` -> `runner.py` (READ ONLY txn, statement timeout, row cap); returns column list + row count + a small preview | identical guard + read-only role as the one-shot path; no writes possible; a rejected or failing statement comes back as a failed tool result (see below), not a turn-ending exception |
 | `make_chart` | `{spec: str, data_ref: str}` | Runs a generated Python plot script over the last `run_sql_query` result in the `bwrap` sandbox; returns artifact refs | same sandbox, same caps; `data_ref` must point at a result from this conversation |
 
 Ollama's native tool-calling (`tools=[...]` on `/api/chat`) drives this;
@@ -335,7 +340,23 @@ surfaced Llama narrating its own tool-call decision as if it were the reply
 by token, since every `content` delta the model emits is streamed as-is
 with nothing held back. `CHAT_SYSTEM_PROMPT` now tells the model directly
 not to narrate that decision: call a tool silently or write the answer
-itself, nothing else. The loop:
+itself, nothing else. A second, related failure surfaced the same way:
+attaching `CHAT_TOOL_SCHEMAS` at all sometimes makes Llama answer a trivial
+message with a bare `"{}"` instead of prose or a real tool call — confirmed
+directly against Ollama, since the identical prompt with no `tools=`
+answers normally. `chat/loop.py` holds back a reply that is nothing but
+braces/whitespace instead of streaming it, and on a turn that made no tool
+call and produced only that, retries once with `tools=[]`.
+
+A tool call that fails — a rejected or erroring `run_sql_query` statement, a
+`make_chart` script the sandbox rejects — comes back as a failed tool result
+(`{name, ok: false, summary}`), not a raised exception that would end the
+turn. The model sees why its call failed and can call the tool again with a
+correction, inside its own `CHAT_MAX_TOOL_CALLS` budget — the same recovery
+`/query`'s `guard_sql` and `run_sql` retries give the one-shot pipeline,
+adapted to the chat loop's own turn-taking instead of a fixed one-shot retry.
+
+The loop:
 
 ```
 messages = system + history + [user message]

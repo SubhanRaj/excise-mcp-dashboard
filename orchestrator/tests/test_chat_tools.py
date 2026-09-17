@@ -12,7 +12,7 @@ from app.chat import tools as chat_tools
 from app.chat.tools import MakeChartArgs, RunSqlQueryArgs, SearchKnowledgeArgs, dispatch
 from app.engines.base import RenderRequest, RenderResult
 from app.llm.client import OllamaClient
-from app.schemas import ChatToolArgumentError, SandboxViolationError, SqlRejectedError, ToolCall
+from app.schemas import ChatToolArgumentError, SandboxViolationError, ToolCall
 
 
 def _ollama_returning(response_text: str) -> OllamaClient:
@@ -53,16 +53,20 @@ async def test_dispatch_rejects_malformed_tool_arguments() -> None:
         )
 
 
-async def test_run_sql_query_with_a_bad_plan_raises_the_same_guard_error() -> None:
-    # Same rejection path /query's guard already has a test for — not a new one.
+async def test_run_sql_query_with_a_bad_plan_returns_a_failed_tool_result() -> None:
+    # Same rejection path /query's guard already has a test for. Unlike /query
+    # (a one-shot pipeline with no one left to ask), a chat turn returns this
+    # as a failed tool result rather than raising: the model sees why the SQL
+    # was rejected and can call run_sql_query again within its own tool-call
+    # budget, the same recovery make_chart already gets for a bad script.
     plan = json.dumps(
         {"sql": "DELETE FROM analytics.shops", "rationale": "x", "expected_columns": []}
     )
     call = ToolCall(name="run_sql_query", arguments={"question": "delete everything"})
-    with pytest.raises(SqlRejectedError):
-        await dispatch(
-            call, ollama=_ollama_returning(plan), schema_card="(schema)", conversation_id="c1"
-        )
+    result = await dispatch(
+        call, ollama=_ollama_returning(plan), schema_card="(schema)", conversation_id="c1"
+    )
+    assert result.ok is False
 
 
 async def test_make_chart_rejects_a_data_ref_for_a_different_conversation() -> None:

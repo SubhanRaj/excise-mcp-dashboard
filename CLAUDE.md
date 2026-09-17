@@ -259,6 +259,29 @@ too — so the URL itself stays the plain ULID (`CLAUDE.md`'s existing
 ULID route-binding convention, restated below, is unchanged); only the
 title was missing.
 
+Live use past that round surfaced a real answer going wrong silently, and
+chat going silent outright. Asking Ask "how many composite shops are in
+Lucknow in August 2026" returned zero, because the generated SQL filtered
+`analytics.shops` on `created_at` — when that row was last loaded into the
+database, not a business date; `shops` is a present-day snapshot with no
+time dimension at all, and `schema_card.py`'s `VIEW_NOTES` had no entry for
+`analytics.dispatches`, the view that actually carries a real
+`transport_pass_issued_at` date, even though it has held the live August
+2026 IESCMS import since the dispatch-report milestone. `VIEW_NOTES` now
+says so directly for both views (`MCP_ENGINES.md` §Pipeline stages). And a
+plain "hi" in Chat sometimes got back nothing but a literal `"{}"` — Llama's
+tool-calling degenerates a trivial message into a bare `{}` once
+`CHAT_TOOL_SCHEMAS` is attached to the turn, confirmed directly against
+Ollama (the identical prompt with no `tools=` replies normally);
+`chat/loop.py` now holds back a brace-only reply instead of streaming it and
+retries the turn once with `tools=[]` (`MCP_ENGINES.md` §Tools). Underneath
+both: a real Postgres execution error — a hallucinated table, an ambiguous
+column — had no recovery at all, unlike `guard_sql`'s own rejection, which
+already got one re-plan. `run_query` now re-plans once on a `run_sql`
+failure the same way, and the chat `run_sql_query` tool returns a failed
+tool result instead of ending the turn, so the model can correct itself
+within its own tool-call budget the way `make_chart` already could.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures

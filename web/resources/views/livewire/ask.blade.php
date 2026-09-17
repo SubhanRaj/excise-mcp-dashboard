@@ -21,6 +21,13 @@
             if (this.poller) clearInterval(this.poller);
             this.poller = null;
         },
+        // wire:navigate swaps the page body without a real reload, which never fires this
+        // Alpine component's own teardown unless it's wired to destroy() — without it, the
+        // poller kept fetching /ask/{id}/stream forever from whatever page was navigated to
+        // next, same class of leak chatThread() already guards against in chat.blade.php.
+        destroy() {
+            this.stop();
+        },
         poll() {
             fetch(`/ask/${this.queryId}/stream`)
                 .then((r) => r.json())

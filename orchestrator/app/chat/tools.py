@@ -21,7 +21,9 @@ from app.schemas import (
     ChatToolArgumentError,
     RenderEmptyError,
     SandboxViolationError,
+    SqlExecutionError,
     SqlPlan,
+    SqlRejectedError,
     ToolCall,
     ToolResult,
 )
@@ -81,8 +83,16 @@ async def _run_sql_query(
             usage=usage,
         )
         sql = plan.sql
-    guard_result = guard_sql(sql, settings.query_row_limit_default)
-    rows = await run_sql(guard_result.sql, settings.query_row_limit_default)
+    try:
+        guard_result = guard_sql(sql, settings.query_row_limit_default)
+        rows = await run_sql(guard_result.sql, settings.query_row_limit_default)
+    except (SqlRejectedError, SqlExecutionError) as e:
+        # Fed back as a failed tool result, not raised: same reasoning as
+        # make_chart's own catch below — the chat loop's tool-call budget is
+        # the retry mechanism, so the model sees why the SQL failed (a
+        # hallucinated table, an ambiguous cast) and can call run_sql_query
+        # again with a corrected statement instead of the turn just ending.
+        return ToolResult(ok=False, summary=e.message)
     _LAST_RESULT[conversation_id] = pd.DataFrame(rows)
     preview = _json_safe_rows(rows[:5])
     columns = ", ".join(rows[0].keys()) if rows else "(none)"
