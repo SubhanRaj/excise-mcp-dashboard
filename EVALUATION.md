@@ -145,8 +145,12 @@ Sources: [Qwen2.5-LLM blog](https://qwenlm.github.io/blog/qwen2.5-llm/),
   it directly; the choice rides on the `/chat` call as `model` and is
   validated server-side against the registry. The one-shot analytical form
   keeps an advanced `model` override alongside `engine`. Default follows the
-  task; switching mid-session costs a reload (`OLLAMA_MAX_LOADED_MODELS=1`),
-  surfaced in the UI. Adding Gemma to the picker is one registry line plus
+  task; both the coder and chat model stay resident
+  (`OLLAMA_MAX_LOADED_MODELS=2`, §Runtime settings), so switching between
+  them mid-session costs nothing today. Adding a second `role: chat` model
+  to the picker would need a third resident slot — that switch would cost a
+  reload again, and the UI should say so once that model exists. Adding
+  Gemma to the picker is one registry line plus
   `ollama pull gemma2:9b-instruct-q4_K_M` (~5.8 GB).
 - **Embedding model (only if `KB_EMBEDDINGS_ENABLED`)**:
   `nomic-embed-text` (768-dim, ~275 MB) or `bge-m3` (1024-dim, ~600 MB,
@@ -159,8 +163,12 @@ Sources: [Qwen2.5-LLM blog](https://qwenlm.github.io/blog/qwen2.5-llm/),
 - `OLLAMA_KEEP_ALIVE=30s` — unload the model between queries so the RAM returns
   to the sandboxed plot process and PostgreSQL. Low concurrency makes the
   reload cost acceptable.
-- `OLLAMA_NUM_PARALLEL=1`, `OLLAMA_MAX_LOADED_MODELS=1` — serialize. The box
-  cannot run two 7B decodes plus a plot process plus Postgres at once.
+- `OLLAMA_NUM_PARALLEL=1` — one decode at a time; the box cannot run two 7B
+  decodes plus a plot process plus Postgres at once.
+- `OLLAMA_MAX_LOADED_MODELS=2` — both `qwen2.5-coder:7b` and `llama3.1:8b`
+  stay resident (§RAM budget below). Live chat turns needing a tool call
+  were swapping between the two on every call at `MAX_LOADED_MODELS=1`, and
+  a full turn took 1–3 minutes as a result.
 - Expect **5–15 tokens/s** decode CPU-only at 3.0 GHz cap, ~10–25 tok/s
   uncapped. A typical query (SQL + a short script + a one-paragraph summary)
   is 15–45 s wall-clock. This is fine for a handful of internal analysts; it
@@ -186,10 +194,15 @@ model, and only if embeddings are turned on:
 |---|---|---|
 | One 7–8B model (swapped per task), `MAX_LOADED_MODELS=1` | ~6–7 GB | yes, with margin |
 | + `nomic-embed-text` when embeddings on | ~6.5–7.5 GB | yes |
-| Two 7–8B models pinned (`MAX_LOADED_MODELS=2`, no swap) | ~12–13 GB | tight — only if swap latency in chat proves annoying, and accept less room for a concurrent plot + Postgres |
+| **Two 7–8B models pinned (`MAX_LOADED_MODELS=2`, no swap) — current** | ~12–13 GB | tight — accept less room for a concurrent plot + Postgres |
 
-Keep `MAX_LOADED_MODELS=1`. The chat's coder<->chat model swap between a tool
-call and the reply costs a reload; at this concurrency that is acceptable.
+Live chat turns needing a tool call swap the coder model in for `plan_sql`
+and the chat model back in for the reply — at `MAX_LOADED_MODELS=1` this
+made a full turn take 1–3 minutes, mostly reload time rather than decode.
+`MAX_LOADED_MODELS=2` pins both, so a turn only pays for decode. This box's
+30 GiB has room for the ~12–13 GB both models cost resident; a concurrent
+plot render and Postgres still fit, just with less spare margin than the
+one-model-at-a-time setup had.
 
 ## 2b. Retrieval: FTS first, `pgvector` as the documented upgrade
 

@@ -72,6 +72,33 @@ def test_rejects_unparseable_sql() -> None:
         guard_sql("not sql at all !!!", row_limit=10)
 
 
+def test_rejects_shops_created_at_as_a_date_filter() -> None:
+    # analytics.shops is a present-day snapshot — created_at is an ETL load timestamp, not
+    # a business date. Confirmed live twice: filtering on it for a month/year question
+    # silently returns zero rows instead of erroring, so this is rejected outright rather
+    # than left to the model to get right.
+    with pytest.raises(SqlRejectedError, match="not a business date"):
+        guard_sql(
+            "SELECT COUNT(*) FROM analytics.shops WHERE created_at >= '2026-08-01'",
+            row_limit=10,
+        )
+
+
+def test_rejects_shops_updated_at_as_a_date_filter() -> None:
+    with pytest.raises(SqlRejectedError, match="not a business date"):
+        guard_sql(
+            "SELECT COUNT(*) FROM analytics.shops WHERE updated_at < '2026-09-01'",
+            row_limit=10,
+        )
+
+
+def test_allows_shops_queries_that_do_not_filter_on_a_snapshot_column() -> None:
+    result = guard_sql(
+        "SELECT COUNT(*) FROM analytics.shops WHERE district = 'Lucknow'", row_limit=10
+    )
+    assert result.tables_used == ["shops"]
+
+
 def test_records_multiple_tables_used() -> None:
     result = guard_sql(
         "SELECT r.* FROM analytics.revenues r JOIN analytics.districts d ON d.id = r.district_id",

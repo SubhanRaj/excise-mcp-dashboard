@@ -18,6 +18,14 @@ class Ask extends Component
 
     public string $feedbackNote = '';
 
+    public function mount(?Query $query = null): void
+    {
+        if ($query) {
+            abort_unless($query->user_id === Auth::id(), 403);
+            $this->activeQueryId = $query->id;
+        }
+    }
+
     public function submit(): void
     {
         $this->validate(['prompt' => ['required', 'string', 'max:2000']]);
@@ -38,13 +46,17 @@ class Ask extends Component
 
         RunExciseQuery::dispatch($query->id);
 
-        $this->activeQueryId = $query->id;
-        $this->prompt = '';
+        // A plain redirect (not just setting activeQueryId in place) so this question's
+        // URL is bookmarkable and a later visit — a browser back/forward, a reopened tab —
+        // mounts fresh from the database instead of reusing whatever Alpine/Livewire state
+        // was on screen when the user left, which is what left the stage spinner frozen
+        // after the query had actually finished.
+        $this->redirect(route('ask.show', $query));
     }
 
     public function newQuestion(): void
     {
-        $this->activeQueryId = null;
+        $this->redirect(route('ask'));
     }
 
     /** Called by the browser's stage-poll once the query reaches a terminal status. */
@@ -69,7 +81,9 @@ class Ask extends Component
             ? Query::with(['chartArtifact', 'feedback' => fn ($q) => $q->where('user_id', Auth::id())])->find($this->activeQueryId)
             : null;
 
-        return view('livewire.ask', ['activeQuery' => $activeQuery])
+        $recentQueries = Query::where('user_id', Auth::id())->latest()->limit(20)->get(['id', 'prompt', 'status', 'created_at']);
+
+        return view('livewire.ask', ['activeQuery' => $activeQuery, 'recentQueries' => $recentQueries])
             ->layout('components.layout', ['pageTitle' => 'Ask', 'title' => 'Ask']);
     }
 }

@@ -15,6 +15,15 @@ from app.schemas import SqlRejectedError
 
 ALLOWED_SCHEMA = "analytics"
 
+# analytics.shops is a present-day snapshot with no time dimension — created_at/updated_at
+# are when the row was last loaded, not a business date. A live "how many X shops in
+# [month/year]" question filtered on this twice and silently got zero rows back both
+# times, instead of the real count from analytics.dispatches.transport_pass_issued_at.
+# schema_card.py's VIEW_NOTES already tells the SQL-planning model not to do this, but it's
+# a small local model and doesn't always follow that — rejecting the pattern outright
+# reuses the same reprompt-and-retry-once guard_sql's other rejections already get.
+SHOPS_SNAPSHOT_COLUMNS = frozenset({"created_at", "updated_at"})
+
 # Forbidden regardless of where they appear in the tree — side-effecting or
 # information-disclosure functions with no legitimate role in a read query.
 FORBIDDEN_FUNCTION_NAMES = frozenset(
@@ -107,6 +116,17 @@ def guard_sql(sql: str, row_limit: int) -> GuardResult:
             )
         if table_node.name.lower() not in tables_used:
             tables_used.append(table_node.name.lower())
+
+    where = select_node.args.get("where")
+    if "shops" in tables_used and where is not None:
+        for col in where.find_all(exp.Column):
+            if col.name.lower() in SHOPS_SNAPSHOT_COLUMNS:
+                raise SqlRejectedError(
+                    f"analytics.shops.{col.name.lower()} is when this row was last loaded "
+                    "into the database, not a business date — for a question about a "
+                    "specific month or year, filter analytics.dispatches."
+                    "transport_pass_issued_at instead"
+                )
 
     if select_node.args.get("limit") is None:
         select_node.set("limit", exp.Limit(expression=exp.Literal.number(row_limit)))

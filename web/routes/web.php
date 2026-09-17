@@ -55,6 +55,7 @@ Route::middleware('auth')->group(function () {
     // this route is the page load, not the question submission (that's a Livewire
     // action routed through livewire/update, already throttled by 'mutations').
     Route::get('/ask', Ask::class)->name('ask');
+    Route::get('/ask/{query}', Ask::class)->name('ask.show');
     Route::get('/ask/{query}/stream', [AskController::class, 'stream'])->name('ask.stream');
     Route::get('/ask/{query}/export/{format}', [AskController::class, 'export'])->name('ask.export');
 

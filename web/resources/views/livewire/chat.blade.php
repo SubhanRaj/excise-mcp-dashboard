@@ -82,6 +82,11 @@
                                     <div x-show="tc.chart" wire:ignore x-init="$watch('tc.chart', (v) => v && Plotly.newPlot($refs['livechart' + i], JSON.parse(v.plotly_json ?? '{}').data ?? [], JSON.parse(v.plotly_json ?? '{}').layout ?? [], {responsive: true}))" :x-ref="'livechart' + i" style="min-height:280px;"></div>
                                 </div>
                             </template>
+                            <div class="flex gap-1 py-1" x-show="streaming && ! liveAssistantText && ! liveToolCalls.length">
+                                <span class="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style="animation-delay:0ms"></span>
+                                <span class="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style="animation-delay:150ms"></span>
+                                <span class="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style="animation-delay:300ms"></span>
+                            </div>
                             <div class="chat-markdown text-sm text-slate-700 dark:text-slate-200" x-init="$watch('liveAssistantText', () => $el.innerHTML = renderMarkdown(liveAssistantText))"></div>
                             <p class="text-xs text-red-600 dark:text-red-400" x-show="liveError" x-text="liveError"></p>
                         </div>

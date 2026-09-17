@@ -329,8 +329,8 @@ message}`). Laravel pipes these lines to the browser unmodified and persists
 
 | Tool | Arguments | Does | Guardrails |
 |---|---|---|---|
-| `search_knowledge` | `{query: str, k?: int}` | Retrieves from `kb.chunks` (§Retrieval), returns chunk text + `heading_path` + `source_url` | read-only; `withdrawn_at IS NULL`; `k` capped at 12 |
-| `run_sql_query` | `{sql: str}` or `{question: str}` | If `question`, first plan SQL like `/query`'s `plan_sql`; then `guard.py` -> `runner.py` (READ ONLY txn, statement timeout, row cap); returns column list + row count + a small preview | identical guard + read-only role as the one-shot path; no writes possible; a rejected or failing statement comes back as a failed tool result (see below), not a turn-ending exception |
+| `search_knowledge` | `{query: str, k?: int \| null}` | Retrieves from `kb.chunks` (§Retrieval), returns chunk text + `heading_path` + `source_url` | read-only; `withdrawn_at IS NULL`; `k` capped at 12, defaults to 6 on `null` |
+| `run_sql_query` | `{question: str}` | Plans SQL like `/query`'s `plan_sql`, always — no raw-`sql` argument, so the chat model (which never sees the schema) can't hand-write a query against a table it invented; then `guard.py` -> `runner.py` (READ ONLY txn, statement timeout, row cap); returns column list + row count + a small preview | identical guard + read-only role as the one-shot path; no writes possible; a rejected or failing statement comes back as a failed tool result (see below), not a turn-ending exception |
 | `make_chart` | `{spec: str, data_ref: str}` | Runs a generated Python plot script over the last `run_sql_query` result in the `bwrap` sandbox; returns artifact refs | same sandbox, same caps; `data_ref` must point at a result from this conversation |
 
 Ollama's native tool-calling (`tools=[...]` on `/api/chat`) drives this;
@@ -355,6 +355,26 @@ turn. The model sees why its call failed and can call the tool again with a
 correction, inside its own `CHAT_MAX_TOOL_CALLS` budget — the same recovery
 `/query`'s `guard_sql` and `run_sql` retries give the one-shot pipeline,
 adapted to the chat loop's own turn-taking instead of a fixed one-shot retry.
+
+A malformed tool call gets the same treatment. `dispatch()` raises
+`ChatToolArgumentError` when a call's arguments fail their Pydantic schema —
+this used to propagate out of `run_chat()` uncaught, ending the turn
+silently. It is caught around the `dispatch()` call and returned as a failed
+tool result instead, the same shape as a rejected SQL statement above.
+`search_knowledge`'s `k` argument needed a schema fix on top of that:
+Llama's tool-calling fills in every schema property rather than omitting the
+ones it means to leave unset, sending an explicit `k: null` — a plain
+`int = 6` rejects that, since a default only applies when the key is
+absent, not when it is `null`; `k` is `int | None` now.
+
+A live turn also showed Llama narrate a *second* tool call as plain text
+instead of a real `tool_calls` entry: after an earlier `run_sql_query` call
+failed, it answered with the literal string `run_sql_query(question="...")`
+as if that were its reply, leaving the user with a failed-query card and no
+actual answer. The same bare-`{}` check above now also holds back any reply
+that is a prefix of one of the three tool names, on the reasoning that both
+are the tool-calling template breaking down the same way, so both get the
+same one-retry-with-`tools=[]` recovery.
 
 The loop:
 

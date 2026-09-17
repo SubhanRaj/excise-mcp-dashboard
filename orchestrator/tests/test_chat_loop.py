@@ -14,7 +14,14 @@ from app.chat.loop import (
     ToolResultEvent,
     run_chat,
 )
-from app.schemas import ChartArtifact, ChatRequest, ChatToolLoopExceededError, ToolCall, ToolResult
+from app.schemas import (
+    ChartArtifact,
+    ChatRequest,
+    ChatToolArgumentError,
+    ChatToolLoopExceededError,
+    ToolCall,
+    ToolResult,
+)
 
 
 @dataclass
@@ -79,6 +86,27 @@ async def test_a_bare_brace_reply_retries_once_without_tools() -> None:
     assert isinstance(events[-1], DoneEvent)
 
 
+async def test_a_narrated_fake_tool_call_retries_once_without_tools() -> None:
+    # Confirmed live: after an earlier tool call failed, llama3.1 answered a follow-up
+    # turn with the literal text `run_sql_query(question="...")` instead of either a
+    # real tool_calls entry or a plain-language answer — the same template failure as
+    # the bare "{}" case, just narrating a call instead of emitting nothing.
+    ollama = _FakeOllama(
+        [
+            [
+                _FakeChunk(content="run"),
+                _FakeChunk(content="_sql"),
+                _FakeChunk(content='_query(question="x")'),
+            ],
+            [_FakeChunk(content="I couldn't find that — could you rephrase?")],
+        ]
+    )
+    events = await _events(ollama)
+    tokens = "".join(e.delta for e in events if isinstance(e, TokenEvent))
+    assert tokens == "I couldn't find that — could you rephrase?"
+    assert not any(isinstance(e, ToolCallEvent) for e in events)
+
+
 async def test_a_turn_with_one_tool_call_dispatches_and_continues(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -117,6 +145,31 @@ async def test_a_tool_result_with_a_chart_emits_a_chart_event(
 
     events = await _events(ollama)
     assert any(isinstance(e, ChartEvent) for e in events)
+
+
+async def test_a_bad_tool_call_argument_is_fed_back_instead_of_ending_the_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # dispatch() raises ChatToolArgumentError for a schema-invalid call (e.g. a search_knowledge
+    # call missing its required query). This used to propagate out of run_chat() uncaught and
+    # kill the whole turn — the same shape a rejected/failing run_sql_query or make_chart call
+    # already avoids by coming back as a failed tool result instead.
+    call = ToolCall(name="search_knowledge", arguments={})
+    ollama = _FakeOllama(
+        [[_FakeChunk(content="", tool_calls=[call])], [_FakeChunk(content="Here's what I found.")]]
+    )
+
+    async def fake_dispatch(call: ToolCall, **kwargs: object) -> ToolResult:
+        raise ChatToolArgumentError("search_knowledge", "query is required")
+
+    monkeypatch.setattr(chat_loop, "dispatch", fake_dispatch)
+
+    events = await _events(ollama)
+    assert any(
+        isinstance(e, ToolResultEvent) and e.ok is False and "query is required" in e.summary
+        for e in events
+    )
+    assert isinstance(events[-1], DoneEvent)
 
 
 async def test_exceeding_the_tool_call_cap_raises_the_typed_error(

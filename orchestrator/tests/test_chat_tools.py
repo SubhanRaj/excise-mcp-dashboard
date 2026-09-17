@@ -37,7 +37,7 @@ def test_tool_args_schema_round_trips(model: type, payload: dict[str, object]) -
     assert model.model_validate(payload)
 
 
-async def test_dispatch_rejects_run_sql_query_with_neither_sql_nor_question() -> None:
+async def test_dispatch_rejects_run_sql_query_without_a_question() -> None:
     call = ToolCall(name="run_sql_query", arguments={})
     with pytest.raises(ChatToolArgumentError):
         await dispatch(
@@ -51,6 +51,13 @@ async def test_dispatch_rejects_malformed_tool_arguments() -> None:
         await dispatch(
             call, ollama=_ollama_returning("{}"), schema_card="(schema)", conversation_id="c1"
         )
+
+
+def test_search_knowledge_args_accepts_an_explicit_null_k() -> None:
+    # Llama's tool-calling fills in every schema property rather than omitting ones it
+    # doesn't want to set, sending an explicit `k: null` for the unset default — this
+    # crashed the whole chat turn live until `k` became Optional.
+    assert SearchKnowledgeArgs.model_validate({"query": "MGQ policy", "k": None}).k is None
 
 
 async def test_run_sql_query_with_a_bad_plan_returns_a_failed_tool_result() -> None:

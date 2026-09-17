@@ -12,8 +12,9 @@ Three tools are available:
 - search_knowledge: retrieves UP Excise acts, rules, and policy text. Use it for
   questions about the law. Cite the section and link when you use a result. If
   nothing matches, say so rather than guessing.
-- run_sql_query: runs a read-only query against the excise analytics data. Use
-  it for questions about numbers.
+- run_sql_query: answers a question about numbers. Pass your question in plain
+  language as `question` — you have never seen the database schema, so always
+  let this tool plan the SQL; never invent a table or column name yourself.
 - make_chart: charts the most recent run_sql_query result in this conversation.
   Use it only after run_sql_query, and only when a chart would help.
 
@@ -24,6 +25,11 @@ Never narrate this decision. Do not write things like "No tool call is
 needed" or "I'll respond directly" — every word you write is shown to the
 user as your reply, with nothing hidden. Either call a tool silently or
 write the answer itself, and nothing else.
+
+After a tool call returns, always follow up with a plain-language answer to
+the user's actual question — never let a tool result be the last thing in the
+turn. If a tool call failed, say so in plain language (and try again with a
+correction, or a different tool, if that would fix it) rather than stopping.
 """
 
 
@@ -44,7 +50,8 @@ CHAT_TOOL_SCHEMAS: list[dict[str, object]] = [
     ),
     _tool_schema(
         "run_sql_query",
-        "Run a read-only SQL query against the excise analytics data.",
+        "Answer a question about excise numbers. Takes a plain-language question, "
+        "never raw SQL — the schema-aware planner writes the query.",
         RunSqlQueryArgs,
     ),
     _tool_schema("make_chart", "Chart the most recent run_sql_query result.", MakeChartArgs),

@@ -39,12 +39,18 @@ _LAST_RESULT: dict[str, pd.DataFrame] = {}
 
 class SearchKnowledgeArgs(BaseModel):
     query: str
-    k: int = 6
+    # Llama's tool-calling fills in every schema property rather than omitting ones it
+    # doesn't want to set, sending an explicit `k: null` — plain `int = 6` rejects that,
+    # since a default only applies when the key is absent, not when it's null.
+    k: int | None = 6
 
 
 class RunSqlQueryArgs(BaseModel):
-    sql: str | None = None
-    question: str | None = None
+    # Deliberately no raw `sql` escape hatch: a general chat model has never seen the
+    # schema and hallucinates table/column names when asked to write SQL itself (e.g.
+    # a made-up "excise_data" table). Routing every call through `question` means the
+    # SQL always comes from the schema-aware planner /query's own pipeline already uses.
+    question: str
 
 
 class MakeChartArgs(BaseModel):
@@ -53,7 +59,7 @@ class MakeChartArgs(BaseModel):
 
 
 async def _search_knowledge(args: SearchKnowledgeArgs) -> ToolResult:
-    chunks = await kb_retrieve(args.query, min(args.k, 12))
+    chunks = await kb_retrieve(args.query, min(args.k or 6, 12))
     if not chunks:
         return ToolResult(ok=True, summary="No matching passages in the knowledge base.")
     lines = [
@@ -70,19 +76,15 @@ async def _run_sql_query(
     schema_card: str,
     usage: TokenUsage | None,
 ) -> ToolResult:
-    if args.sql is None and args.question is None:
-        raise ChatToolArgumentError("run_sql_query", "one of sql or question is required")
-    sql = args.sql
-    if sql is None:
-        prompt = build_sql_prompt(args.question or "", schema_card, [])
-        plan = await ollama.generate_structured(
-            model=settings.ollama_sql_model,
-            prompt=prompt,
-            response_model=SqlPlan,
-            stage="tool_call",
-            usage=usage,
-        )
-        sql = plan.sql
+    prompt = build_sql_prompt(args.question, schema_card, [])
+    plan = await ollama.generate_structured(
+        model=settings.ollama_sql_model,
+        prompt=prompt,
+        response_model=SqlPlan,
+        stage="tool_call",
+        usage=usage,
+    )
+    sql = plan.sql
     try:
         guard_result = guard_sql(sql, settings.query_row_limit_default)
         rows = await run_sql(guard_result.sql, settings.query_row_limit_default)

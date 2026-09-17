@@ -35,6 +35,43 @@ class AskTest extends TestCase
         Bus::assertDispatched(RunExciseQuery::class);
     }
 
+    public function test_submitting_a_question_redirects_to_its_own_page(): void
+    {
+        // A plain URL for each question — not just an in-memory activeQueryId — so a
+        // browser back/forward or a reopened tab lands on a fresh mount from the
+        // database instead of stale client-side state left over from before the
+        // orchestrator finished.
+        Bus::fake();
+        $user = User::factory()->create();
+
+        Livewire::actingAs($user)->test(Ask::class)
+            ->set('prompt', 'How many districts are in each zone?')
+            ->call('submit')
+            ->assertRedirectContains('/ask/');
+
+        $query = Query::where('user_id', $user->id)->firstOrFail();
+        $this->assertSame($query->prompt, 'How many districts are in each zone?');
+    }
+
+    public function test_visiting_your_own_query_page_shows_it(): void
+    {
+        $user = User::factory()->create();
+        $query = Query::create(['user_id' => $user->id, 'prompt' => 'x', 'status' => 'complete']);
+
+        Livewire::actingAs($user)->test(Ask::class, ['query' => $query])
+            ->assertSet('activeQueryId', $query->id);
+    }
+
+    public function test_visiting_someone_elses_query_page_is_forbidden(): void
+    {
+        $owner = User::factory()->create();
+        $other = User::factory()->create();
+        $query = Query::create(['user_id' => $owner->id, 'prompt' => 'x', 'status' => 'complete']);
+
+        Livewire::actingAs($other)->test(Ask::class, ['query' => $query])
+            ->assertForbidden();
+    }
+
     public function test_a_blank_question_is_rejected(): void
     {
         $user = User::factory()->create();

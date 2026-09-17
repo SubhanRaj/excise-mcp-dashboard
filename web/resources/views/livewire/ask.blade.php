@@ -59,9 +59,26 @@
         </form>
 
         @if($activeQuery)
-        <button wire:click="newQuestion" class="text-sm text-slate-500 hover:underline flex items-center gap-1.5">
+        {{-- Plain navigation, not wire:navigate — matching Chat's own rail: a fresh page
+             load always re-mounts from the database, so a previously-finished query never
+             shows a stage spinner left over from before it completed. --}}
+        <a href="{{ route('ask') }}" class="text-sm text-slate-500 hover:underline flex items-center gap-1.5">
             <i class="ti ti-plus"></i> New question
-        </button>
+        </a>
+        @endif
+
+        @if($recentQueries->isNotEmpty())
+        <div class="space-y-1">
+            <p class="text-xs font-semibold uppercase tracking-wide text-slate-400 px-1">Recent questions</p>
+            <div class="max-h-96 overflow-y-auto space-y-1">
+                @foreach($recentQueries as $q)
+                <a href="{{ route('ask.show', $q) }}"
+                   class="block px-3 py-2 rounded-lg text-sm truncate {{ $activeQuery?->id === $q->id ? 'bg-govviolet-50 dark:bg-govviolet-900/30 text-govviolet-700 dark:text-govviolet-300 font-medium' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800' }}">
+                    {{ $q->prompt }}
+                </a>
+                @endforeach
+            </div>
+        </div>
         @endif
     </div>
 

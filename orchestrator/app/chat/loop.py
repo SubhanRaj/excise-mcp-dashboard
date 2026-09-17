@@ -12,7 +12,15 @@ from app.chat.tools import dispatch
 from app.config import settings
 from app.llm.client import OllamaClient, TokenUsage
 from app.pipeline import _select_model
-from app.schemas import ChartArtifact, ChatRequest, ChatToolLoopExceededError, ChatTurn, ToolCall
+from app.schemas import (
+    ChartArtifact,
+    ChatRequest,
+    ChatToolArgumentError,
+    ChatToolLoopExceededError,
+    ChatTurn,
+    ToolCall,
+    ToolResult,
+)
 
 
 @dataclass
@@ -48,14 +56,28 @@ class DoneEvent:
 ChatEvent = TokenEvent | ToolCallEvent | ToolResultEvent | ChartEvent | DoneEvent
 
 
+_TOOL_NAMES = ("search_knowledge", "run_sql_query", "make_chart")
+
+
 def _is_degenerate(text: str) -> bool:
     """llama3.1's tool-calling template occasionally answers a trivial message
     (e.g. "hi") with a bare "{}" instead of prose or a real tool call, once
     CHAT_TOOL_SCHEMAS is attached to the turn — confirmed directly against
     Ollama's /api/chat: the identical prompt without `tools` replies normally.
     Brace/whitespace-only output is that failure, not a real answer.
+
+    The same template also sometimes narrates a *second* tool call as plain text
+    instead of a real tool_calls entry — confirmed live, a chat turn answered
+    `run_sql_query(question="...")` verbatim as its reply after an earlier tool
+    call failed. `text` still being a prefix of one of the known tool names (or
+    the full name itself, mid- or post-call) counts as degenerate too, so this
+    accumulates unstreamed the same way a bare "{}" does instead of leaking the
+    fake call's tokens to the user one at a time as they arrive.
     """
-    return text.strip().strip("{}") == ""
+    stripped = text.strip()
+    if stripped.strip("{}") == "":
+        return True
+    return any(stripped.startswith(name[: len(stripped)]) for name in _TOOL_NAMES)
 
 
 def _build_messages(message: str, history: list[ChatTurn]) -> list[dict[str, object]]:
@@ -116,13 +138,22 @@ async def run_chat(
 
         for call in pending_calls:
             yield ToolCallEvent(name=call.name, arguments=call.arguments)
-            result = await dispatch(
-                call,
-                ollama=ollama,
-                schema_card=schema_card,
-                conversation_id=request.conversation_id,
-                usage=usage,
-            )
+            try:
+                result = await dispatch(
+                    call,
+                    ollama=ollama,
+                    schema_card=schema_card,
+                    conversation_id=request.conversation_id,
+                    usage=usage,
+                )
+            except ChatToolArgumentError as e:
+                # Llama's tool-calling fills in every schema property, sending an
+                # explicit null for one it means to leave unset (e.g. search_knowledge's
+                # k) — a validation error, same as a bad run_sql_query/make_chart call.
+                # Fed back as a failed tool result rather than raised, so this doesn't
+                # end the whole turn the way it did before: the model sees why its
+                # arguments were rejected and can call the tool again correctly.
+                result = ToolResult(ok=False, summary=e.message)
             tool_calls_made += 1
             yield ToolResultEvent(name=call.name, ok=result.ok, summary=result.summary)
             if result.chart is not None:

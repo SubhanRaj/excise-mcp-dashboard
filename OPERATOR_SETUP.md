@@ -124,6 +124,35 @@ ollama ps                                     # UNTIL should read ~30 seconds fr
 
 ---
 
+## §Ollama runtime settings — pin both models (found live)
+
+Live chat turns needing a tool call swap `qwen2.5-coder:7b` in for `plan_sql`
+and `llama3.1:8b` back in for the reply — at `OLLAMA_MAX_LOADED_MODELS=1`
+this evicts one to load the other on every swap, and a full turn took 1–3
+minutes as a result, mostly reload time. `EVALUATION.md` §2's own RAM budget
+already priced pinning both models at once (~12–13 GB against this box's
+30 GiB) as the fix for exactly this:
+
+```bash
+sudo sed -i 's/OLLAMA_MAX_LOADED_MODELS=1/OLLAMA_MAX_LOADED_MODELS=2/' /etc/systemd/system/ollama.service
+sudo systemctl daemon-reload
+sudo systemctl restart ollama
+```
+
+Verify both models stay resident through a full chat turn instead of one
+evicting the other:
+
+```bash
+systemctl show ollama.service -p Environment
+# Environment=... OLLAMA_MAX_LOADED_MODELS=2
+curl -s http://127.0.0.1:11434/api/generate -d '{"model":"qwen2.5-coder:7b-instruct-q4_K_M","prompt":"hi","stream":false}' >/dev/null
+curl -s http://127.0.0.1:11434/api/generate -d '{"model":"llama3.1:8b-instruct-q4_K_M","prompt":"hi","stream":false}' >/dev/null
+ollama ps
+# both models listed, both still resident — one no longer evicts the other
+```
+
+---
+
 ## §Data bank (Milestone 1)
 
 **Create the database and apply the SQL scripts** (they are written in `db/`

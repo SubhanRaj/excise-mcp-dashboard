@@ -282,6 +282,52 @@ failure the same way, and the chat `run_sql_query` tool returns a failed
 tool result instead of ending the turn, so the model can correct itself
 within its own tool-call budget the way `make_chart` already could.
 
+Continued live testing found three more failure modes in Chat and one in
+Ask. `search_knowledge`'s `k` argument is a plain `int = 6` in its Pydantic
+schema; Llama's tool-calling fills in every schema property rather than
+omitting the ones it leaves unset, so it sent an explicit `k: null` — a
+default only applies when a key is absent, not when it is `null` — and the
+resulting validation error killed the whole turn, leaving Chat silent.
+`run_sql_query` had a second failure from the same root: its schema let the
+model supply raw `sql` directly, and a general chat model has never seen the
+schema, so it hallucinated whole tables (`excise_data`,
+`country_liquor_shop`) instead of using the schema-aware planner. And after
+a tool call failed, Llama sometimes narrated a second call as literal text —
+replying with `run_sql_query(question="...")` verbatim — instead of issuing
+a real tool call or answering in prose, so the turn ended showing nothing
+but a failed query card and no answer. `k` is now `int | None`;
+`run_sql_query` takes only a plain-language `question`, always through the
+same schema-aware planner `/query` uses; any tool-call argument error now
+returns as a failed tool result instead of raising and ending the turn, the
+same way a rejected or failing SQL statement already did; and
+`chat/loop.py`'s bare-`{}` retry now also catches a narrated fake tool call,
+on the same reasoning (`MCP_ENGINES.md` §Tools). Chat also had no visual
+feedback for the gap before the first token or tool call arrived, now filled
+with a three-dot typing indicator. Ask had its own version of a stuck turn:
+`activeQueryId` lived only in the Livewire component's in-memory state, with
+no URL behind it, so navigating away and back could leave the stage spinner
+showing a query as still running after the orchestrator had actually
+finished. Ask questions now live at their own URL (`/ask/{query}`, the same
+pattern `/chat/{conversation}` already uses) and a "Recent questions" rail
+lists the last 20, so leaving and returning always re-mounts from the
+database instead of whatever was on screen when the user left.
+
+Live testing also surfaced two more wrong-but-not-erroring SQL answers and a
+slow-turn complaint. "How many composite/country-liquor shops in Lucknow in
+August 2026" twice generated `SELECT ... FROM analytics.shops WHERE
+created_at >= ...` — a syntactically valid query against the wrong table,
+since `shops.created_at` is an ETL load timestamp, not a business date, and
+silently returned zero instead of erroring. `schema_card.py`'s `VIEW_NOTES`
+already said not to do this; `guard_sql` now rejects the pattern outright
+(`analytics.shops` joined with a `created_at`/`updated_at` filter) and
+reprompts, the same retry a rejected statement already gets
+(`sql/guard.py`). Separately, a full chat turn needing a tool call was
+taking 1–3 minutes: `OLLAMA_MAX_LOADED_MODELS=1` evicts the coder model to
+load the chat model back in (or the reverse) on every swap within a single
+turn. `EVALUATION.md` §2 already priced pinning both models at once
+(~12–13 GB against this box's 30 GiB) as the fix for exactly this;
+`OPERATOR_SETUP.md` §Ollama runtime settings has the command to apply it.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures
