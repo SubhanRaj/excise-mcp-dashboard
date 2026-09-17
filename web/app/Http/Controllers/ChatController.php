@@ -80,6 +80,17 @@ class ChatController extends Controller
                     }
                     flush();
 
+                    // A "Stop" click aborts the browser's fetch(), but PHP itself keeps
+                    // running unless something checks for that — nothing did, so the
+                    // orchestrator kept generating (and paying for) a turn nobody was
+                    // reading. Breaking here lets the generator (and the Guzzle stream
+                    // it holds) fall out of scope and close, which is what actually
+                    // reaches the orchestrator as a client disconnect and cancels the
+                    // in-flight Ollama call and any running tool (MCP_ENGINES.md §Tools).
+                    if (connection_aborted()) {
+                        break;
+                    }
+
                     if (isset($event['token'])) {
                         $assistantText .= $event['token'];
                     } elseif (isset($event['tool_call'])) {

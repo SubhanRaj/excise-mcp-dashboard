@@ -2,11 +2,14 @@
 
 namespace App\Livewire;
 
+use App\Models\ChartArtifact;
 use App\Models\Conversation;
+use App\Models\MessageToolCall;
 use App\Services\OrchestratorClient;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Livewire\Component;
 
@@ -66,6 +69,46 @@ class Chat extends Component
         // No state to change — this method exists only to force a fresh render()
         // once the browser's fetch() to ChatController::send has finished, so the
         // just-persisted transcript replaces the client-rendered live turn.
+    }
+
+    public function deleteConversation(string $id): void
+    {
+        $conversation = Conversation::findOrFail($id);
+        abort_unless($conversation->user_id === Auth::id(), 403);
+        $conversation->delete();
+        if ($this->conversationId === $id) {
+            $this->redirect(route('chat'));
+        }
+    }
+
+    public function forceDeleteConversation(string $id): void
+    {
+        $conversation = Conversation::withTrashed()->findOrFail($id);
+        abort_unless($conversation->user_id === Auth::id(), 403);
+
+        // chart_artifacts is a polymorphic owner with no DB-level FK to message_tool_calls,
+        // so the cascadeOnDelete() on conversations -> messages -> message_tool_calls below
+        // would otherwise leave orphaned artifact rows and files behind.
+        $toolCallIds = MessageToolCall::withTrashed()
+            ->whereIn('message_id', $conversation->messages()->withTrashed()->pluck('id'))
+            ->pluck('id');
+        ChartArtifact::withTrashed()
+            ->where('owner_type', MessageToolCall::class)
+            ->whereIn('owner_id', $toolCallIds)
+            ->get()
+            ->each(function (ChartArtifact $artifact): void {
+                foreach (['png_path', 'svg_path', 'pdf_path'] as $column) {
+                    if ($artifact->$column) {
+                        Storage::disk('local')->delete($artifact->$column);
+                    }
+                }
+                $artifact->forceDelete();
+            });
+
+        $conversation->forceDelete();
+        if ($this->conversationId === $id) {
+            $this->redirect(route('chat'));
+        }
     }
 
     public function render()

@@ -353,6 +353,22 @@ The orchestrator copies the declared outputs out of `/scratch` to the Laravel
 sweeper (systemd timer) deletes any `/var/tmp/excise-charts/*` older than 1 h
 in case a crash left one behind.
 
+The `excise-sandbox-*.scope` unit itself needs the same guarantee twice
+over. `systemd-run --scope` execs straight into the `timeout`/`bwrap` chain,
+so the awaiting `asyncio.subprocess.Process` is that scope's own main PID —
+but cancelling the coroutine that awaits it (a client disconnect, or the
+orchestrator shutting down) does not by itself kill the process, confirmed
+live: a chart render left running past a `systemctl restart` kept its memory
+cgroup alive for several minutes until it happened to hit its own
+`MemoryMax`. `run_in_sandbox` now kills the process explicitly on
+`CancelledError` before re-raising, which tears the scope down immediately.
+That only covers a cancellable shutdown; a `SIGKILL` (systemd's own
+stop-sigterm timeout expiring) gives the orchestrator no chance to run that
+handler at all, so `stop_orphaned_sandbox_scopes()` runs once at startup and
+stops any `excise-sandbox-*.scope` still active from a run that ended that
+way — the next orchestrator process sweeps up after the last one instead of
+leaving it to its own wallclock timeout or memory cap.
+
 ### `/etc/sudoers.d/excise-sandbox` (draft, operator applies with `visudo`)
 
 Only needed if the `systemd-run` route is not used:

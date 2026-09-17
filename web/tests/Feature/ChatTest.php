@@ -122,6 +122,48 @@ class ChatTest extends TestCase
             ->assertSee('Past conversation');
     }
 
+    public function test_deleting_a_conversation_soft_deletes_it(): void
+    {
+        $user = User::factory()->create();
+        $conversation = Conversation::create(['user_id' => $user->id]);
+
+        Livewire::actingAs($user)->test(Chat::class)
+            ->call('deleteConversation', $conversation->id);
+
+        $this->assertSoftDeleted('conversations', ['id' => $conversation->id]);
+    }
+
+    public function test_a_user_cannot_delete_another_users_conversation(): void
+    {
+        $owner = User::factory()->create();
+        $other = User::factory()->create();
+        $conversation = Conversation::create(['user_id' => $owner->id]);
+
+        Livewire::actingAs($other)->test(Chat::class)
+            ->call('deleteConversation', $conversation->id)
+            ->assertForbidden();
+    }
+
+    public function test_force_deleting_a_conversation_removes_it_and_its_chart_artifacts(): void
+    {
+        $user = User::factory()->create();
+        $conversation = Conversation::create(['user_id' => $user->id]);
+        $message = $conversation->messages()->create(['role' => 'assistant', 'content' => 'x']);
+        $toolCall = $message->toolCalls()->create(['tool_name' => 'make_chart', 'arguments' => []]);
+        ChartArtifact::create([
+            'owner_type' => MessageToolCall::class,
+            'owner_id' => $toolCall->id,
+            'spec' => ['data' => [], 'layout' => []],
+        ]);
+
+        Livewire::actingAs($user)->test(Chat::class)
+            ->call('forceDeleteConversation', $conversation->id);
+
+        $this->assertDatabaseMissing('conversations', ['id' => $conversation->id]);
+        $this->assertDatabaseMissing('messages', ['id' => $message->id]);
+        $this->assertDatabaseMissing('chart_artifacts', ['owner_id' => $toolCall->id]);
+    }
+
     /**
      * @param  list<array<string, mixed>>  $events
      */

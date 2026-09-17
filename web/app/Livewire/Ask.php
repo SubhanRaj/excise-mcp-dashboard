@@ -3,11 +3,13 @@
 namespace App\Livewire;
 
 use App\Jobs\RunExciseQuery;
+use App\Models\ChartArtifact;
 use App\Models\Query;
 use App\Models\QueryFeedback;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\RateLimiter;
+use Illuminate\Support\Facades\Storage;
 use Livewire\Component;
 
 class Ask extends Component
@@ -61,6 +63,43 @@ class Ask extends Component
 
     /** Called by the browser's stage-poll once the query reaches a terminal status. */
     public function refreshResult(): void {}
+
+    public function deleteQuery(string $id): void
+    {
+        $query = Query::findOrFail($id);
+        abort_unless($query->user_id === Auth::id(), 403);
+        $query->delete();
+        if ($this->activeQueryId === $id) {
+            $this->redirect(route('ask'));
+        }
+    }
+
+    public function forceDeleteQuery(string $id): void
+    {
+        $query = Query::withTrashed()->findOrFail($id);
+        abort_unless($query->user_id === Auth::id(), 403);
+
+        // chart_artifacts is a polymorphic owner with no DB-level FK to queries, so a
+        // plain forceDelete() below would otherwise leave an orphaned artifact row and
+        // its rendered files behind.
+        ChartArtifact::withTrashed()
+            ->where('owner_type', Query::class)
+            ->where('owner_id', $query->id)
+            ->get()
+            ->each(function (ChartArtifact $artifact): void {
+                foreach (['png_path', 'svg_path', 'pdf_path'] as $column) {
+                    if ($artifact->$column) {
+                        Storage::disk('local')->delete($artifact->$column);
+                    }
+                }
+                $artifact->forceDelete();
+            });
+
+        $query->forceDelete(); // cascades query_feedback via its own DB FK
+        if ($this->activeQueryId === $id) {
+            $this->redirect(route('ask'));
+        }
+    }
 
     public function giveFeedback(bool $thumbsUp): void
     {

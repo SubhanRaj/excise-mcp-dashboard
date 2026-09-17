@@ -72,10 +72,30 @@
             <p class="text-xs font-semibold uppercase tracking-wide text-slate-400 px-1">Recent questions</p>
             <div class="max-h-96 overflow-y-auto space-y-1">
                 @foreach($recentQueries as $q)
-                <a href="{{ route('ask.show', $q) }}"
-                   class="block px-3 py-2 rounded-lg text-sm truncate {{ $activeQuery?->id === $q->id ? 'bg-govviolet-50 dark:bg-govviolet-900/30 text-govviolet-700 dark:text-govviolet-300 font-medium' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800' }}">
-                    {{ $q->prompt }}
-                </a>
+                <div class="group relative flex items-center" x-data="{ menuOpen: false }">
+                    <a href="{{ route('ask.show', $q) }}"
+                       class="flex-1 min-w-0 block px-3 py-2 rounded-lg text-sm truncate {{ $activeQuery?->id === $q->id ? 'bg-govviolet-50 dark:bg-govviolet-900/30 text-govviolet-700 dark:text-govviolet-300 font-medium' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800' }}">
+                        {{ $q->prompt }}
+                    </a>
+                    <button x-on:click="menuOpen = !menuOpen"
+                            class="absolute right-1 p-1 rounded text-slate-400 opacity-0 group-hover:opacity-100 hover:bg-slate-200 dark:hover:bg-slate-700"
+                            title="Question options">
+                        <i class="ti ti-dots-vertical text-sm"></i>
+                    </button>
+                    <div x-show="menuOpen" x-cloak x-on:click.outside="menuOpen = false"
+                         class="absolute right-0 top-full z-10 mt-1 w-44 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg py-1 text-xs">
+                        <button wire:click="deleteQuery('{{ $q->id }}')" x-on:click="menuOpen = false"
+                                class="w-full text-left px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300">
+                            Delete
+                        </button>
+                        <button wire:click="forceDeleteQuery('{{ $q->id }}')"
+                                wire:confirm="Permanently delete this question? This cannot be undone."
+                                x-on:click="menuOpen = false"
+                                class="w-full text-left px-3 py-1.5 hover:bg-red-50 dark:hover:bg-red-900/30 text-red-600">
+                            Delete permanently
+                        </button>
+                    </div>
+                </div>
                 @endforeach
             </div>
         </div>
@@ -117,8 +137,13 @@
             @endif
 
             @if($activeQuery->summary)
-            <div class="stat-card block">
+            <div class="stat-card block" x-data="{ copied: false }">
                 <p class="text-sm text-slate-700 dark:text-slate-200">{{ $activeQuery->summary }}</p>
+                <button x-on:click="navigator.clipboard.writeText(@js($activeQuery->summary)); copied = true; setTimeout(() => copied = false, 1500)"
+                        class="mt-2 text-xs text-govviolet-600 hover:underline flex items-center gap-1">
+                    <i class="ti" :class="copied ? 'ti-check' : 'ti-copy'"></i>
+                    <span x-text="copied ? 'Copied' : 'Copy'"></span>
+                </button>
             </div>
             @endif
 

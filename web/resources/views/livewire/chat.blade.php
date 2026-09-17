@@ -11,10 +11,30 @@
         </a>
         <div class="flex-1 overflow-y-auto space-y-1">
             @forelse($conversations as $c)
-            <a href="{{ route('chat.show', $c) }}"
-               class="block px-3 py-2 rounded-lg text-sm truncate {{ $activeConversation?->id === $c->id ? 'bg-govviolet-50 dark:bg-govviolet-900/30 text-govviolet-700 dark:text-govviolet-300 font-medium' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800' }}">
-                {{ $c->title ?? 'New conversation' }}
-            </a>
+            <div class="group relative flex items-center" x-data="{ menuOpen: false }">
+                <a href="{{ route('chat.show', $c) }}"
+                   class="flex-1 min-w-0 block px-3 py-2 rounded-lg text-sm truncate {{ $activeConversation?->id === $c->id ? 'bg-govviolet-50 dark:bg-govviolet-900/30 text-govviolet-700 dark:text-govviolet-300 font-medium' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800' }}">
+                    {{ $c->title ?? 'New conversation' }}
+                </a>
+                <button x-on:click="menuOpen = !menuOpen"
+                        class="absolute right-1 p-1 rounded text-slate-400 opacity-0 group-hover:opacity-100 hover:bg-slate-200 dark:hover:bg-slate-700"
+                        title="Conversation options">
+                    <i class="ti ti-dots-vertical text-sm"></i>
+                </button>
+                <div x-show="menuOpen" x-cloak x-on:click.outside="menuOpen = false"
+                     class="absolute right-0 top-full z-10 mt-1 w-44 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg py-1 text-xs">
+                    <button wire:click="deleteConversation('{{ $c->id }}')" x-on:click="menuOpen = false"
+                            class="w-full text-left px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300">
+                        Delete
+                    </button>
+                    <button wire:click="forceDeleteConversation('{{ $c->id }}')"
+                            wire:confirm="Permanently delete this conversation? This cannot be undone."
+                            x-on:click="menuOpen = false"
+                            class="w-full text-left px-3 py-1.5 hover:bg-red-50 dark:hover:bg-red-900/30 text-red-600">
+                        Delete permanently
+                    </button>
+                </div>
+            </div>
             @empty
             <p class="text-xs text-slate-400 px-3">No conversations yet.</p>
             @endforelse
@@ -41,11 +61,15 @@
             @else
                 @foreach($activeConversation->messages as $m)
                     @if($m->role === 'user')
-                    <div class="flex justify-end">
+                    <div class="flex flex-col items-end" x-data="{ copied: false }">
                         <div class="bg-govviolet-600 text-white rounded-2xl rounded-br-sm px-4 py-2 max-w-lg text-sm whitespace-pre-wrap">{{ $m->content }}</div>
+                        <button x-on:click="navigator.clipboard.writeText(@js($m->content)); copied = true; setTimeout(() => copied = false, 1500)"
+                                class="mt-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300" title="Copy">
+                            <i class="ti text-xs" :class="copied ? 'ti-check' : 'ti-copy'"></i>
+                        </button>
                     </div>
                     @else
-                    <div class="flex justify-start">
+                    <div class="flex flex-col items-start" x-data="{ copied: false }">
                         <div class="bg-slate-100 dark:bg-slate-900 rounded-2xl rounded-bl-sm px-4 py-2 max-w-lg space-y-3">
                             @foreach($m->toolCalls as $tc)
                                 @include('livewire.partials.tool-call-card', ['toolCall' => $tc])
@@ -54,6 +78,12 @@
                             <div class="chat-markdown text-sm text-slate-700 dark:text-slate-200" x-init="$el.innerHTML = renderMarkdown(@js($m->content))"></div>
                             @endif
                         </div>
+                        @if($m->content)
+                        <button x-on:click="navigator.clipboard.writeText(@js($m->content)); copied = true; setTimeout(() => copied = false, 1500)"
+                                class="mt-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300" title="Copy">
+                            <i class="ti text-xs" :class="copied ? 'ti-check' : 'ti-copy'"></i>
+                        </button>
+                        @endif
                     </div>
                     @endif
                 @endforeach
@@ -109,9 +139,14 @@
                           x-on:keydown.enter="if (! $event.shiftKey) { $event.preventDefault(); $el.closest('form').requestSubmit(); }"
                           class="field-input flex-1 resize-none max-h-40 overflow-y-auto @error('message') field-error @enderror"></textarea>
                 @error('message') <p class="field-err-msg">{{ $message }}</p> @enderror
-                <button type="submit" wire:loading.attr="disabled" wire:target="send"
+                <button type="submit" x-show="!streaming" wire:loading.attr="disabled" wire:target="send"
                         class="bg-govviolet-600 hover:bg-govviolet-700 disabled:opacity-50 text-white text-sm font-semibold py-2.5 px-4 rounded-lg transition-colors flex-shrink-0">
                     <i class="ti ti-send"></i>
+                </button>
+                <button type="button" x-show="streaming" x-cloak x-on:click="stopGenerating()"
+                        class="bg-slate-600 hover:bg-slate-700 text-white text-sm font-semibold py-2.5 px-4 rounded-lg transition-colors flex-shrink-0"
+                        title="Stop generating">
+                    <i class="ti ti-player-stop-filled"></i>
                 </button>
             </form>
         </div>
@@ -138,6 +173,11 @@
             liveAssistantText: '',
             liveToolCalls: [],
             liveError: null,
+            abortController: null,
+
+            stopGenerating() {
+                this.abortController?.abort();
+            },
 
             toolLabel(name) {
                 return { search_knowledge: 'Searched the knowledge base', run_sql_query: 'Ran a query', make_chart: 'Made a chart' }[name] ?? name;
@@ -172,6 +212,7 @@
             },
             async sendToOrchestrator({ conversationId, message, model }) {
                 this.liveUserMessage = message;
+                this.abortController = new AbortController();
                 try {
                     const res = await fetch(`/chat/${conversationId}/send`, {
                         method: 'POST',
@@ -181,6 +222,7 @@
                             'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
                         },
                         body: JSON.stringify({ message, model }),
+                        signal: this.abortController.signal,
                     });
                     history.replaceState(null, '', `/chat/${conversationId}`);
 
@@ -199,9 +241,14 @@
                         }
                     }
                 } catch (e) {
-                    this.liveError = 'The connection was interrupted. Please try again.';
+                    // A user-initiated Stop click aborts the fetch on purpose — that is
+                    // not a connection failure, so it gets no error banner.
+                    if (e.name !== 'AbortError') {
+                        this.liveError = 'The connection was interrupted. Please try again.';
+                    }
                 } finally {
                     this.streaming = false;
+                    this.abortController = null;
                     this.$wire.call('syncAfterStream');
                 }
             },

@@ -37,6 +37,7 @@ from app.kb.retrieve import list_documents as kb_list_documents
 from app.kb.retrieve import retrieve as kb_retrieve
 from app.llm.client import OllamaClient
 from app.pipeline import run_query
+from app.sandbox.bwrap import stop_orphaned_sandbox_scopes
 from app.schemas import (
     ChatRequest,
     KbDocumentsResponse,
@@ -88,6 +89,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         register(MatlabEngine())
     if settings.enable_wolfram:
         register(WolframEngine())
+    try:
+        await stop_orphaned_sandbox_scopes()
+    except Exception as e:  # noqa: BLE001 — a cleanup sweep failing must not block startup
+        logger.warning("orphaned sandbox scope sweep failed", error=str(e))
     http_client = httpx.AsyncClient()
     ollama = OllamaClient(settings.ollama_base_url, http_client)
     ctx = AppContext(http_client=http_client, ollama=ollama)

@@ -3,6 +3,8 @@ SECURITY.md §2. ROADMAP.md Milestone 2 tests: wallclock kill, no network,
 no write outside /scratch, memory cap.
 """
 
+import asyncio
+import contextlib
 import tempfile
 from collections.abc import Iterator
 from pathlib import Path
@@ -11,8 +13,25 @@ import pandas as pd
 import pytest
 
 from app.config import settings
-from app.sandbox.bwrap import cleanup_scratch, run_in_sandbox
+from app.sandbox.bwrap import cleanup_scratch, run_in_sandbox, stop_orphaned_sandbox_scopes
 from app.schemas import SandboxTimeoutError, SandboxViolationError
+
+
+async def _active_sandbox_scopes() -> list[str]:
+    proc = await asyncio.create_subprocess_exec(
+        "systemctl",
+        "--user",
+        "list-units",
+        "--type=scope",
+        "--state=active",
+        "--no-legend",
+        "--plain",
+        "excise-sandbox-*.scope",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    stdout_bytes, _ = await proc.communicate()
+    return [line.split()[0] for line in stdout_bytes.decode().splitlines() if line.strip()]
 
 
 @pytest.fixture
@@ -61,6 +80,46 @@ async def test_memory_cap(data_path: Path, monkeypatch: pytest.MonkeyPatch) -> N
     # _TIMEOUT_EXIT_CODES note.
     with pytest.raises((SandboxTimeoutError, SandboxViolationError)):
         await run_in_sandbox(script=script, data_path=data_path)
+
+
+async def test_cancelling_the_render_kills_the_sandboxed_scope(data_path: Path) -> None:
+    # A client disconnect or the orchestrator shutting down cancels the awaiting
+    # coroutine — confirmed live that this used to leave the scope running (and
+    # holding its memory cgroup) until its own 15s wallclock timeout, or forever if
+    # the orchestrator itself got SIGKILLed first. run_in_sandbox must kill it
+    # immediately on cancellation instead.
+    script = "import time\ntime.sleep(30)\n"
+    task = asyncio.create_task(run_in_sandbox(script=script, data_path=data_path))
+    await asyncio.sleep(1)  # let bwrap actually start before cancelling
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await asyncio.sleep(0.5)  # give systemd a moment to report the scope as gone
+    assert await _active_sandbox_scopes() == []
+
+
+async def test_stop_orphaned_sandbox_scopes_stops_a_leaked_one() -> None:
+    # Simulates what a prior orchestrator's SIGKILL leaves behind: a scope with
+    # our naming convention, still running, with nothing left to wait on it.
+    leaked = await asyncio.create_subprocess_exec(
+        "systemd-run",
+        "--user",
+        "--scope",
+        "--collect",
+        "--unit=excise-sandbox-test-leaked.scope",
+        "--",
+        "sleep",
+        "30",
+    )
+    try:
+        await asyncio.sleep(1)
+        assert "excise-sandbox-test-leaked.scope" in await _active_sandbox_scopes()
+        await stop_orphaned_sandbox_scopes()
+        assert await _active_sandbox_scopes() == []
+    finally:
+        with contextlib.suppress(ProcessLookupError):
+            leaked.kill()
+            await leaked.wait()
 
 
 async def test_successful_script_writes_output(data_path: Path) -> None:

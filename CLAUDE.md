@@ -328,6 +328,42 @@ turn. `EVALUATION.md` §2 already priced pinning both models at once
 (~12–13 GB against this box's 30 GiB) as the fix for exactly this;
 `OPERATOR_SETUP.md` §Ollama runtime settings has the command to apply it.
 
+A desktop "application was stopped because the machine ran out of memory"
+notification during this same testing traced back to two separate things,
+not one. Most of it was `test_sandbox.py::test_memory_cap` doing exactly
+what it is supposed to: it deliberately allocates past a 64 MB cap inside a
+real sandbox cgroup to prove the memory limit actually kills a script, and
+GNOME surfaces that real kernel OOM-kill the same way it would an accidental
+one. The one genuine gap it surfaced alongside that: a `systemctl restart`
+of the orchestrator while a chart render was in flight left that render's
+`excise-sandbox-*.scope` running past the orchestrator's own death, holding
+its memory cgroup until it happened to hit its cap on its own several
+minutes later. `run_in_sandbox` now kills the sandboxed process immediately
+on cancellation, and a startup sweep stops any `excise-sandbox-*.scope`
+still active from a run that ended in a `SIGKILL` instead of a clean
+shutdown (`SECURITY.md` §2 After the render).
+
+Three usability gaps followed from hands-on use. Neither Chat nor Ask let a
+message or a query result be copied — no message on either page ever had a
+copy affordance, only the generated-SQL panel did. Both now carry a small
+copy button, the same pattern the SQL panel already used. Chat also had no
+way to stop a turn once sent, and stopping the browser's own `fetch()` alone
+would not have been enough: `ChatController::send()` relays the
+orchestrator's stream in a plain PHP loop with nothing checking whether the
+browser was even still there, so it kept driving the (expensive, CPU-only)
+Ollama call to completion regardless. The orchestrator's own turn-loop
+cancellation already existed (`MCP_ENGINES.md` §Chat and retrieval) — this
+was the missing link. The composer's send button now turns into a Stop
+button mid-turn (an `AbortController` on the fetch), and `send()` checks
+`connection_aborted()` on every relayed event and stops relaying the moment
+the browser disconnects, which is what actually reaches the orchestrator as
+a disconnect and cancels the in-flight call. And neither conversations nor
+questions could be removed at all. Both now get a soft delete (reversible,
+the Eloquent default) and a permanent delete from a per-item menu on their
+rail — permanent delete also clears the chart artifact and its rendered
+files, which carry no database-level foreign key to their owner and would
+otherwise be left behind.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures

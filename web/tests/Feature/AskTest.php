@@ -190,6 +190,45 @@ class AskTest extends TestCase
         $this->actingAs($other)->getJson(route('ask.stream', $query))->assertForbidden();
     }
 
+    public function test_deleting_a_query_soft_deletes_it(): void
+    {
+        $user = User::factory()->create();
+        $query = Query::create(['user_id' => $user->id, 'prompt' => 'x', 'status' => 'complete']);
+
+        Livewire::actingAs($user)->test(Ask::class)
+            ->call('deleteQuery', $query->id);
+
+        $this->assertSoftDeleted('queries', ['id' => $query->id]);
+    }
+
+    public function test_a_user_cannot_delete_another_users_query(): void
+    {
+        $owner = User::factory()->create();
+        $other = User::factory()->create();
+        $query = Query::create(['user_id' => $owner->id, 'prompt' => 'x', 'status' => 'complete']);
+
+        Livewire::actingAs($other)->test(Ask::class)
+            ->call('deleteQuery', $query->id)
+            ->assertForbidden();
+    }
+
+    public function test_force_deleting_a_query_removes_it_and_its_chart_artifact(): void
+    {
+        $user = User::factory()->create();
+        $query = Query::create(['user_id' => $user->id, 'prompt' => 'x', 'status' => 'complete']);
+        ChartArtifact::create([
+            'owner_type' => Query::class,
+            'owner_id' => $query->id,
+            'spec' => ['data' => [], 'layout' => []],
+        ]);
+
+        Livewire::actingAs($user)->test(Ask::class)
+            ->call('forceDeleteQuery', $query->id);
+
+        $this->assertDatabaseMissing('queries', ['id' => $query->id]);
+        $this->assertDatabaseMissing('chart_artifacts', ['owner_id' => $query->id]);
+    }
+
     /**
      * @param  list<array<string, mixed>>  $events
      */

@@ -3,6 +3,7 @@
 """
 
 import asyncio
+import contextlib
 import getpass
 import re
 import shutil
@@ -249,7 +250,20 @@ async def run_in_sandbox(
     proc = await asyncio.create_subprocess_exec(
         *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT
     )
-    stdout_bytes, _ = await proc.communicate()
+    try:
+        stdout_bytes, _ = await proc.communicate()
+    except asyncio.CancelledError:
+        # A client disconnect or the orchestrator shutting down cancels this
+        # awaiting coroutine, but `communicate()` being cancelled does not kill
+        # the process it was waiting on — `systemd-run --scope` execs straight
+        # into `timeout`/bwrap, so proc.pid is that scope's own main PID.
+        # Killing it here tears the scope down immediately instead of leaving
+        # it to run (and hold its memory cgroup) until its own wallclock
+        # timeout, or forever if the orchestrator itself was SIGKILLed first.
+        proc.kill()
+        with contextlib.suppress(ProcessLookupError):
+            await proc.wait()
+        raise
     stdout_tail = stdout_bytes.decode(errors="replace")[-4000:]
 
     if proc.returncode in _TIMEOUT_EXIT_CODES:
@@ -268,3 +282,32 @@ async def run_in_sandbox(
 
 def cleanup_scratch(scratch_dir: Path) -> None:
     shutil.rmtree(scratch_dir, ignore_errors=True)
+
+
+async def stop_orphaned_sandbox_scopes() -> None:
+    """A prior orchestrator process that systemd had to SIGKILL (its own
+    stop-sigterm timeout expiring while a request was still in flight) never
+    got to run the CancelledError handler above — its render, if any, is left
+    running as a still-active `excise-sandbox-*.scope` with no parent watching
+    it. Call this once at startup so the next orchestrator sweeps up after the
+    last one instead of leaving it to run until its own wallclock timeout or
+    memory cap.
+    """
+    list_proc = await asyncio.create_subprocess_exec(
+        "systemctl",
+        "--user",
+        "list-units",
+        "--type=scope",
+        "--state=active",
+        "--no-legend",
+        "--plain",
+        "excise-sandbox-*.scope",
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    stdout_bytes, _ = await list_proc.communicate()
+    units = [line.split()[0] for line in stdout_bytes.decode().splitlines() if line.strip()]
+    for unit in units:
+        logger.warning("stopping orphaned sandbox scope from a prior run", unit=unit)
+        stop_proc = await asyncio.create_subprocess_exec("systemctl", "--user", "stop", unit)
+        await stop_proc.wait()
