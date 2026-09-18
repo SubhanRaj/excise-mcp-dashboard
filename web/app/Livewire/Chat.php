@@ -21,6 +21,8 @@ class Chat extends Component
 
     public ?string $model = null;
 
+    public bool $includeChart = false;
+
     /**
      * Set once, at mount, and never touched again — the chat thread's Alpine
      * component keys off this instead of $conversationId so that send()
@@ -60,8 +62,10 @@ class Chat extends Component
             conversationId: $this->conversationId,
             message: $this->message,
             model: $this->model,
+            includeChart: $this->includeChart,
         );
         $this->message = '';
+        $this->includeChart = false;
     }
 
     public function syncAfterStream(): void

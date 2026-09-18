@@ -375,6 +375,39 @@ model can silently fail, not a guarantee; `chat/loop.py` now falls back to
 the tool result's own summary as the turn's answer when both attempts come
 back empty (`MCP_ENGINES.md` §Tools).
 
+Chat gained an explicit way to ask for a chart. `CHAT_SYSTEM_PROMPT` already
+limits `make_chart` to a call the model makes "only when a chart would
+help," so a single-number answer correctly gets no chart — but that leaves
+the request to make one entirely up to the model's own judgment. The
+composer's new chart toggle turns that judgment call into an explicit ask
+for one turn: checking it appends "Please include a chart to visualize the
+answer." to the copy of the message sent to the orchestrator; the message
+that `messages` stores and the transcript shows stays exactly what was typed
+(`ChatController::send`). The toggle first shipped on the same deferred
+`wire:model` the composer's textarea uses, which left its own on/off state
+invisible on click — a deferred binding only reaches the server on the next
+network round trip, and a lone checkbox click causes none. `wire:model.live`
+fixed that, and the active state is now a solid fill matching the send
+button's own convention.
+
+`shops` mutates in place from each IESCMS import, so nothing on the row
+itself says which reporting month its current state reflects — only
+`created_at`/`updated_at` (ETL load time, already the business date
+`guard_sql` rejects, above). A future monthly source that carries no per-row
+date at all — a shops roster, a monthly revenue/quota/enforcement figure —
+would have no period to record. `etl.source_registry.requires_period`
+and `etl.ingestion_runs.report_period` give such a source a place to state
+its month explicitly (`etl sync --source NAME --period 2026-08`), recorded
+on the run's own row instead of left to whenever the script happened to
+execute; `etl/etl/run.py` refuses to run a `requires_period` source with no
+`--period` given (`DATA_PIPELINE.md` §Periodic sources without a per-row
+date). `iescms_dispatch` itself needs none of this, since its rows already
+carry real dates — no source needs it yet, so this is groundwork for
+whichever one lands first. The period-stamped history table a mutate-in-place
+target would eventually need — `shop_years` already answers the equivalent
+question at financial-year grain — gets built alongside that source, once
+one is scoped.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures
@@ -544,6 +577,18 @@ consumer appears.
   Maatwebsite Excel, neither of which appears anywhere in the fleet. `etl/`'s
   own `.xlsx` ingestion is a separate, already-settled choice: `openpyxl` on
   the Python side (`etl/etl/sources/excel.py`).
+- **A periodic source states its reporting month explicitly, as a CLI flag.**
+  `etl.source_registry.requires_period` + `etl.ingestion_runs.report_period`
+  (`DATA_PIPELINE.md` §Periodic sources without a per-row date): `etl sync
+  --source NAME --period 2026-08`, since this app's ETL is a scripted CLI
+  (`etl sync`, argparse) run by systemd timers. `excise-budget-tracker`'s
+  Livewire grant-import screen is the only sibling app with an equivalent
+  period picker — its own free-text `as_of_month`, stamped straight onto the
+  fact row it imports — and this port keeps the same idea of asking the
+  operator outright, in the shape this app's own ETL already takes. No source
+  needs this yet; it exists so the first one that does — a shops roster, a
+  monthly revenue/quota/enforcement figure — has a place to put its period
+  instead of falling back to `created_at`.
 
 ## Laravel conventions (`web/`)
 

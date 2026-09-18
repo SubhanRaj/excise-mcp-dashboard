@@ -89,6 +89,37 @@ class ChatTest extends TestCase
         $this->assertNotNull(ChartArtifact::where('owner_id', $toolCall->id)->first()->spec);
     }
 
+    public function test_the_chart_toggle_hints_the_orchestrator_without_altering_the_stored_message(): void
+    {
+        // make_chart is the model's own judgment call ("only when a chart would help") and
+        // correctly skips a single-number answer — the composer's toggle turns that judgment
+        // into an explicit ask for one turn, without putting the instruction in the message
+        // the user actually typed and sees in the transcript.
+        $user = User::factory()->create();
+        $conversation = Conversation::create(['user_id' => $user->id]);
+
+        Http::fake([
+            '*/chat' => Http::response($this->ndjson([
+                ['token' => 'Here it is.'],
+                ['done' => ['tool_calls_count' => 0, 'prompt_tokens' => 10, 'completion_tokens' => 5]],
+            ]), 200),
+        ]);
+
+        $this->actingAs($user)->post(route('chat.send', $conversation), [
+            'message' => 'How many CL5C shops in Lucknow in August 2026?',
+            'includeChart' => true,
+        ])->streamedContent();
+
+        $this->assertDatabaseHas('messages', [
+            'role' => 'user',
+            'content' => 'How many CL5C shops in Lucknow in August 2026?',
+        ]);
+
+        Http::assertSent(function ($request) {
+            return str_contains($request['message'] ?? '', 'Please include a chart to visualize the answer.');
+        });
+    }
+
     public function test_an_unknown_model_key_is_refused(): void
     {
         $user = User::factory()->create();

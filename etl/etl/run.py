@@ -5,6 +5,7 @@ DATA_PIPELINE.md §ETL pipeline design.
 import argparse
 import asyncio
 from collections.abc import Awaitable, Callable, Iterator
+from datetime import date, datetime
 
 import asyncpg
 import structlog
@@ -40,14 +41,14 @@ def _dispatch_source(registry_row: asyncpg.Record) -> Iterator[RawRow]:
     raise ValueError(f"unsupported source kind for etl core: {source!r}")
 
 
-async def sync_one(pool: asyncpg.Pool, registry_row: asyncpg.Record) -> None:
+async def sync_one(pool: asyncpg.Pool, registry_row: asyncpg.Record, period: date | None) -> None:
     name = registry_row["name"]
     async with pool.acquire() as conn:
         if not await db.try_advisory_lock(conn, name):
             log.info("etl.sync.skipped_locked", source=name)
             return
         try:
-            await _run_source(conn, registry_row)
+            await _run_source(conn, registry_row, period)
         finally:
             await db.advisory_unlock(conn, name)
 
@@ -86,12 +87,43 @@ async def _finish_run(
     )
 
 
-async def _run_source(conn: asyncpg.Connection, registry_row: asyncpg.Record) -> None:
+async def _run_source(
+    conn: asyncpg.Connection, registry_row: asyncpg.Record, period: date | None
+) -> None:
     name = registry_row["name"]
+
+    # A source registered with requires_period reports a whole-file period with no
+    # per-row business date (DATA_PIPELINE.md §Periodic sources without a per-row
+    # date) — refuse before any I/O runs, the same way an unrecognised source kind
+    # already is above, rather than silently falling back to run time.
+    if registry_row["requires_period"] and period is None:
+        run_id = await conn.fetchval(
+            "INSERT INTO etl.ingestion_runs (source, source_ref) VALUES ($1, $2) RETURNING id",
+            registry_row["source"],
+            registry_row["source_ref"],
+        )
+        missing_period_error = (
+            f"source {name!r} requires --period (e.g. --period 2026-08) but none was given"
+        )
+        log.error("etl.sync.failed", source=name, error=missing_period_error)
+        await _finish_run(
+            conn,
+            registry_row,
+            run_id,
+            seen=0,
+            upserted=0,
+            quarantined=0,
+            error=missing_period_error,
+            status="failed",
+        )
+        return
+
     run_id = await conn.fetchval(
-        "INSERT INTO etl.ingestion_runs (source, source_ref) VALUES ($1, $2) RETURNING id",
+        "INSERT INTO etl.ingestion_runs (source, source_ref, report_period) VALUES ($1, $2, $3) "
+        "RETURNING id",
         registry_row["source"],
         registry_row["source_ref"],
+        period,
     )
 
     if registry_row["source"] in ("pdf_pipeline", "iescms_dispatch"):
@@ -174,7 +206,7 @@ async def _run_source(conn: asyncpg.Connection, registry_row: asyncpg.Record) ->
     )
 
 
-async def sync(source: str | None, all_sources: bool) -> None:
+async def sync(source: str | None, all_sources: bool, period: date | None = None) -> None:
     pool = await db.get_pool()
     async with pool.acquire() as conn:
         if source:
@@ -186,8 +218,14 @@ async def sync(source: str | None, all_sources: bool) -> None:
         else:
             raise ValueError("pass --source NAME or --all")
     for row in rows:
-        await sync_one(pool, row)
+        await sync_one(pool, row, period)
     await db.close_pool()
+
+
+def _parse_period(value: str | None) -> date | None:
+    if value is None:
+        return None
+    return datetime.strptime(value, "%Y-%m").date().replace(day=1)
 
 
 def main() -> None:
@@ -196,6 +234,9 @@ def main() -> None:
     sync_parser = sub.add_parser("sync")
     sync_parser.add_argument("--source")
     sync_parser.add_argument("--all", action="store_true")
+    sync_parser.add_argument(
+        "--period", help="reporting month for a requires_period source, as YYYY-MM (e.g. 2026-08)"
+    )
     args = parser.parse_args()
     if args.command == "sync":
-        asyncio.run(sync(args.source, args.all))
+        asyncio.run(sync(args.source, args.all, _parse_period(args.period)))

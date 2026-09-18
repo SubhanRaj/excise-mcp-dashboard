@@ -314,6 +314,7 @@ CREATE TABLE etl.ingestion_runs (
     id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     source        TEXT NOT NULL,           -- 'google_sheet' | 'google_drive' | 'excel' | 'csv'
     source_ref    TEXT NOT NULL,           -- sheet id / drive file id / path
+    report_period DATE,                    -- first-of-month; see §Periodic sources below
     started_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     finished_at   TIMESTAMPTZ,
     status        TEXT NOT NULL DEFAULT 'running',  -- running | ok | failed | partial
@@ -332,16 +333,45 @@ CREATE TABLE etl.quarantine (
 );
 
 CREATE TABLE etl.source_registry (        -- what to sync and how often
-    id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    name          TEXT NOT NULL UNIQUE,
-    source        TEXT NOT NULL,
-    source_ref    TEXT NOT NULL,
-    target_table  TEXT NOT NULL,
-    schedule      TEXT NOT NULL,           -- cron expression
-    enabled       BOOLEAN NOT NULL DEFAULT true,
-    last_run_id   BIGINT REFERENCES etl.ingestion_runs(id)
+    id               BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    name             TEXT NOT NULL UNIQUE,
+    source           TEXT NOT NULL,
+    source_ref       TEXT NOT NULL,
+    target_table     TEXT NOT NULL,
+    schedule         TEXT NOT NULL,           -- cron expression
+    enabled          BOOLEAN NOT NULL DEFAULT true,
+    requires_period  BOOLEAN NOT NULL DEFAULT false,  -- see §Periodic sources below
+    last_run_id      BIGINT REFERENCES etl.ingestion_runs(id)
 );
 ```
+
+### Periodic sources without a per-row date
+
+A source like `iescms_dispatch` stamps a real business date on every row it
+produces (`transport_pass_issued_at` and the rest), so `dispatches` never
+needs to be told what period it belongs to — each row already says. Some
+future sources won't: a monthly shops roster, or a monthly revenue / quota /
+enforcement figure, arrives as one file that represents a whole reporting
+month with no such column on any individual row. Nothing marks that period
+once the file has been read, other than `created_at`, which is when the ETL
+happened to run — already documented as unusable for a business-date
+question (`guard_sql`, `MCP_ENGINES.md` §Pipeline stages).
+
+A source registered with `etl.source_registry.requires_period = true` makes
+the operator state that period explicitly, as `etl sync --source NAME
+--period 2026-08`. `etl/etl/run.py` records the parsed period (first of the
+named month) on that run's `etl.ingestion_runs.report_period`, and refuses to
+run the source at all without one, recording a typed `failed` run row
+instead of guessing at "now." A source not registered this way ignores
+`--period` entirely and behaves exactly as it did before this existed.
+
+This only carries the period onto the run's own bookkeeping row. A table
+that mutates in place from such a source — the way `shops` already does from
+`iescms_dispatch` — still only reflects its latest import once one lands.
+Answering "what did this look like as of period X" once a later import has
+overwritten it needs its own period-stamped table, the way `shop_years`
+already answers the equivalent question at financial-year grain — built
+alongside whichever source turns out to need it first.
 
 ### Indexes
 

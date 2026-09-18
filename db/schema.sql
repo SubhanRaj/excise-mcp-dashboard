@@ -286,6 +286,10 @@ CREATE TABLE IF NOT EXISTS etl.ingestion_runs (
     id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     source        TEXT NOT NULL,           -- 'google_sheet' | 'google_drive' | 'excel' | 'csv' | 'pdf_pipeline' | 'upload'
     source_ref    TEXT NOT NULL,           -- sheet id / drive file id / path
+    report_period DATE,                    -- first-of-month; the reporting period the operator
+                                            -- declared via --period, for a source registered with
+                                            -- requires_period (DATA_PIPELINE.md §Periodic sources
+                                            -- without a per-row date). NULL for every other source.
     started_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     finished_at   TIMESTAMPTZ,
     status        TEXT NOT NULL DEFAULT 'running',  -- running | ok | failed | partial
@@ -294,6 +298,11 @@ CREATE TABLE IF NOT EXISTS etl.ingestion_runs (
     rows_quarantined INTEGER DEFAULT 0,
     error         TEXT
 );
+
+-- ADD COLUMN IF NOT EXISTS, not just the CREATE TABLE column list above, so
+-- re-running this file against the already-provisioned excise_bank (this
+-- box) picks the column up too, not only a fresh database.
+ALTER TABLE etl.ingestion_runs ADD COLUMN IF NOT EXISTS report_period DATE;
 
 CREATE TABLE IF NOT EXISTS etl.quarantine (
     id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -304,15 +313,21 @@ CREATE TABLE IF NOT EXISTS etl.quarantine (
 );
 
 CREATE TABLE IF NOT EXISTS etl.source_registry (        -- what to sync and how often
-    id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    name          TEXT NOT NULL UNIQUE,
-    source        TEXT NOT NULL,
-    source_ref    TEXT NOT NULL,
-    target_table  TEXT NOT NULL,
-    schedule      TEXT NOT NULL,           -- cron expression
-    enabled       BOOLEAN NOT NULL DEFAULT true,
-    last_run_id   BIGINT REFERENCES etl.ingestion_runs(id)
+    id               BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    name             TEXT NOT NULL UNIQUE,
+    source           TEXT NOT NULL,
+    source_ref       TEXT NOT NULL,
+    target_table     TEXT NOT NULL,
+    schedule         TEXT NOT NULL,           -- cron expression
+    enabled          BOOLEAN NOT NULL DEFAULT true,
+    requires_period  BOOLEAN NOT NULL DEFAULT false,  -- a whole-file period with no per-row
+                                                       -- business date (e.g. a monthly shops
+                                                       -- roster) — `etl sync` refuses to run this
+                                                       -- source without --period
+    last_run_id      BIGINT REFERENCES etl.ingestion_runs(id)
 );
+
+ALTER TABLE etl.source_registry ADD COLUMN IF NOT EXISTS requires_period BOOLEAN NOT NULL DEFAULT false;
 
 CREATE TABLE IF NOT EXISTS etl.district_aliases (  -- known spelling variants, seeded as they turn up
     alias         CITEXT NOT NULL PRIMARY KEY,

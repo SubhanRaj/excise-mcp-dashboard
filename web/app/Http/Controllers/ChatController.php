@@ -34,6 +34,7 @@ class ChatController extends Controller
         $validated = $request->validate([
             'message' => ['required', 'string', 'max:4000'],
             'model' => ['nullable', 'string'],
+            'includeChart' => ['nullable', 'boolean'],
         ]);
 
         $model = $validated['model'] ?? $conversation->model;
@@ -42,6 +43,14 @@ class ChatController extends Controller
         }
 
         $userMessage = $conversation->messages()->create(['role' => 'user', 'content' => $validated['message']]);
+
+        // The model only charts a result "when it would help" (CHAT_SYSTEM_PROMPT) — left to
+        // its own judgment, a single-number answer correctly gets no chart. The composer's
+        // chart toggle turns that judgment call into an explicit ask for this one turn,
+        // without putting the instruction in the message the user actually typed.
+        $orchestratorMessage = ($validated['includeChart'] ?? false)
+            ? $validated['message'].' Please include a chart to visualize the answer.'
+            : $validated['message'];
 
         $history = $conversation->messages()
             ->where('id', '!=', $userMessage->id)
@@ -60,7 +69,7 @@ class ChatController extends Controller
 
         $assistantMessage = $conversation->messages()->create(['role' => 'assistant', 'content' => '', 'model' => $model]);
 
-        return response()->stream(function () use ($conversation, $assistantMessage, $validated, $model, $history, $orchestrator) {
+        return response()->stream(function () use ($conversation, $assistantMessage, $orchestratorMessage, $model, $history, $orchestrator) {
             $assistantText = '';
             $pendingToolCall = null;
             $lastToolCallId = null;
@@ -70,7 +79,7 @@ class ChatController extends Controller
             try {
                 foreach ($orchestrator->chatStream([
                     'conversation_id' => $conversation->id,
-                    'message' => $validated['message'],
+                    'message' => $orchestratorMessage,
                     'history' => $history,
                     'model' => $model,
                 ]) as $event) {

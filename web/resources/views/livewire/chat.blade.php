@@ -134,6 +134,12 @@
                     @endforeach
                 </select>
                 @endif
+                <label class="flex items-center gap-1.5 text-xs font-medium px-2.5 py-2 rounded-lg border flex-shrink-0 cursor-pointer select-none transition-colors {{ $includeChart ? 'border-govviolet-600 bg-govviolet-600 text-white' : 'border-slate-200 text-slate-500 hover:border-slate-300 hover:text-slate-700 dark:border-slate-700 dark:text-slate-400 dark:hover:text-slate-200' }}"
+                       title="Ask for a chart with this answer, instead of leaving it to the model">
+                    <input type="checkbox" wire:model.live="includeChart" class="sr-only">
+                    <i class="ti ti-chart-bar"></i>
+                    <span>Chart</span>
+                </label>
                 <textarea wire:model="message" x-ref="composer" rows="1" placeholder="Ask anything..."
                           x-on:input="autoGrow($el)"
                           x-on:keydown.enter="if (! $event.shiftKey) { $event.preventDefault(); $el.closest('form').requestSubmit(); }"
@@ -210,7 +216,7 @@
             destroy() {
                 window.removeEventListener('chat-message-ready', this._onMessageReady);
             },
-            async sendToOrchestrator({ conversationId, message, model }) {
+            async sendToOrchestrator({ conversationId, message, model, includeChart }) {
                 this.liveUserMessage = message;
                 this.abortController = new AbortController();
                 try {
@@ -221,7 +227,7 @@
                             'Accept': 'application/x-ndjson',
                             'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
                         },
-                        body: JSON.stringify({ message, model }),
+                        body: JSON.stringify({ message, model, includeChart }),
                         signal: this.abortController.signal,
                     });
                     history.replaceState(null, '', `/chat/${conversationId}`);
