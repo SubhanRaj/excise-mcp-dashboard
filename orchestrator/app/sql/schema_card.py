@@ -46,7 +46,12 @@ VIEW_NOTES = {
     "dispatch_strength_lines": (
         "per-strength breakdown of a country-liquor dispatch; one or more rows per "
         "analytics.dispatches row via dispatch_id. Use dispatches directly unless the "
-        "question is specifically about strength_label breakdowns."
+        "question is specifically about strength_label breakdowns. This view carries no "
+        "date column of its own — transport_pass_issued_at lives on analytics.dispatches "
+        "only, so a strength-breakdown question that also needs a date filter (e.g. "
+        "'country liquor dispatches by strength in August 2026') must JOIN dispatches ON "
+        "dispatches.id = dispatch_strength_lines.dispatch_id and filter on "
+        "dispatches.transport_pass_issued_at, never on dispatch_strength_lines directly."
     ),
     "brands": "registered liquor brands.",
     "brand_prices": "MRP per brand per pack size per financial year.",

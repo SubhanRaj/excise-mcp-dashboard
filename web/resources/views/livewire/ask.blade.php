@@ -3,16 +3,22 @@
         queryId: @entangle('activeQueryId'),
         status: @js($activeQuery?->status),
         stage: @js($activeQuery?->current_stage),
-        poller: null,
-        stageLabel() {
-            const labels = {
-                plan_sql: 'Preparing query', guard_sql: 'Preparing query',
-                run_sql: 'Querying database',
-                plan_plot: 'Rendering chart', render: 'Rendering chart',
-                summarize: 'Summarizing',
-            };
-            return labels[this.stage] ?? 'Working...';
+        // Every distinct stage seen so far, oldest first — rendered as a growing checklist
+        // (ti-check for everything but the last entry, a spinner on the last) instead of one
+        // line of text overwriting itself, so a run that takes a while shows forward progress
+        // rather than looking stuck on a single spinner (plan_sql -> guard_sql -> run_sql ->
+        // plan_plot -> render, skipped for a single-row result -> summarize, pipeline.py).
+        stageLog: @js($activeQuery?->current_stage ? [$activeQuery->current_stage] : []),
+        stageLabels: {
+            plan_sql: 'Planning the query', guard_sql: 'Validating the query',
+            run_sql: 'Querying the database',
+            plan_plot: 'Planning the chart', render: 'Rendering the chart',
+            summarize: 'Summarizing the result',
         },
+        stageLabel(name) {
+            return this.stageLabels[name] ?? name;
+        },
+        poller: null,
         start() {
             this.stop();
             this.poller = setInterval(() => this.poll(), 700);
@@ -34,6 +40,9 @@
                 .then((data) => {
                     this.status = data.status;
                     this.stage = data.current_stage;
+                    if (this.stage && this.stageLog[this.stageLog.length - 1] !== this.stage) {
+                        this.stageLog.push(this.stage);
+                    }
                     if (data.status === 'complete' || data.status === 'failed') {
                         this.stop();
                         $wire.call('refreshResult');
@@ -42,7 +51,7 @@
         },
     }"
     x-init="if (queryId && status !== 'complete' && status !== 'failed') start()"
-    x-on:query-started.window="status = 'pending'; stage = null; start()"
+    x-on:query-started.window="status = 'pending'; stage = null; stageLog = []; start()"
     class="flex flex-col lg:flex-row gap-6"
 >
     {{-- Composer --}}
@@ -112,9 +121,22 @@
             <p class="text-sm text-slate-400 dark:text-slate-500 mt-4">Ask a question to get started.</p>
         </div>
         @elseif($activeQuery->status === 'pending' || $activeQuery->status === 'running')
-        <div class="stat-card justify-center text-center flex-col py-16">
-            <i class="ti ti-loader-2 animate-spin text-govviolet-600 text-2xl"></i>
-            <p class="text-sm text-slate-500 dark:text-slate-400 mt-4" x-text="stageLabel()">Working...</p>
+        <div class="stat-card justify-center flex-col py-12">
+            <template x-if="stageLog.length === 0">
+                <div class="flex flex-col items-center text-center">
+                    <i class="ti ti-loader-2 animate-spin text-govviolet-600 text-2xl"></i>
+                    <p class="text-sm text-slate-500 dark:text-slate-400 mt-4">Starting...</p>
+                </div>
+            </template>
+            <ul class="space-y-2.5 w-full max-w-xs mx-auto" x-show="stageLog.length > 0">
+                <template x-for="(name, i) in stageLog" :key="name">
+                    <li class="flex items-center gap-2.5 text-sm"
+                        :class="i === stageLog.length - 1 ? 'text-slate-700 dark:text-slate-200 font-medium' : 'text-slate-400 dark:text-slate-500'">
+                        <i class="ti flex-shrink-0" :class="i === stageLog.length - 1 ? 'ti-loader-2 animate-spin text-govviolet-600' : 'ti-check text-green-600'"></i>
+                        <span x-text="stageLabel(name)"></span>
+                    </li>
+                </template>
+            </ul>
         </div>
         @elseif($activeQuery->status === 'failed')
         <div class="flex items-start gap-2 text-sm text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-700 rounded-lg px-4 py-3">
