@@ -107,6 +107,33 @@ async def test_a_narrated_fake_tool_call_retries_once_without_tools() -> None:
     assert not any(isinstance(e, ToolCallEvent) for e in events)
 
 
+async def test_a_narrated_sql_guess_with_no_tool_call_retries_once() -> None:
+    # Confirmed live: asked a two-metric question, the model skipped run_sql_query
+    # entirely and instead wrote "let me try running the following query" followed
+    # by a guessed SQL statement against a table that doesn't exist — exactly what
+    # CHAT_SYSTEM_PROMPT tells it never to do, since it has never seen the schema.
+    # The preamble before the fence still streams live (it doesn't look degenerate
+    # until the "```sql" marker itself arrives) — the fenced SQL is what gets
+    # withheld, and a clean retry follows it rather than ending the turn on a
+    # guessed, wrong query.
+    ollama = _FakeOllama(
+        [
+            [
+                _FakeChunk(content="Let me try running the following query:\n\n"),
+                _FakeChunk(content="```sql\nSELECT SUM(revenue) FROM excise_data;\n```"),
+            ],
+            [_FakeChunk(content="Here is the total for August 2026.")],
+        ]
+    )
+    events = await _events(ollama)
+    tokens = "".join(e.delta for e in events if isinstance(e, TokenEvent))
+    assert tokens == (
+        "Let me try running the following query:\n\nHere is the total for August 2026."
+    )
+    assert "SELECT" not in tokens
+    assert not any(isinstance(e, ToolCallEvent) for e in events)
+
+
 async def test_a_turn_with_one_tool_call_dispatches_and_continues(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

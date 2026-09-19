@@ -408,6 +408,24 @@ target would eventually need — `shop_years` already answers the equivalent
 question at financial-year grain — gets built alongside that source, once
 one is scoped.
 
+The chart toggle's switch had a second bug past its wire:model one: Tailwind's
+`peer-checked:*` only applies through a CSS sibling selector, which needs the
+element carrying it to be a direct sibling of the `.peer`-marked checkbox —
+the toggle's thumb `<span>` was nested inside its track `<span>` instead, a
+sibling of a sibling, so clicking it tinted the track blue but never slid the
+thumb. Both spans are now direct siblings of the checkbox under one
+positioning wrapper. Separately, live testing found a fifth shape of Chat's
+tool-calling reliability gap: asked for two metrics in one question (revenue
+and volume together), Llama skipped `run_sql_query` and wrote its own guessed
+SQL against a table that doesn't exist, narrated as "let me try running the
+following query" — the same class of failure as the narrated-fake-call and
+bare-`"{}"` cases, just a longer preamble before the fake content
+(`MCP_ENGINES.md` §Tools). Fine-tuning the chat model on this app's own
+transcripts came up as an alternative fix and is declined for now — every
+shape of this failure so far has closed with a prompt-wording change plus a
+matching `chat/loop.py` retry, not a retrain (`EVALUATION.md` §Right-sizing
+item 16).
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures
@@ -567,6 +585,16 @@ consumer appears.
   heavy dependency, some with default telemetry, built around self-editing
   memory the model should not have. `EVALUATION.md` §Right-sizing item 14,
   `MCP_ENGINES.md` §Memory.
+- **Tool-calling reliability: fix the prompt and add a retry, don't fine-tune
+  the model.** Every tool-calling breakdown found in live chat use so far —
+  a bare `"{}"`, a narrated fake call, a hallucinated `null` argument,
+  guessed SQL written as prose — has closed with a `CHAT_SYSTEM_PROMPT`
+  wording fix plus a matching `chat/loop.py` retry, not a retrain.
+  LoRA/QLoRA fine-tuning is declined until that pattern stops working: it
+  needs a labeled dataset (no real transcript volume yet), training-grade
+  GPU headroom, and its own eval harness — a project on its own, for a
+  problem that a one-line prompt change has closed every time so far.
+  `EVALUATION.md` §Right-sizing item 16, `MCP_ENGINES.md` §Tools.
 - **XLSX export: `openspout/openspout`, matching the sibling apps.** It is
   already the one Excel library across the Laravel fleet —
   `upexcise-stats-dashboard`'s `ExportService` writes `.xlsx` with it,

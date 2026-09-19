@@ -137,8 +137,9 @@
                 <label class="flex items-center gap-2 text-xs font-medium px-3 py-2.5 rounded-lg border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 flex-shrink-0 cursor-pointer select-none"
                        title="Ask for a chart with this answer, instead of leaving it to the model">
                     <span>Visualize</span>
-                    <input type="checkbox" wire:model.live="includeChart" class="sr-only peer">
-                    <span class="w-9 h-5 rounded-full bg-slate-300 dark:bg-slate-600 peer-checked:bg-govviolet-600 relative transition-colors">
+                    <span class="relative inline-block w-9 h-5 flex-shrink-0">
+                        <input type="checkbox" wire:model.live="includeChart" class="sr-only peer">
+                        <span class="absolute inset-0 rounded-full bg-slate-300 dark:bg-slate-600 peer-checked:bg-govviolet-600 transition-colors"></span>
                         <span class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform peer-checked:translate-x-4"></span>
                     </span>
                 </label>

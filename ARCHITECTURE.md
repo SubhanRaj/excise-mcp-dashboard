@@ -189,7 +189,7 @@ gate (no Access), the knowledge base, the chat window with a model picker,
 Google OAuth, and the output store. 1U is the system flow, 2U the enforcement
 layers, 3 the chat and ingestion paths, 4 the output artifact lifecycle.
 
-### Diagram 1 (as supplied in the brief): comprehensive system flow
+### Diagram 1 (as supplied in the brief): system flow
 
 ```mermaid
 flowchart TD

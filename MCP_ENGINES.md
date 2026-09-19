@@ -387,6 +387,18 @@ keeps the most recent tool result and, if both attempts still come back
 degenerate, surfaces that result's own summary as the turn's answer instead
 of ending on nothing.
 
+A fifth shape mixed a real tool call with hallucinated content: asked a
+two-metric question (revenue and volume together), Llama wrote its own
+guessed SQL against a table that doesn't exist, in a fenced code block
+introduced by "let me try running the following query" — skipping
+`run_sql_query` even though `CHAT_SYSTEM_PROMPT` already said never to
+invent a table or column name. `CHAT_SYSTEM_PROMPT` now names the narrated
+SQL itself, not just the decision to call a tool, and `chat/loop.py`'s
+degenerate-reply check treats a turn that made no tool call and contains a
+fenced ```sql block the same way it treats a bare `"{}"` or a narrated fake
+call — held back and given one retry, rather than shown to the user as a
+final answer against a table that was never real.
+
 The loop:
 
 ```

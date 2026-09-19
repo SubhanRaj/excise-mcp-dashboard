@@ -648,6 +648,30 @@ Recommendations, each reversible:
     ROLE` + two `GRANT`s away, following `db/roles.sql`'s existing pattern for
     `excise_ro`. Toggle either on when an officer actually asks to connect.
 
+16. **Tool-calling reliability: prompt wording and a retry backstop, not a
+    fine-tune.** Llama 3.1 8B's tool-calling template has broken down several
+    distinct ways in live use — a bare `"{}"` on a trivial message, a fake
+    tool call narrated as text, a hallucinated `null` argument, and (most
+    recently) guessed SQL against a table that doesn't exist, written out in
+    prose instead of a real `run_sql_query` call (`MCP_ENGINES.md` §Tools).
+    Every one of these was fixed the same way: tighten `CHAT_SYSTEM_PROMPT`
+    to name the failure directly, and add a matching check in
+    `chat/loop.py` that holds back the degenerate reply and retries once —
+    the same retry-once shape `guard_sql`/`run_sql` already use for a bad
+    first attempt.
+
+    LoRA/QLoRA fine-tuning the chat model on this app's own tool-call
+    transcripts is declined for now. It needs a labeled dataset (this app
+    doesn't yet have enough real chat volume to build one), a GPU with
+    training headroom well past what inference needs, and an eval harness to
+    confirm a tune doesn't regress plain conversation — a project of its own,
+    against a class of failure the prompt-and-retry pattern above has so far
+    always closed within one code change. Revisit only if a specific failure
+    mode keeps recurring after its matching prompt/retry fix ships, or once
+    `messages` / `message_tool_calls` holds enough real transcript volume to
+    build a training set from actual departmental questions rather than
+    guessed ones.
+
 The full four-engine, MCP-server, heuristic-router design stays documented in
 `ARCHITECTURE.md` and `MCP_ENGINES.md` as the target shape if requirements grow.
 The recommendation is to build the reduced version first and let real use pull

@@ -73,11 +73,20 @@ def _is_degenerate(text: str) -> bool:
     the full name itself, mid- or post-call) counts as degenerate too, so this
     accumulates unstreamed the same way a bare "{}" does instead of leaking the
     fake call's tokens to the user one at a time as they arrive.
+
+    A third shape, also confirmed live: instead of calling run_sql_query, the
+    model narrates "let me try running the following query" and writes its own
+    guessed SQL in a fenced code block — exactly what CHAT_SYSTEM_PROMPT tells
+    it never to do, since it has never seen the schema. A fenced sql block is
+    never a legitimate final answer in this domain, so its presence alone
+    marks the reply degenerate.
     """
     stripped = text.strip()
     if stripped.strip("{}") == "":
         return True
-    return any(stripped.startswith(name[: len(stripped)]) for name in _TOOL_NAMES)
+    if any(stripped.startswith(name[: len(stripped)]) for name in _TOOL_NAMES):
+        return True
+    return "```sql" in stripped.lower()
 
 
 def _build_messages(message: str, history: list[ChatTurn]) -> list[dict[str, object]]:
