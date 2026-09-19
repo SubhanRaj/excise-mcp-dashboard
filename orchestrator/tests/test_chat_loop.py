@@ -112,10 +112,11 @@ async def test_a_narrated_sql_guess_with_no_tool_call_retries_once() -> None:
     # entirely and instead wrote "let me try running the following query" followed
     # by a guessed SQL statement against a table that doesn't exist — exactly what
     # CHAT_SYSTEM_PROMPT tells it never to do, since it has never seen the schema.
-    # The preamble before the fence still streams live (it doesn't look degenerate
-    # until the "```sql" marker itself arrives) — the fenced SQL is what gets
-    # withheld, and a clean retry follows it rather than ending the turn on a
-    # guessed, wrong query.
+    # The whole reply streams live — a fenced sql block can't be told apart from
+    # ordinary prose until most of it has arrived, and withholding a live stream
+    # for that long is what broke a real turn's connection (it went silent long
+    # enough for the browser to drop it as interrupted). A clean retry streams
+    # right after, rather than ending the turn on the guessed, wrong query.
     ollama = _FakeOllama(
         [
             [
@@ -128,9 +129,10 @@ async def test_a_narrated_sql_guess_with_no_tool_call_retries_once() -> None:
     events = await _events(ollama)
     tokens = "".join(e.delta for e in events if isinstance(e, TokenEvent))
     assert tokens == (
-        "Let me try running the following query:\n\nHere is the total for August 2026."
+        "Let me try running the following query:\n\n"
+        "```sql\nSELECT SUM(revenue) FROM excise_data;\n```"
+        "Here is the total for August 2026."
     )
-    assert "SELECT" not in tokens
     assert not any(isinstance(e, ToolCallEvent) for e in events)
 
 

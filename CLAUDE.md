@@ -426,6 +426,21 @@ shape of this failure so far has closed with a prompt-wording change plus a
 matching `chat/loop.py` retry, not a retrain (`EVALUATION.md` §Right-sizing
 item 16).
 
+That fifth-shape fix immediately caused a live regression of its own: it
+withheld the guessed SQL from the stream entirely while deciding whether to
+retry, which meant sending nothing at all to the browser for the whole
+length of that generation plus the retry — long enough on a real turn that
+the connection dropped as interrupted before the correction ever streamed,
+and the composer sat on its typing indicator the entire time with nothing
+to show for it. A fenced sql block can't be told apart from ordinary prose
+until most of it has arrived, unlike the bare-`"{}"` and narrated-call
+checks either of which resolve within a few characters, so holding it back
+costs a lot more silence for the same guard. `chat/loop.py` now only checks
+for a fenced sql block once a turn's full text is in, deciding whether to
+retry, and no longer withholds it from the live stream while that decision
+is pending — the guessed SQL streams as it always did, and the correction
+follows right after it (`MCP_ENGINES.md` §Tools).
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures

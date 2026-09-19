@@ -74,19 +74,40 @@ def _is_degenerate(text: str) -> bool:
     accumulates unstreamed the same way a bare "{}" does instead of leaking the
     fake call's tokens to the user one at a time as they arrive.
 
-    A third shape, also confirmed live: instead of calling run_sql_query, the
-    model narrates "let me try running the following query" and writes its own
-    guessed SQL in a fenced code block — exactly what CHAT_SYSTEM_PROMPT tells
-    it never to do, since it has never seen the schema. A fenced sql block is
-    never a legitimate final answer in this domain, so its presence alone
-    marks the reply degenerate.
+    Both checks resolve within a few characters, so holding matching text back
+    from the live stream costs nothing. `_needs_retry` below adds a third,
+    slower-to-detect shape on top of this one — see its own docstring for why
+    that one only gates the retry decision, not the live stream.
     """
     stripped = text.strip()
     if stripped.strip("{}") == "":
         return True
-    if any(stripped.startswith(name[: len(stripped)]) for name in _TOOL_NAMES):
+    return any(stripped.startswith(name[: len(stripped)]) for name in _TOOL_NAMES)
+
+
+def _needs_retry(text: str) -> bool:
+    """Whether a *completed* turn's text should be discarded and retried once,
+    rather than shown as the final answer.
+
+    Confirmed live: instead of calling run_sql_query, the model sometimes
+    narrates "let me try running the following query" and writes its own
+    guessed SQL in a fenced code block — exactly what CHAT_SYSTEM_PROMPT tells
+    it never to do, since it has never seen the schema. Unlike the bare-"{}"
+    and narrated-call cases in `_is_degenerate`, a fenced sql block can't be
+    told apart from ordinary prose until a lot of it has already arrived, so
+    this is only checked once the turn's full text is in — checking it
+    per-chunk, the way `_is_degenerate` does, would hold the live stream back
+    for however long that generation takes. That held silence is exactly what
+    broke a real turn: withholding output for the length of a whole
+    generation left the connection sending nothing for long enough that the
+    browser's fetch dropped it as interrupted before the retry ever ran.
+    Streaming the guessed SQL live and correcting it right after, the way this
+    function's caller does, costs a moment of a wrong-looking answer instead
+    of the connection itself.
+    """
+    if _is_degenerate(text):
         return True
-    return "```sql" in stripped.lower()
+    return "```sql" in text.strip().lower()
 
 
 def _build_messages(message: str, history: list[ChatTurn]) -> list[dict[str, object]]:
@@ -124,7 +145,7 @@ async def run_chat(
                     held = ""
             pending_calls.extend(chunk.tool_calls)
 
-        if not pending_calls and _is_degenerate(assistant_text):
+        if not pending_calls and _needs_retry(assistant_text):
             # The turn didn't need a tool and the model's tool-aware reply came
             # back degenerate — retry once as a plain chat call, same
             # retry-once shape guard_sql/render already use for a bad first

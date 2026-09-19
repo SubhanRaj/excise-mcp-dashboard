@@ -393,11 +393,22 @@ guessed SQL against a table that doesn't exist, in a fenced code block
 introduced by "let me try running the following query" — skipping
 `run_sql_query` even though `CHAT_SYSTEM_PROMPT` already said never to
 invent a table or column name. `CHAT_SYSTEM_PROMPT` now names the narrated
-SQL itself, not just the decision to call a tool, and `chat/loop.py`'s
-degenerate-reply check treats a turn that made no tool call and contains a
-fenced ```sql block the same way it treats a bare `"{}"` or a narrated fake
-call — held back and given one retry, rather than shown to the user as a
-final answer against a table that was never real.
+SQL itself, not just the decision to call a tool, and once a completed
+turn's text contains a fenced ```sql block and made no tool call,
+`chat/loop.py` retries it once, the same as a bare `"{}"` or a narrated fake
+call, rather than showing it to the user as a final answer against a table
+that was never real.
+
+Unlike those two, a fenced sql block can't be told apart from ordinary prose
+until most of it has already streamed, so this check runs only once the
+turn's full text is in — it does not hold the live stream back the way the
+bare-`"{}"`/narrated-call checks do. An earlier version of this fix withheld
+the guessed SQL from the stream entirely while it decided whether to retry,
+and that broke a real turn: the connection sent nothing for the whole length
+of that generation plus the retry, long enough that the browser dropped it
+as interrupted before the correction ever arrived. The guessed SQL now
+streams live and the correction follows right after it — a moment of a
+wrong-looking answer costs less than the connection itself.
 
 The loop:
 
