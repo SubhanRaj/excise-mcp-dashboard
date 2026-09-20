@@ -33,7 +33,8 @@ all running as `systemd --user` units, verified together against the real
 token-usage tracking, Ask feedback capture, and Pulse/Telescope (both
 locked to Admin regardless of `APP_ENV`) are built too, ahead of schedule —
 none of this was part of the original Phase 0-4 scope. Phase 5's remaining
-piece (the customization panel) is next.
+piece, the customization panel, is also built — Milestone 5's checklist is
+otherwise the export/ledger-view items already noted as not built.
 
 Every `sudo` / install / external-console step is collected, copy-pasteable,
 in [`OPERATOR_SETUP.md`](OPERATOR_SETUP.md), grouped by the milestone that
@@ -368,12 +369,20 @@ the detail and the reasoning behind each decision below.
       accent, same as the one public landing page (`web/plan/webui.md` §3);
       Chart.js colours per §Charts wait on the first screen that renders a
       Chart.js chart
-- [ ] Customization panel: a FAB + Display panel (theme, font family via
+- [x] Customization panel: a FAB + Display panel (theme, font family via
       on-demand Google Fonts, text size, line spacing, content width, density,
-      accent, high contrast, reduce-motion), `data-*` + one CSS var, anti-flash
-      script from the sibling, `localStorage` + cookie + `users.ui_prefs` JSON,
-      Reset. Port `CustomizationPanel.tsx` from
-      `~/Projects/chinese-intel-pipeline` (`EVALUATION.md` §4)
+      accent, high contrast, reduce-motion), `data-*` attributes + CSS vars,
+      `localStorage` + a mirrored cookie, `users.ui_prefs` JSON via
+      `PATCH /account/ui-prefs`, Reset. Theme keeps its own `color_scheme` key,
+      separate from the `ui_prefs` JSON, so the sidebar's light/dark toggle and
+      the panel's three-way control share one piece of state. Accent recolors
+      every existing `govviolet-*` utility class app-wide with no change to
+      the ~20 files using them: the Tailwind config routes the `govviolet`
+      palette through `--accent-*` CSS custom properties — `rgb(var(--accent-600))`,
+      the same trick a full Tailwind build uses for opacity-modifier support —
+      and an accent choice swaps which ramp those ten variables hold:
+      govviolet (default) and govsaffron, the department's own two-tone
+      palette
 - [x] Port middleware: `SecurityHeaders` (CSP extended for the FastAPI origin,
       Plotly/Chart.js, `marked` + highlighter, `cleave.js`, `dexie`),
       `LogMutation`, `HasPrivilege` / `IsAdmin`. Every Livewire write method
@@ -487,10 +496,16 @@ the detail and the reasoning behind each decision below.
       environment (`phpunit.xml`, the standard Laravel setup), so their
       routes don't exist to hit there; verified live against real accounts
       instead (`SECURITY.md` §3)
-- [ ] customization panel: a pref change persists across reload (cookie +
-      `users.ui_prefs`), Reset restores defaults, timestamps render IST —
-      Phase 5, not built yet (`->ist()` itself is already covered by
-      `tests/Feature/Admin/ActivityLogTest.php`)
+- [x] customization panel: `PATCH /account/ui-prefs` persists a valid pref set
+      to `users.ui_prefs` and rejects an invalid one before it's saved
+      (`tests/Feature/UiPreferencesTest.php`); `->ist()` itself is covered by
+      `tests/Feature/Admin/ActivityLogTest.php`. Reset and the client-side
+      apply/reload behaviour are pure Alpine/localStorage with no server round
+      trip to assert against and no browser JS test tooling in place to cover
+      them either (the same gap `ChatTest`/`AskTest` already have for their
+      own browser-side bridges) — verified by hand instead: a headless-Chrome
+      pass against a rendered Ask page confirmed the accent swap, high
+      contrast, and every other control apply live
 - [x] `vendor/bin/pint --dirty` clean
 
 **Done when:** a signed-in analyst can use the one-shot form and the chat

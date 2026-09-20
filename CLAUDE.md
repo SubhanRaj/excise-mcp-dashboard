@@ -441,6 +441,23 @@ retry, and no longer withholds it from the live stream while that decision
 is pending — the guessed SQL streams as it always did, and the correction
 follows right after it (`MCP_ENGINES.md` §Tools).
 
+Phase 5's last piece, the customization panel, is built: a FAB on every
+authed screen opens a Display panel — theme, font, text size, line spacing,
+content width, table density, accent, high contrast, reduce motion — applied
+through `data-*` attributes and a handful of CSS custom properties, with
+`users.ui_prefs` as the durable copy behind a `localStorage` + cookie fast
+path. The Tailwind config routes the `govviolet` palette through `--accent-*`
+CSS variables instead of literal hex, so an accent choice swaps which ramp of
+values those ten variables hold, and every existing `govviolet-*` utility
+across the app repaints with it — no change needed to the ~20 files that use
+them. The two accent options, govviolet and govsaffron, are the department's
+own two-tone palette, already part of the design system. Theme keeps its own
+`color_scheme` key, separate from the `ui_prefs` JSON, so the sidebar's
+light/dark toggle and the panel's three-way theme control read and write one
+shared piece of state. Reduce motion is a single CSS rule keyed to a
+`data-reduce-motion` attribute, so it also quiets Chat's bounce-dot typing
+indicator with no extra code there.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures

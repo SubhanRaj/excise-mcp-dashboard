@@ -7,7 +7,7 @@
 <!DOCTYPE html>
 <html lang="en" class="h-full{{ request()->cookie('color_scheme') === 'dark' ? ' dark' : '' }}">
 
-<x-head :title="$title" :description="$pageSubtitle" />
+<x-head :title="$title" :description="$pageSubtitle" :ui-prefs="auth()->user()?->ui_prefs" />
 
 <body class="bg-slate-100 dark:bg-slate-950 h-full transition-colors duration-200">
 <div class="flex h-screen overflow-hidden">
@@ -29,6 +29,8 @@
 
     </div>
 </div>
+
+<x-customization-panel />
 
 @flasher_render
 

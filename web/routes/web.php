@@ -6,6 +6,7 @@ use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\Auth\OnboardingController;
 use App\Http\Controllers\ChatController;
 use App\Http\Controllers\GoogleConnectionController;
+use App\Http\Controllers\UiPreferencesController;
 use App\Livewire\Admin\ActivityLogIndex;
 use App\Livewire\Admin\GoogleConnectionIndex;
 use App\Livewire\Admin\KnowledgeBaseIndex;
@@ -58,6 +59,10 @@ Route::middleware('auth')->group(function () {
     Route::get('/ask/{query}', Ask::class)->name('ask.show');
     Route::get('/ask/{query}/stream', [AskController::class, 'stream'])->name('ask.stream');
     Route::get('/ask/{query}/export/{format}', [AskController::class, 'export'])->name('ask.export');
+
+    // The customization panel's own save — every signed-in screen carries the panel, so
+    // this sits at the top level, outside the admin/ask/chat route groups.
+    Route::patch('/account/ui-prefs', [UiPreferencesController::class, 'update'])->name('account.ui-prefs');
 
     Route::get('/chat', Chat::class)->name('chat');
     Route::get('/chat/{conversation}', Chat::class)->name('chat.show');
