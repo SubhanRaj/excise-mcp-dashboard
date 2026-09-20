@@ -142,6 +142,51 @@ class OrchestratorClient
         }
     }
 
+    /**
+     * @return array{runs: array<int, array<string, mixed>>, total: int}
+     *
+     * @throws ConnectionException|RequestException
+     */
+    public function etlRuns(int $page = 1, int $perPage = 20): array
+    {
+        return $this->request()
+            ->get('/etl/runs', ['page' => $page, 'per_page' => $perPage])
+            ->throw()
+            ->json();
+    }
+
+    /**
+     * @return array{rows: array<int, array<string, mixed>>, total: int}
+     *
+     * @throws ConnectionException|RequestException
+     */
+    public function etlQuarantine(int $page = 1, int $perPage = 20, ?int $runId = null): array
+    {
+        return $this->request()
+            ->get('/etl/quarantine', array_filter([
+                'page' => $page,
+                'per_page' => $perPage,
+                'run_id' => $runId,
+            ], fn ($value) => $value !== null))
+            ->throw()
+            ->json();
+    }
+
+    /**
+     * @param  array<string, mixed>  $spec
+     *
+     * @throws ConnectionException|RequestException
+     */
+    public function renderChart(array $spec, string $format): string
+    {
+        return Http::baseUrl(config('services.orchestrator.base_url'))
+            ->withToken(config('services.orchestrator.token'))
+            ->timeout(30)
+            ->post('/chart/render', ['spec' => $spec, 'format' => $format])
+            ->throw()
+            ->body();
+    }
+
     private function request()
     {
         return Http::baseUrl(config('services.orchestrator.base_url'))

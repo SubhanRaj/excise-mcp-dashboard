@@ -201,7 +201,21 @@ PGPASSWORD='CHANGE_ME_ro' psql -h 127.0.0.1 -U excise_ro -d excise_bank -c \
 PGPASSWORD='CHANGE_ME_ro' psql -h 127.0.0.1 -U excise_ro -d excise_bank -c \
   "select * from public.revenues;"                    # ERROR: permission denied for table revenues
 PGPASSWORD='CHANGE_ME_ro' psql -h 127.0.0.1 -U excise_ro -d excise_bank -c \
-  "select * from etl.ingestion_runs;"                 # ERROR: permission denied for schema etl
+  "select * from etl.ingestion_runs;"
+                          # works once §Data bank grant below runs; ERROR: permission
+                          # denied for schema etl until it does
+```
+
+**Pending — grant `excise_ro` read on `etl.*`** (Milestone 5's admin ETL
+visibility screen; `db/roles.sql` now includes this, but the box was already
+provisioned from an earlier run of it, and re-running the whole file would
+fail on `CREATE ROLE excise_ro` already existing — apply just the new grant):
+
+```bash
+sudo -u postgres psql -d excise_bank -c \
+  "GRANT USAGE ON SCHEMA etl TO excise_ro;
+   GRANT SELECT ON ALL TABLES IN SCHEMA etl TO excise_ro;
+   ALTER DEFAULT PRIVILEGES FOR ROLE excise_owner IN SCHEMA etl GRANT SELECT ON TABLES TO excise_ro;"
 ```
 
 **Create the read-only MariaDB user for the pdf-markdown-pipeline sync**

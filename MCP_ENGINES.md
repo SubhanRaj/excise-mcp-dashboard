@@ -79,10 +79,15 @@ orchestrator/
 | `POST` | `/chat` | `ChatRequest` | streamed newline-delimited JSON (`application/x-ndjson`, matching `/query`) — `token` / `tool_call` / `tool_result` / `chart` / `done` / `error` lines |
 | `POST` | `/kb/search` | `{query: str, k: int}` | `{chunks: [...]}` — ranked FTS retrieval, no LLM (used by tests and the "cite sources" panel) |
 | `GET` | `/kb/documents` | — (paginated: `?page`) | `{documents: [...], total}` — unranked listing of `kb.documents` for the admin "browse the corpus" screen |
+| `POST` | `/chart/render` | `ChartRenderRequest` (`spec`: a Plotly figure dict, `format`: `png`/`svg`/`pdf`) | the rasterized bytes, correct `Content-Type` — rasterizes an already-produced figure through `get_static_renderer()` (`engines/static_render.py`), the same persistent-browser renderer the sandboxed render step uses; no LLM-authored code runs on this path |
+| `GET` | `/etl/runs` | — (paginated: `?page`) | `{runs: [...], total}` — `etl.ingestion_runs` rows for the admin ETL visibility screen |
+| `GET` | `/etl/quarantine` | — (paginated: `?page`, optional `?run_id`) | `{rows: [...], total}` — `etl.quarantine` rows, optionally filtered to one run |
 
 Both `/query` and `/chat` require the bearer token. `/query` is the one-shot
 analytical form (question in, chart + table + SQL + summary out). `/chat` is
 the free-form conversation where the model decides which tools to call.
+`/chart/render`, `/etl/runs`, and `/etl/quarantine` are also bearer-gated;
+none of the three touches an LLM.
 
 `QueryRequest`:
 

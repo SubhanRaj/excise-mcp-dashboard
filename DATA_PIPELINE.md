@@ -826,7 +826,7 @@ One `/query` or chat `make_chart` call yields:
 |---|---|
 | the question + generated SQL + engine + model + timings + status | a `queries` row (chat: the `message` + `message_tool_calls` rows) in MariaDB |
 | interactive chart spec | `chart_artifacts.spec` — a `JSON` / `LONGTEXT` column in MariaDB (the Plotly figure, needed on every render, small because charts plot aggregates) |
-| rendered chart files | `chart.{png,svg,pdf}` on the `local` disk, path on the `chart_artifacts` row |
+| rendered chart files | not persisted — `chart_artifacts` carries `png_path`/`svg_path`/`pdf_path` columns for a future cached export, but a PNG/SVG/PDF download today calls the orchestrator's `POST /chart/render` on the stored spec and streams the bytes back without writing them to disk (`ROADMAP.md` Milestone 5) |
 | table | `rows_preview` (first N rows) inline as JSON on the row; full rows re-run from the stored SQL on export, not persisted |
 | written summary | text column on the `queries` / `messages` row |
 
@@ -884,7 +884,7 @@ latest`) or is frozen to a point in time.
 
 | Scope | Formats | Built from |
 |---|---|---|
-| one chart | PNG / SVG / PDF (disk files), `plotly.json` (re-embeddable) | the disk files + the `spec` column |
+| one chart | PNG / SVG / PDF, `plotly.json` (re-embeddable) | rendered on request from the `spec` column via `POST /chart/render`, not a pre-rendered disk file |
 | one result | CSV / XLSX of the full rows | re-run the stored SQL, stream through the sibling `ExportService` (`openspout`) |
 | saved analysis | the chart + a `recipe.json` (reproducible) | the row + files |
 | report | one **PDF** (a print-view Blade → `barryvdh/laravel-dompdf`, DejaVu Sans for `₹` + Devanagari, the sibling `AnnualReport` shape); **XLSX** workbook, one sheet of rows per analysis block; **ZIP** bundle of the PDF + per-block CSVs + `plotly.json` + recipes | the blocks, resolved at export time; `etl_epoch` stamped on the output so the data vintage is on the page |

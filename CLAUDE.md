@@ -458,6 +458,37 @@ shared piece of state. Reduce motion is a single CSS rule keyed to a
 `data-reduce-motion` attribute, so it also quiets Chat's bounce-dot typing
 indicator with no extra code there.
 
+Milestone 5's checklist is now fully built: money formatting, chart export,
+the query ledger, and an admin ETL visibility screen. `App\Support\Money`
+formats a rupee figure in rupees, thousands, lakh, or crore, with the
+Indian digit grouping `number_format()` doesn't produce on its own;
+`<x-money>` renders all four and switches between them with a plain Alpine
+`x-show`, and `<x-currency-input>` (ported from `excise-budget-tracker`) is
+the matching form input. Neither screen currently on `web/` shows a money
+figure or takes one as input, so this ships as ready infrastructure with no
+caller yet, the same position `Carbon::macro('ist')` was in before Phase 4's
+admin screens started calling it. Chart export reuses
+`engines/static_render.py`'s already-running persistent-browser renderer —
+a new `POST /chart/render` hands it an already-produced Plotly figure and
+returns PNG/SVG/PDF bytes, with no second render path and no LLM-authored
+code anywhere near it. Ask's and Chat's chart cards both gained export
+links. The query ledger replaces the placeholder `/ledger` route with a
+real Livewire screen listing every past `/query`; an Analyst sees their own
+questions, an Admin sees everyone's. The admin ETL screen
+(`/admin/etl`, privilege `etl.view`) lists `etl.ingestion_runs` and a run's
+`etl.quarantine` rows through two new orchestrator routes,
+`GET /etl/runs` and `GET /etl/quarantine` — the same pattern
+`GET /kb/documents` already established for a read-only admin browse
+screen. `excise_ro` had no grant on schema `etl` at all before this
+(`db/roles.sql`'s comment called it out explicitly: "excise_ro must not see
+the base data or write anywhere," lumping `etl`'s bookkeeping tables in
+with the base data it ingests into). The new grant covers only `etl.ingestion_runs` and `etl.quarantine` — the
+audit trail of what a run wrote and skipped — and `db/roles.sql` now
+includes it, but this box's database was already provisioned from an
+earlier run of that file, so the grant is a pending `sudo -u postgres` step
+(`OPERATOR_SETUP.md` §Data bank) rather than something already live. The new
+screen shows a clear fallback banner until that step runs.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures

@@ -16,7 +16,7 @@
 -- |--------------|-------------------------------------------------|-----------------------|
 -- | excise_owner | owns the database and every schema; DDL         | migrations (operator) |
 -- | excise_etl   | INSERT/UPDATE/DELETE on public.* + kb.* + etl.* | etl/ cron jobs        |
--- | excise_ro    | SELECT on analytics.* + kb.* only; read-only    | orchestrator (AI path)|
+-- | excise_ro    | SELECT on analytics.* + kb.* + etl.*; read-only  | orchestrator (AI path)|
 
 \set ON_ERROR_STOP on
 
@@ -44,16 +44,19 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public, kb, etl TO excise_etl;
 ALTER DEFAULT PRIVILEGES FOR ROLE excise_owner IN SCHEMA public, kb, etl
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO excise_etl;
 
--- Read-only AI role: analytics views and the knowledge base, nothing else.
+-- Read-only AI role: analytics views, the knowledge base, and etl's own
+-- bookkeeping tables (ingestion_runs, quarantine — read by the admin ETL
+-- visibility screen, ROADMAP.md Milestone 5). Never the base data tables
+-- etl writes into; those stay behind analytics.* views only.
 CREATE ROLE excise_ro LOGIN PASSWORD :'ro_pw';
 GRANT CONNECT ON DATABASE excise_bank TO excise_ro;
-GRANT USAGE ON SCHEMA analytics, kb TO excise_ro;
-GRANT SELECT ON ALL TABLES IN SCHEMA analytics, kb TO excise_ro;
-ALTER DEFAULT PRIVILEGES FOR ROLE excise_owner IN SCHEMA analytics, kb
+GRANT USAGE ON SCHEMA analytics, kb, etl TO excise_ro;
+GRANT SELECT ON ALL TABLES IN SCHEMA analytics, kb, etl TO excise_ro;
+ALTER DEFAULT PRIVILEGES FOR ROLE excise_owner IN SCHEMA analytics, kb, etl
     GRANT SELECT ON TABLES TO excise_ro;
 
 -- excise_ro must not see the base data or write anywhere.
-REVOKE ALL ON SCHEMA public, etl FROM excise_ro;
+REVOKE ALL ON SCHEMA public FROM excise_ro;
 REVOKE CREATE ON SCHEMA public, kb, analytics FROM PUBLIC;   -- no ad-hoc object creation by anyone
 REVOKE ALL ON DATABASE excise_bank FROM PUBLIC;
 

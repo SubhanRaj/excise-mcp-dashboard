@@ -154,6 +154,11 @@
         @else
             @if($activeQuery->chartArtifact?->spec)
             <div class="stat-card block" wire:key="chart-{{ $activeQuery->id }}" wire:ignore.self>
+                <div class="flex justify-end gap-3 text-xs mb-1">
+                    @foreach(['png', 'svg', 'pdf'] as $format)
+                    <a href="{{ route('chart-artifacts.export', ['chartArtifact' => $activeQuery->chartArtifact->id, 'format' => $format]) }}" class="text-govviolet-600 hover:underline uppercase">{{ $format }}</a>
+                    @endforeach
+                </div>
                 <div x-init="Plotly.newPlot($el, @js($activeQuery->chartArtifact->spec['data'] ?? []), @js($activeQuery->chartArtifact->spec['layout'] ?? []), {responsive: true})" style="width:100%;min-height:360px;"></div>
             </div>
             @endif

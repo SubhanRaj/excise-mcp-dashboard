@@ -14,7 +14,7 @@ import httpx
 import structlog
 from asyncpg import Pool
 from fastapi import Depends, FastAPI, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 
 from app.auth import require_bearer_token
 from app.chat.loop import (
@@ -33,18 +33,22 @@ from app.engines.octave_engine import OctaveEngine
 from app.engines.python_engine import PythonEngine
 from app.engines.static_render import get_renderer as get_static_renderer
 from app.engines.wolfram_engine import WolframEngine
+from app.etl_status import list_ingestion_runs, list_quarantine
 from app.kb.retrieve import list_documents as kb_list_documents
 from app.kb.retrieve import retrieve as kb_retrieve
 from app.llm.client import OllamaClient
 from app.pipeline import run_query
 from app.sandbox.bwrap import stop_orphaned_sandbox_scopes
 from app.schemas import (
+    ChartRenderRequest,
     ChatRequest,
+    IngestionRunsResponse,
     KbDocumentsResponse,
     KbSearchRequest,
     KbSearchResponse,
     OrchestratorError,
     PostgresUnavailableError,
+    QuarantineResponse,
     QueryRequest,
     QueryResponse,
     Stage,
@@ -169,6 +173,39 @@ async def kb_documents(page: int = 1, per_page: int = 20) -> KbDocumentsResponse
     await _ensure_ready(_ctx())
     documents, total = await kb_list_documents(page, per_page)
     return KbDocumentsResponse(documents=documents, total=total)
+
+
+@app.post("/chart/render", dependencies=[Depends(require_bearer_token)])
+async def chart_render(request: ChartRenderRequest) -> Response:
+    """Rasterizes an already-produced Plotly figure — the chart export button
+    on a finished query or chat turn, not a fresh render (that's /query and
+    /chat). Reuses the same persistent-browser renderer python_engine.py
+    calls for a plot's own static outputs.
+    """
+    renderer = get_static_renderer()
+    if not renderer.is_available():
+        raise HTTPException(status_code=503, detail="static chart export unavailable")
+    media_type = {"png": "image/png", "svg": "image/svg+xml", "pdf": "application/pdf"}[
+        request.format
+    ]
+    data = await renderer.render(json.dumps(request.spec), request.format)
+    return Response(content=data, media_type=media_type)
+
+
+@app.get("/etl/runs", dependencies=[Depends(require_bearer_token)])
+async def etl_runs(page: int = 1, per_page: int = 20) -> IngestionRunsResponse:
+    await _ensure_ready(_ctx())
+    runs, total = await list_ingestion_runs(page, per_page)
+    return IngestionRunsResponse(runs=runs, total=total)
+
+
+@app.get("/etl/quarantine", dependencies=[Depends(require_bearer_token)])
+async def etl_quarantine(
+    page: int = 1, per_page: int = 20, run_id: int | None = None
+) -> QuarantineResponse:
+    await _ensure_ready(_ctx())
+    rows, total = await list_quarantine(page, per_page, run_id)
+    return QuarantineResponse(rows=rows, total=total)
 
 
 @app.post("/query", dependencies=[Depends(require_bearer_token)])

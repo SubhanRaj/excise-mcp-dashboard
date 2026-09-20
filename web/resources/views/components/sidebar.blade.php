@@ -31,7 +31,7 @@
         </a>
 
         @auth
-        @if(auth()->user()->isAdmin() || auth()->user()->hasPrivilege('google.manage') || auth()->user()->hasPrivilege('kb.manage') || auth()->user()->hasPrivilege('users.manage') || auth()->user()->hasPrivilege('activity-logs.view') || auth()->user()->hasPrivilege('system.monitor'))
+        @if(auth()->user()->isAdmin() || auth()->user()->hasPrivilege('google.manage') || auth()->user()->hasPrivilege('kb.manage') || auth()->user()->hasPrivilege('users.manage') || auth()->user()->hasPrivilege('activity-logs.view') || auth()->user()->hasPrivilege('system.monitor') || auth()->user()->hasPrivilege('etl.view'))
         <span class="nav-section-label">Admin</span>
         @endif
 
@@ -72,6 +72,14 @@
            class="nav-link {{ request()->routeIs('admin.system-health.*') ? 'nav-link-active' : 'nav-link-idle' }}">
             <i class="ti ti-heart-rate-monitor w-5 text-center text-base flex-shrink-0"></i>
             <span class="sidebar-text">System health</span>
+        </a>
+        @endif
+
+        @if(auth()->user()->isAdmin() || auth()->user()->hasPrivilege('etl.view'))
+        <a href="{{ route('admin.etl.index') }}" wire:navigate data-tooltip="ETL runs"
+           class="nav-link {{ request()->routeIs('admin.etl.*') ? 'nav-link-active' : 'nav-link-idle' }}">
+            <i class="ti ti-refresh w-5 text-center text-base flex-shrink-0"></i>
+            <span class="sidebar-text">ETL runs</span>
         </a>
         @endif
 

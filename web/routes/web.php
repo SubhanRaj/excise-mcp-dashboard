@@ -4,10 +4,12 @@ use App\Http\Controllers\AskController;
 use App\Http\Controllers\Auth\ForgotPasswordController;
 use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\Auth\OnboardingController;
+use App\Http\Controllers\ChartExportController;
 use App\Http\Controllers\ChatController;
 use App\Http\Controllers\GoogleConnectionController;
 use App\Http\Controllers\UiPreferencesController;
 use App\Livewire\Admin\ActivityLogIndex;
+use App\Livewire\Admin\EtlRunsIndex;
 use App\Livewire\Admin\GoogleConnectionIndex;
 use App\Livewire\Admin\KnowledgeBaseIndex;
 use App\Livewire\Admin\SystemHealth;
@@ -15,6 +17,7 @@ use App\Livewire\Admin\UserForm;
 use App\Livewire\Admin\UserIndex;
 use App\Livewire\Ask;
 use App\Livewire\Chat;
+use App\Livewire\QueryLedger;
 use Illuminate\Support\Facades\Route;
 
 // The public landing page — a placeholder until this app has real public content
@@ -60,6 +63,10 @@ Route::middleware('auth')->group(function () {
     Route::get('/ask/{query}/stream', [AskController::class, 'stream'])->name('ask.stream');
     Route::get('/ask/{query}/export/{format}', [AskController::class, 'export'])->name('ask.export');
 
+    // A chart's own PNG/SVG/PDF export — shared by Ask's and Chat's chart cards,
+    // since chart_artifacts is polymorphic across both (Query and MessageToolCall).
+    Route::get('/chart-artifacts/{chartArtifact}/export/{format}', [ChartExportController::class, 'export'])->name('chart-artifacts.export');
+
     // The customization panel's own save — every signed-in screen carries the panel, so
     // this sits at the top level, outside the admin/ask/chat route groups.
     Route::patch('/account/ui-prefs', [UiPreferencesController::class, 'update'])->name('account.ui-prefs');
@@ -70,9 +77,8 @@ Route::middleware('auth')->group(function () {
         ->middleware('throttle:chat')
         ->name('chat.send');
 
-    // A later milestone builds this for real; stubbed here so the shell/nav/RBAC have
-    // somewhere to route to (web/plan/webui.md §1's build order).
-    Route::view('/ledger', 'stubs.coming-soon', ['feature' => 'Ledger'])->name('ledger');
+    // Every past /query — Analyst sees own, Admin sees all (QueryLedger::render()).
+    Route::get('/ledger', QueryLedger::class)->name('ledger');
 
     Route::prefix('admin')->name('admin.')->group(function () {
         Route::middleware('privilege:users.manage')->prefix('users')->name('users.')->group(function () {
@@ -95,6 +101,10 @@ Route::middleware('auth')->group(function () {
 
         Route::middleware('privilege:system.monitor')->prefix('system-health')->name('system-health.')->group(function () {
             Route::get('/', SystemHealth::class)->name('index');
+        });
+
+        Route::middleware('privilege:etl.view')->prefix('etl')->name('etl.')->group(function () {
+            Route::get('/', EtlRunsIndex::class)->name('index');
         });
     });
 

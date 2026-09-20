@@ -33,8 +33,14 @@ all running as `systemd --user` units, verified together against the real
 token-usage tracking, Ask feedback capture, and Pulse/Telescope (both
 locked to Admin regardless of `APP_ENV`) are built too, ahead of schedule —
 none of this was part of the original Phase 0-4 scope. Phase 5's remaining
-piece, the customization panel, is also built — Milestone 5's checklist is
-otherwise the export/ledger-view items already noted as not built.
+piece, the customization panel, is also built. **Milestone 5's checklist is
+now fully checked off** — money formatting, chart PNG/SVG/PDF export, the
+query ledger view, and the admin ETL visibility screen are all built,
+closing out the four items this file previously listed as not built. The
+ETL screen needs one pending grant (`excise_ro` read on schema `etl`,
+`OPERATOR_SETUP.md` §Data bank) applied to this box's already-provisioned
+database before it shows real data; every other item is live. **Milestone 6
+— perimeter, hardening, end-to-end — is next.**
 
 Every `sudo` / install / external-console step is collected, copy-pasteable,
 in [`OPERATOR_SETUP.md`](OPERATOR_SETUP.md), grouped by the milestone that
@@ -395,9 +401,13 @@ the detail and the reasoning behind each decision below.
       independently (`web/plan/webui.md` §6); `AppServiceProvider` rate
       limiters incl. `ask` and `chat`; `Carbon::macro('ist')` and the `Login` /
       `Logout` -> `activity_logs` listeners ported from the sibling
-- [ ] Formatting: store UTC, render IST via `->ist()`; `₹` + `en-IN` grouping
-      with a rupees / thousands / lakh / crore switcher on money figures;
-      Cleave.js `currency-input` component for money inputs
+- [x] Formatting: store UTC, render IST via `->ist()`. `₹` + `en-IN` grouping
+      with a rupees / thousands / lakh / crore switcher
+      (`App\Support\Money`, `<x-money>`) and the ported `<x-currency-input>`
+      Cleave.js component are built; neither screen currently on `web/`
+      renders a money figure or takes a money input, so this is ready
+      infrastructure with no live caller yet, the same position
+      `->ist()`/`Carbon::macro` was in before Phase 4's admin screens used it
 - [x] `/admin/activity-logs` (Admin only) ported; the audit table in
       `SECURITY.md` §5 is the coverage checklist
 - [x] Migrations: `conversations` (ULID), `messages` (incl. `model`,
@@ -431,22 +441,32 @@ the detail and the reasoning behind each decision below.
       server-validated). Cited knowledge snippets don't carry a
       `docsrepo.exciseup.in` link yet — `search_knowledge`'s tool result is
       a plain text preview, not a structured per-chunk `source_url` field
-- [ ] Chart canvas: interactive `chart.plotly.json` and a data table
+- [x] Chart canvas: interactive `chart.plotly.json` and a data table
       (`rows_preview`) are built for Ask and Chat's `make_chart` card;
-      generated SQL (collapsed, copyable) is built for Ask. PNG / SVG / PDF
-      export of the artifact files isn't built — CSV / XLSX (rows, the
-      sibling `ExportService`, `openspout`) is
-- [ ] Query ledger view: every past `/query` with prompt, SQL, timing, engine,
-      model, status; Admin sees all, Analyst sees own. Thumbs + note itself is
-      built, captured directly on Ask's own result screen (`giveFeedback()`)
-      rather than waiting on this list view
-- [ ] Admin: user CRUD (built); "Connected sources" (Google connect /
+      generated SQL (collapsed, copyable) is built for Ask. CSV / XLSX (rows,
+      the sibling `ExportService`, `openspout`) and PNG / SVG / PDF export of
+      the chart itself are both built — the chart export reuses
+      `engines/static_render.py`'s own persistent-browser renderer through a
+      new `POST /chart/render`, rather than a second render path, since it
+      only ever rasterizes a figure a completed query or chat turn already
+      produced
+- [x] Query ledger view: every past `/query` with prompt, SQL, timing, engine,
+      model, status; Admin sees all, Analyst sees own (`/ledger`, previously a
+      placeholder route). Thumbs + note itself is built, captured directly on
+      Ask's own result screen (`giveFeedback()`) rather than waiting on this
+      list view
+- [x] Admin: user CRUD (built); "Connected sources" (Google connect /
       disconnect, show "reconnect needed" — built; the Drive folder / Sheets /
       Docs `source_registry` picker waits on Milestone 1's Google ingestion);
       "Knowledge base" (upload `.md`, browse the ingested corpus via the new
       orchestrator `GET /kb/documents` — paginated, no ranking, alongside the
       existing ranked `/kb/search` — withdraw an upload — built); a read-only
-      view of `etl.ingestion_runs` / `etl.quarantine` — not built
+      view of `etl.ingestion_runs` / `etl.quarantine` is built
+      (`/admin/etl`, privilege `etl.view`, a new `GET /etl/runs` and
+      `GET /etl/quarantine`) but not yet live — it needs `excise_ro` granted
+      read on schema `etl`, which `db/roles.sql` now includes but this box's
+      already-provisioned database hasn't received yet
+      (`OPERATOR_SETUP.md` §Data bank has the pending grant)
 - [x] System health (Admin -> System health, privilege `system.monitor`,
       not part of the original Phase 4 admin set): orchestrator reachability,
       queue depth, server vitals, recent error counts, and AI usage by model
@@ -506,6 +526,26 @@ the detail and the reasoning behind each decision below.
       own browser-side bridges) — verified by hand instead: a headless-Chrome
       pass against a rendered Ask page confirmed the accent swap, high
       contrast, and every other control apply live
+- [x] `Money::format()` on all four units, including negative amounts
+      (`tests/Unit/MoneyTest.php`) — the Blade components built on top of it
+      (`<x-money>`, `<x-currency-input>`) have no current page to render them
+      on, so they're covered at the formatter level only
+- [x] chart export: the owner downloads a rendered file; another user's chart
+      is forbidden; an unknown format is rejected
+      (`tests/Feature/ChartExportTest.php`, against a mocked orchestrator).
+      `etl_status.py`'s `list_ingestion_runs()` / `list_quarantine()` are
+      tested the same way `kb/retrieve.py`'s `list_documents()` already is —
+      against the real local Postgres — and currently fail with a permission
+      error until the pending `etl` schema grant above lands
+      (`orchestrator/tests/test_etl_status.py`)
+- [x] query ledger: an Analyst sees only their own queries, an Admin sees
+      every query, search filters by prompt, an unauthenticated request
+      redirects to `/login` (`tests/Feature/QueryLedgerTest.php`)
+- [x] ETL visibility: a non-privileged user is forbidden; an Admin (or a
+      granted Analyst) sees the ingestion runs a mocked orchestrator returns;
+      an unreachable orchestrator shows the fallback banner; viewing a run's
+      quarantine reasons toggles them in
+      (`tests/Feature/Admin/EtlRunsIndexTest.php`)
 - [x] `vendor/bin/pint --dirty` clean
 
 **Done when:** a signed-in analyst can use the one-shot form and the chat

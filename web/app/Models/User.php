@@ -32,6 +32,7 @@ class User extends Authenticatable
         'users.manage',
         'activity-logs.view',
         'system.monitor',
+        'etl.view',
     ];
 
     public const ROLES = ['Admin', 'Analyst'];

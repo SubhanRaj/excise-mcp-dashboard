@@ -55,7 +55,7 @@ The data bank is `excise_bank` on the local cluster (`18/main`, port 5432,
 |---|---|---|
 | `excise_owner` | owns the schema; `CREATE`/`ALTER` | migrations only, run by the operator |
 | `excise_etl` | `INSERT`/`UPDATE`/`DELETE` on data tables + `etl.*`; no DDL | `etl/` cron jobs |
-| `excise_ro` | `SELECT` on `analytics.*` only; `default_transaction_read_only = on` | the orchestrator (the AI path) |
+| `excise_ro` | `SELECT` on `analytics.*` + `kb.*` + `etl.*`; `default_transaction_read_only = on` | the orchestrator (the AI path) |
 
 ### Provisioning script (`db/roles.sql`)
 
@@ -77,16 +77,18 @@ ALTER DEFAULT PRIVILEGES FOR ROLE excise_owner IN SCHEMA public, kb, etl
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO excise_etl;
 -- no CREATE: excise_etl cannot add or drop tables
 
--- Read-only AI role: analytics views + the knowledge base, nothing else
+-- Read-only AI role: analytics views, the knowledge base, and etl's own
+-- bookkeeping tables (ingestion_runs, quarantine) — never the base data
+-- tables etl writes into, which stay behind analytics.* views only.
 CREATE ROLE excise_ro LOGIN PASSWORD :'ro_pw';
 GRANT CONNECT ON DATABASE excise_bank TO excise_ro;
-GRANT USAGE ON SCHEMA analytics, kb TO excise_ro;
-GRANT SELECT ON ALL TABLES IN SCHEMA analytics, kb TO excise_ro;
-ALTER DEFAULT PRIVILEGES FOR ROLE excise_owner IN SCHEMA analytics, kb
+GRANT USAGE ON SCHEMA analytics, kb, etl TO excise_ro;
+GRANT SELECT ON ALL TABLES IN SCHEMA analytics, kb, etl TO excise_ro;
+ALTER DEFAULT PRIVILEGES FOR ROLE excise_owner IN SCHEMA analytics, kb, etl
     GRANT SELECT ON TABLES TO excise_ro;
 
 -- excise_ro must not see base data or write anywhere
-REVOKE ALL ON SCHEMA public, etl FROM excise_ro;
+REVOKE ALL ON SCHEMA public FROM excise_ro;
 REVOKE CREATE ON SCHEMA public, kb, analytics FROM PUBLIC;   -- no ad-hoc object creation by anyone
 REVOKE ALL ON DATABASE excise_bank FROM PUBLIC;
 
@@ -102,6 +104,14 @@ ALTER ROLE excise_ro SET search_path = analytics, kb;
 (FTS or `pgvector`) is a read; the model cannot write to the knowledge base.
 Ingestion writes as `excise_etl` only. The retrieval query always adds
 `WHERE d.withdrawn_at IS NULL`.
+
+`etl.*` is also `SELECT`-only to `excise_ro`, but scoped to
+`etl.ingestion_runs` and `etl.quarantine` only — the audit trail of what a
+run wrote and skipped, read by the admin ETL visibility screen
+(`/admin/etl`, privilege `etl.view`) through two orchestrator routes,
+`GET /etl/runs` and `GET /etl/quarantine`. It does not extend to the base
+data tables `etl` ingests into; those stay reachable only through
+`analytics.*` views.
 
 ### Why each layer
 

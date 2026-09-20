@@ -2,7 +2,7 @@
 errors for the one-shot pipeline. MCP_ENGINES.md §HTTP surface, §Pipeline stages.
 """
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -99,6 +99,47 @@ class KbDocument(BaseModel):
 
 class KbDocumentsResponse(BaseModel):
     documents: list[KbDocument]
+    total: int
+
+
+class ChartRenderRequest(BaseModel):
+    """A Plotly figure already produced by a completed query or chat turn — this
+    endpoint only rasterizes it, the same as python_engine.py's own static export
+    call, for a chart export button in web/ (ROADMAP.md Milestone 5)."""
+
+    spec: dict[str, object]
+    format: Literal["png", "svg", "pdf"]
+
+
+class IngestionRun(BaseModel):
+    id: int
+    source: str
+    source_ref: str
+    report_period: date | None
+    started_at: datetime
+    finished_at: datetime | None
+    status: str
+    rows_seen: int
+    rows_upserted: int
+    rows_quarantined: int
+    error: str | None
+
+
+class IngestionRunsResponse(BaseModel):
+    runs: list[IngestionRun]
+    total: int
+
+
+class QuarantineRow(BaseModel):
+    id: int
+    run_id: int
+    raw_row: dict[str, object]
+    reason: str
+    created_at: datetime
+
+
+class QuarantineResponse(BaseModel):
+    rows: list[QuarantineRow]
     total: int
 
 
