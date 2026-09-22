@@ -424,18 +424,18 @@ supply the one value that would pass; every `make_chart` call failed on this
 before it ever reached the sandbox. The lookup was already scoped by the
 trusted `conversation_id` `dispatch()` receives from the request itself, so
 the check guarded nothing a wrong `data_ref` could actually have exploited.
-`data_ref` is gone; `make_chart` takes only `spec`. Separately, unlike
-`/query`'s `plan_plot` stage — which hands the planning model an explicit
-capability string per engine (`llm/prompts.py`'s `_ENGINE_CAPABILITIES`:
-`df` is already loaded, the exact `fig.write_json(...)` call, the forbidden
-`fig.write_image()`) before it writes a line of script — `make_chart`'s tool
-description said only "chart the most recent result," leaving the model to
-guess the sandbox's variable names and output convention blind. The
-description now states the same contract `plan_plot` gets, scoped to what
-chat's fixed `outputs=["plotly_json"]` actually collects: a matplotlib
-`plt.savefig()` script — a valid choice for `/query`, which picks its own
-`outputs` — produces nothing `make_chart` reads, so the description says so
-explicitly rather than offering a path that always fails silently.
+`data_ref` is gone; `make_chart` takes only `spec`. Separately, `/query`'s
+`plan_plot` stage hands the planning model an explicit capability string per
+engine (`llm/prompts.py`'s `_ENGINE_CAPABILITIES`: `df` is already loaded,
+the exact `fig.write_json(...)` call, the forbidden `fig.write_image()`)
+before it writes a line of script. `make_chart`'s tool description said only
+"chart the most recent result," leaving the model to guess the sandbox's
+variable names and output convention blind. The description now states the
+same contract `plan_plot` gets, scoped to what chat's fixed
+`outputs=["plotly_json"]` actually collects: a matplotlib `plt.savefig()`
+script is a valid choice for `/query`, which picks its own `outputs`, but
+produces nothing `make_chart` reads — the description says so explicitly, so
+that path never looks like a silent option.
 
 The loop:
 

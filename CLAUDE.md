@@ -495,24 +495,26 @@ distinct from every earlier tool-calling gap: the browser's own `fetch()`
 died mid-stream with no ndjson `{"error": ...}` line to show, since a
 question needing several full `run_sql_query`/`make_chart` round trips can
 run past 300 seconds before the orchestrator gets the chance to send one.
-`OLLAMA_MAX_LOADED_MODELS=2` (above) was already live and ruled out as the
-cause — both models stay resident, so this is turn length, not reload
-thrashing. A single fixed request-duration cap has no right size for this —
-a genuinely compound question can always need one more tool call than
-whatever ceiling was picked, the same reasoning `EVALUATION.md` already
-gives for right-sizing rather than guessing a number. `run_chat`
+`OLLAMA_MAX_LOADED_MODELS=2` (above) was already live, confirming both
+models stay resident through the turn — the delay is the turn's own length,
+not a model reload. A single fixed request-duration cap has no right size
+here: a genuinely compound question can always need one more tool call than
+whatever ceiling was picked. `EVALUATION.md` already gives the matching
+reasoning for right-sizing generally. `run_chat`
 (`orchestrator/app/chat/loop.py`) now sends a `{"ping": true}` line every
 15s a tool call is still running — `_dispatch_with_heartbeats` runs
 `dispatch()` as a background task so the loop can keep yielding pings while
 it's in flight — the same keep-alive pattern a streaming tool-calling API
-relies on generally: the wire stays live off periodic bytes, not off a
-total-duration guess. `OrchestratorClient::chatStream()`'s Guzzle timeout is
-uncapped to match, with `read_timeout` (45s) as what actually catches a
+relies on generally: the wire stays live off periodic bytes. A total-duration
+guess is never sized right for every turn. `OrchestratorClient::chatStream()`'s
+Guzzle timeout is uncapped to match, with `read_timeout` (45s) catching a
 genuinely dead connection. Apache's `mod_php max_execution_time` (this app
-has no FPM pool) is now a backstop rather than the turn-length budget, and
-scoped to this app's own vhost via `php_admin_value` rather than the shared
-`/etc/php/8.5/apache2/php.ini` the four sibling apps on this box also read —
-a pending `sudo` step (`OPERATOR_SETUP.md` §Apache PHP execution timeout)
+has no FPM pool) becomes a backstop against a truly hung request instead of
+the turn-length budget itself. `deploy/apache-vhost.conf` sets it with
+`php_admin_value`, scoped to this app's own vhost: the shared
+`/etc/php/8.5/apache2/php.ini` also serves the four sibling apps on this
+same Apache instance, so an edit there would move their ceiling too — a
+pending `sudo` step (`OPERATOR_SETUP.md` §Apache PHP execution timeout)
 since Claude has no passwordless sudo on this box.
 
 With the connection no longer dying first, the same compound question
@@ -529,10 +531,11 @@ have exploited. `data_ref` is gone from `MakeChartArgs`; `make_chart` now
 takes only the plot script (`MCP_ENGINES.md` §Tools).
 
 Asked to find other tool arguments in the same shape — the model required to
-supply something it was structurally never given — one more turned up, a
-gap rather than an always-fails bug this time. `/query`'s `plan_plot` stage
-hands its planning model an explicit capability string per engine before it
-writes a line of script: a pandas `df` is already loaded, the exact
+supply something it was structurally never given — one more turned up: a gap
+in what the model is told, milder than `data_ref`'s always-fails bug.
+`/query`'s `plan_plot` stage hands its planning model an explicit capability
+string per engine before it writes a line of script: a pandas `df` is
+already loaded, the exact
 `fig.write_json(...)` call, that `fig.write_image()` is forbidden
 (`llm/prompts.py`'s `_ENGINE_CAPABILITIES`). `make_chart`'s tool description
 said only "chart the most recent result" — the chat model authoring `spec`

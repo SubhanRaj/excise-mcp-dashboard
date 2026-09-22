@@ -62,9 +62,8 @@ class HeartbeatEvent:
     a client-side idle timeout (or an intermediate proxy) to drop the
     connection before the turn ever reaches a `done` or an `error` line. This
     is the same keep-alive mechanism a streaming tool-calling API relies on
-    generally: the wire stays live off periodic bytes, not off a single
-    fixed request-duration cap sized for the slowest turn anyone will ever
-    ask for.
+    generally: the wire stays live off periodic bytes. A single fixed
+    request-duration cap has no size that fits every turn.
     """
 
 
