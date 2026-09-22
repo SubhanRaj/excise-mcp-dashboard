@@ -13,13 +13,13 @@
             @forelse($conversations as $c)
             <div class="group relative flex items-center" x-data="{ menuOpen: false }">
                 <a href="{{ route('chat.show', $c) }}"
-                   class="flex-1 min-w-0 block px-3 py-2 rounded-lg text-sm truncate {{ $activeConversation?->id === $c->id ? 'bg-govviolet-50 dark:bg-govviolet-900/30 text-govviolet-700 dark:text-govviolet-300 font-medium' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800' }}">
+                   class="flex-1 min-w-0 block pl-3 pr-8 py-2 rounded-lg text-sm truncate {{ $activeConversation?->id === $c->id ? 'bg-govviolet-50 dark:bg-govviolet-900/30 text-govviolet-700 dark:text-govviolet-300 font-medium' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800' }}">
                     {{ $c->title ?? 'New conversation' }}
                 </a>
                 <button x-on:click="menuOpen = !menuOpen"
-                        class="absolute right-1 p-1 rounded text-slate-400 opacity-0 group-hover:opacity-100 hover:bg-slate-200 dark:hover:bg-slate-700"
+                        class="absolute right-1.5 w-7 h-7 flex items-center justify-center rounded text-slate-400 opacity-60 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-slate-200 dark:hover:bg-slate-700"
                         title="Conversation options">
-                    <i class="ti ti-dots-vertical text-sm"></i>
+                    <i class="ti ti-dots-vertical text-base"></i>
                 </button>
                 <div x-show="menuOpen" x-cloak x-on:click.outside="menuOpen = false"
                      class="absolute right-0 top-full z-10 mt-1 w-44 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg py-1 text-xs">
@@ -52,11 +52,14 @@
              height guess above doesn't exactly match the real viewport. --}}
         <div class="flex-1 overflow-y-auto p-4 space-y-4" x-ref="scrollArea">
             @if(! $activeConversation)
-            <div class="stat-card justify-center text-center flex-col py-16 mx-auto max-w-md">
-                <div class="stat-icon bg-govviolet-100 dark:bg-govviolet-900/40 text-govviolet-600 mx-auto">
+            {{-- No border/card chrome here on purpose: a bordered stat-card box next to the
+                 composer below reads as a second, competing input rather than a hint pointing
+                 at the real one. --}}
+            <div class="flex flex-col items-center justify-center text-center py-16 mx-auto max-w-md">
+                <div class="w-14 h-14 rounded-full bg-govviolet-100 dark:bg-govviolet-900/40 text-govviolet-600 flex items-center justify-center text-2xl">
                     <i class="ti ti-message-chatbot"></i>
                 </div>
-                <p class="text-sm text-slate-400 dark:text-slate-500 mt-4">Start a conversation.</p>
+                <p class="text-sm text-slate-400 dark:text-slate-500 mt-4">Type a question below to begin.</p>
             </div>
             @else
                 @foreach($activeConversation->messages as $m)

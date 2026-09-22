@@ -550,6 +550,22 @@ specific to chat: only the `fig.write_json()` path is collected here.
 contract itself changes, since chat's fixed single output means it can't
 reuse `_ENGINE_CAPABILITIES` text as-is.
 
+A screenshot of the live Chat page surfaced three interface problems past
+what the test suite checks for. The per-conversation menu (delete, permanent
+delete) sat at `opacity-0` until hover, in a `p-1` hit target — invisible by
+default and small once found, in both `chat.blade.php`'s rail and
+`ask.blade.php`'s identical one. Both now keep it dimly visible at rest,
+brighten on hover or focus, and give it a full `w-7 h-7` target. Chat's empty
+state reused `.stat-card`, the bordered widget style the dashboard's stat
+tiles use; sitting right above the composer's own "Ask anything..."
+placeholder, it read as a second, self-contained input. It's unboxed now —
+an icon and a line of text, no border — with copy that names the composer
+directly: "Type a question below to begin." The Visualize toggle reset
+itself the moment a message was sent, before there was any way to tell the
+send had picked it up. `includeChart` (`Chat.php`) now holds its value the
+way the model picker beside it does — a standing choice for the composer,
+kept until the person using it changes it themselves.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures

@@ -65,7 +65,10 @@ class Chat extends Component
             includeChart: $this->includeChart,
         );
         $this->message = '';
-        $this->includeChart = false;
+        // includeChart stays as the user left it — it used to reset to off here, right as
+        // the message left, which looked like the toggle click itself hadn't registered.
+        // It now behaves like the model picker next to it: a standing choice for the
+        // composer, not a one-shot flag cleared out from under the person who set it.
     }
 
     public function syncAfterStream(): void

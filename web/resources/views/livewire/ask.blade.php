@@ -83,13 +83,13 @@
                 @foreach($recentQueries as $q)
                 <div class="group relative flex items-center" x-data="{ menuOpen: false }">
                     <a href="{{ route('ask.show', $q) }}"
-                       class="flex-1 min-w-0 block px-3 py-2 rounded-lg text-sm truncate {{ $activeQuery?->id === $q->id ? 'bg-govviolet-50 dark:bg-govviolet-900/30 text-govviolet-700 dark:text-govviolet-300 font-medium' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800' }}">
+                       class="flex-1 min-w-0 block pl-3 pr-8 py-2 rounded-lg text-sm truncate {{ $activeQuery?->id === $q->id ? 'bg-govviolet-50 dark:bg-govviolet-900/30 text-govviolet-700 dark:text-govviolet-300 font-medium' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800' }}">
                         {{ $q->prompt }}
                     </a>
                     <button x-on:click="menuOpen = !menuOpen"
-                            class="absolute right-1 p-1 rounded text-slate-400 opacity-0 group-hover:opacity-100 hover:bg-slate-200 dark:hover:bg-slate-700"
+                            class="absolute right-1.5 w-7 h-7 flex items-center justify-center rounded text-slate-400 opacity-60 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-slate-200 dark:hover:bg-slate-700"
                             title="Question options">
-                        <i class="ti ti-dots-vertical text-sm"></i>
+                        <i class="ti ti-dots-vertical text-base"></i>
                     </button>
                     <div x-show="menuOpen" x-cloak x-on:click.outside="menuOpen = false"
                          class="absolute right-0 top-full z-10 mt-1 w-44 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg py-1 text-xs">
