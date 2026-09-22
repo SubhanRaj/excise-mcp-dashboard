@@ -2,6 +2,7 @@
 retrieval.
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
@@ -53,10 +54,25 @@ class DoneEvent:
     completion_tokens: int
 
 
-ChatEvent = TokenEvent | ToolCallEvent | ToolResultEvent | ChartEvent | DoneEvent
+@dataclass
+class HeartbeatEvent:
+    """A no-op line sent while a tool call is still running. A slow SQL plan or
+    chart render otherwise leaves the ndjson stream silent for the whole tool
+    call — long enough, on a compound question chaining several of these, for
+    a client-side idle timeout (or an intermediate proxy) to drop the
+    connection before the turn ever reaches a `done` or an `error` line. This
+    is the same keep-alive mechanism a streaming tool-calling API relies on
+    generally: the wire stays live off periodic bytes, not off a single
+    fixed request-duration cap sized for the slowest turn anyone will ever
+    ask for.
+    """
+
+
+ChatEvent = TokenEvent | ToolCallEvent | ToolResultEvent | ChartEvent | DoneEvent | HeartbeatEvent
 
 
 _TOOL_NAMES = ("search_knowledge", "run_sql_query", "make_chart")
+_HEARTBEAT_INTERVAL_S = 15.0
 
 
 def _is_degenerate(text: str) -> bool:
@@ -108,6 +124,41 @@ def _needs_retry(text: str) -> bool:
     if _is_degenerate(text):
         return True
     return "```sql" in text.strip().lower()
+
+
+async def _dispatch_with_heartbeats(
+    call: ToolCall,
+    *,
+    ollama: OllamaClient,
+    schema_card: str,
+    conversation_id: str,
+    usage: TokenUsage | None,
+) -> AsyncIterator[HeartbeatEvent | ToolResult]:
+    """Runs dispatch() as a background task, yielding a HeartbeatEvent every
+    _HEARTBEAT_INTERVAL_S seconds it is still running instead of leaving the
+    caller's stream silent until it finishes. Ends by yielding the
+    ToolResult itself; a raised ChatToolArgumentError propagates from
+    `task.result()` the same as it would from a plain `await dispatch(...)`.
+    """
+    task: asyncio.Task[ToolResult] = asyncio.create_task(
+        dispatch(
+            call,
+            ollama=ollama,
+            schema_card=schema_card,
+            conversation_id=conversation_id,
+            usage=usage,
+        )
+    )
+    try:
+        while True:
+            done, _pending = await asyncio.wait({task}, timeout=_HEARTBEAT_INTERVAL_S)
+            if done:
+                yield task.result()
+                return
+            yield HeartbeatEvent()
+    finally:
+        if not task.done():
+            task.cancel()
 
 
 def _build_messages(message: str, history: list[ChatTurn]) -> list[dict[str, object]]:
@@ -177,14 +228,19 @@ async def run_chat(
 
         for call in pending_calls:
             yield ToolCallEvent(name=call.name, arguments=call.arguments)
+            result: ToolResult | None = None
             try:
-                result = await dispatch(
+                async for item in _dispatch_with_heartbeats(
                     call,
                     ollama=ollama,
                     schema_card=schema_card,
                     conversation_id=request.conversation_id,
                     usage=usage,
-                )
+                ):
+                    if isinstance(item, HeartbeatEvent):
+                        yield item
+                    else:
+                        result = item
             except ChatToolArgumentError as e:
                 # Llama's tool-calling fills in every schema property, sending an
                 # explicit null for one it means to leave unset (e.g. search_knowledge's
@@ -193,6 +249,7 @@ async def run_chat(
                 # end the whole turn the way it did before: the model sees why its
                 # arguments were rejected and can call the tool again correctly.
                 result = ToolResult(ok=False, summary=e.message)
+            assert result is not None
             last_tool_result = result
             tool_calls_made += 1
             yield ToolResultEvent(name=call.name, ok=result.ok, summary=result.summary)

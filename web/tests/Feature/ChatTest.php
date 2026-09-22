@@ -55,7 +55,7 @@ class ChatTest extends TestCase
                 $this->ndjson([
                     ['token' => 'Here '],
                     ['token' => 'is the trend.'],
-                    ['tool_call' => ['name' => 'make_chart', 'arguments' => ['spec' => 'x', 'data_ref' => $conversation->id]]],
+                    ['tool_call' => ['name' => 'make_chart', 'arguments' => ['spec' => 'x']]],
                     ['tool_result' => ['name' => 'make_chart', 'ok' => true, 'summary' => 'Chart rendered.']],
                     ['chart' => ['plotly_json' => json_encode(['data' => [], 'layout' => []])]],
                     ['done' => ['tool_calls_count' => 1, 'prompt_tokens' => 200, 'completion_tokens' => 50]],

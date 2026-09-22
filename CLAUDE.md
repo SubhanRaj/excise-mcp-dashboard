@@ -489,6 +489,64 @@ earlier run of that file, so the grant is a pending `sudo -u postgres` step
 (`OPERATOR_SETUP.md` §Data bank) rather than something already live. The new
 screen shows a clear fallback banner until that step runs.
 
+A compound Chat question — comparing two shop types' counts alongside their
+sales in amount and volume in one turn — surfaced a connection-level failure
+distinct from every earlier tool-calling gap: the browser's own `fetch()`
+died mid-stream with no ndjson `{"error": ...}` line to show, since a
+question needing several full `run_sql_query`/`make_chart` round trips can
+run past 300 seconds before the orchestrator gets the chance to send one.
+`OLLAMA_MAX_LOADED_MODELS=2` (above) was already live and ruled out as the
+cause — both models stay resident, so this is turn length, not reload
+thrashing. A single fixed request-duration cap has no right size for this —
+a genuinely compound question can always need one more tool call than
+whatever ceiling was picked, the same reasoning `EVALUATION.md` already
+gives for right-sizing rather than guessing a number. `run_chat`
+(`orchestrator/app/chat/loop.py`) now sends a `{"ping": true}` line every
+15s a tool call is still running — `_dispatch_with_heartbeats` runs
+`dispatch()` as a background task so the loop can keep yielding pings while
+it's in flight — the same keep-alive pattern a streaming tool-calling API
+relies on generally: the wire stays live off periodic bytes, not off a
+total-duration guess. `OrchestratorClient::chatStream()`'s Guzzle timeout is
+uncapped to match, with `read_timeout` (45s) as what actually catches a
+genuinely dead connection. Apache's `mod_php max_execution_time` (this app
+has no FPM pool) is now a backstop rather than the turn-length budget, and
+scoped to this app's own vhost via `php_admin_value` rather than the shared
+`/etc/php/8.5/apache2/php.ini` the four sibling apps on this box also read —
+a pending `sudo` step (`OPERATOR_SETUP.md` §Apache PHP execution timeout)
+since Claude has no passwordless sudo on this box.
+
+With the connection no longer dying first, the same compound question
+surfaced the turn's actual next failure: every `make_chart` call rejected
+itself with "data_ref must point at this conversation's last run_sql_query
+result." `MakeChartArgs.data_ref` asked the model to restate the
+conversation's own id as a match check against `conversation_id` — but the
+model is never told that id anywhere, not in `CHAT_SYSTEM_PROMPT`, not in
+the message history, so no real call could ever supply the one value that
+would pass. The lookup was always scoped by the trusted `conversation_id`
+`dispatch()` receives from the request itself, never by anything the model
+supplies, so the check guarded nothing a mismatched value could actually
+have exploited. `data_ref` is gone from `MakeChartArgs`; `make_chart` now
+takes only the plot script (`MCP_ENGINES.md` §Tools).
+
+Asked to find other tool arguments in the same shape — the model required to
+supply something it was structurally never given — one more turned up, a
+gap rather than an always-fails bug this time. `/query`'s `plan_plot` stage
+hands its planning model an explicit capability string per engine before it
+writes a line of script: a pandas `df` is already loaded, the exact
+`fig.write_json(...)` call, that `fig.write_image()` is forbidden
+(`llm/prompts.py`'s `_ENGINE_CAPABILITIES`). `make_chart`'s tool description
+said only "chart the most recent result" — the chat model authoring `spec`
+had no equivalent contract, so a plausible chart script (matplotlib's
+`plt.savefig()`, a real option `/query` itself offers) could pass through
+looking reasonable and still produce nothing, since chat always fixes
+`outputs=["plotly_json"]` and only ever collects that one file. The tool
+description now states the same `df`/`OUT`/forbidden-`fig.write_image()`
+facts `_ENGINE_CAPABILITIES` already gives `/query`, plus the one fact
+specific to chat: only the `fig.write_json()` path is collected here.
+`llm/prompts.py` notes the two must be kept in sync by hand if the sandbox
+contract itself changes, since chat's fixed single output means it can't
+reuse `_ENGINE_CAPABILITIES` text as-is.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures

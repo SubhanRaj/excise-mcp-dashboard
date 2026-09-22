@@ -93,6 +93,13 @@ financial years, a bar for a comparison across districts/categories.
 # LLM reads these and picks. Only engines actually in the live registry are
 # ever listed, so an unavailable engine (octave not installed, matlab/wolfram
 # stubs) is never offered.
+#
+# chat/prompts.py's make_chart tool description states the same `df`/`OUT`/
+# forbidden-fig.write_image() facts for its own script contract in different
+# words, since chat always fixes outputs=["plotly_json"] and can't reuse this
+# text as-is without also offering the matplotlib/static branch chat's engine
+# call never collects — keep both in sync by hand if the sandbox contract
+# below (or python_engine.py's PREAMBLE) changes.
 _ENGINE_CAPABILITIES = {
     "python": (
         "python: a pandas DataFrame `df` is already loaded, `OUT` is the output "

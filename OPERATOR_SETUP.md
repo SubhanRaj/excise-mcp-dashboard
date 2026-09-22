@@ -642,6 +642,8 @@ sudo tee /etc/apache2/sites-available/excise-mcp-dashboard.conf >/dev/null <<'EO
     ServerName visualizer.exciseup.in
     DocumentRoot /home/subhan/Sites/excise-mcp-dashboard/web/public
 
+    php_admin_value max_execution_time 1800
+
     <Directory /home/subhan/Sites/excise-mcp-dashboard/web/public>
         Options -Indexes +FollowSymLinks
         AllowOverride All
@@ -693,6 +695,41 @@ systemctl show apache2.service -p ReadWritePaths | tr ' ' '\n' | grep excise-mcp
 
 (`/` itself 404s until Milestone 5 adds a route there — the skeleton only
 defines `/health` plus Fortify's own routes.)
+
+---
+
+## §Apache PHP execution timeout (Milestone 5, found live)
+
+A compound chat question (several `run_sql_query` calls plus a chart, each a
+full LLM round trip) can run past Apache's default 300s
+`max_execution_time` before the orchestrator ever gets to send a
+`{"done": ...}` or a clean `{"error": ...}` line — the request just stops,
+and the browser sees it as a dropped connection rather than an answer or an
+error banner. `run_chat` (`orchestrator/app/chat/loop.py`) now sends a
+`{"ping": true}` line every 15s a tool call is still running, and
+`OrchestratorClient::chatStream()`'s own Guzzle timeout is uncapped to match
+(`read_timeout` catches a genuinely dead connection instead) — so
+`max_execution_time` is a backstop against a truly hung request, not the
+turn-length budget itself, and can stay generous. This app runs on Apache's
+`mod_php` (no FPM pool); `deploy/apache-vhost.conf` sets it with
+`php_admin_value`, scoped to this app's own `<VirtualHost>` rather than the
+shared `/etc/php/8.5/apache2/php.ini` four sibling apps on this same Apache
+instance also read:
+
+```bash
+sudo bash ~/Sites/excise-mcp-dashboard/deploy/root-setup.sh
+```
+
+(Re-running it reinstalls the vhost file and reloads Apache — safe, the same
+idempotent script §Apache vhost above already covers.)
+
+Verify:
+
+```bash
+grep max_execution_time /etc/apache2/sites-available/excise-mcp-dashboard.conf
+# php_admin_value max_execution_time 1800
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8084/health  # 200
+```
 
 ---
 

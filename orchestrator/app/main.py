@@ -20,6 +20,7 @@ from app.auth import require_bearer_token
 from app.chat.loop import (
     ChartEvent,
     DoneEvent,
+    HeartbeatEvent,
     TokenEvent,
     ToolCallEvent,
     ToolResultEvent,
@@ -301,6 +302,8 @@ def _chat_event_line(item: object) -> bytes:
         line = {"tool_result": {"name": item.name, "ok": item.ok, "summary": item.summary}}
     elif isinstance(item, ChartEvent):
         line = {"chart": item.chart.model_dump()}
+    elif isinstance(item, HeartbeatEvent):
+        line = {"ping": True}
     elif isinstance(item, DoneEvent):
         line = {
             "done": {

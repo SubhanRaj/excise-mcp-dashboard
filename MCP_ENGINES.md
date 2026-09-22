@@ -336,7 +336,7 @@ message}`). Laravel pipes these lines to the browser unmodified and persists
 |---|---|---|---|
 | `search_knowledge` | `{query: str, k?: int \| null}` | Retrieves from `kb.chunks` (§Retrieval), returns chunk text + `heading_path` + `source_url` | read-only; `withdrawn_at IS NULL`; `k` capped at 12, defaults to 6 on `null` |
 | `run_sql_query` | `{question: str}` | Plans SQL like `/query`'s `plan_sql`, always — no raw-`sql` argument, so the chat model (which never sees the schema) can't hand-write a query against a table it invented; then `guard.py` -> `runner.py` (READ ONLY txn, statement timeout, row cap); returns column list + row count + a small preview | identical guard + read-only role as the one-shot path; no writes possible; a rejected or failing statement comes back as a failed tool result (see below), not a turn-ending exception |
-| `make_chart` | `{spec: str, data_ref: str}` | Runs a generated Python plot script over the last `run_sql_query` result in the `bwrap` sandbox; returns artifact refs | same sandbox, same caps; `data_ref` must point at a result from this conversation |
+| `make_chart` | `{spec: str}` | Runs a generated Python plot script over the last `run_sql_query` result in the `bwrap` sandbox; returns artifact refs | same sandbox, same caps; the DataFrame is looked up by the request's own `conversation_id`, a trusted value the model never supplies and is never shown — an earlier `data_ref` argument asked the model to restate that id as a match check, which no real call could ever pass |
 
 Ollama's native tool-calling (`tools=[...]` on `/api/chat`) drives this;
 Qwen 2.5 and Llama 3.1 both support it. A live chat turn on a plain greeting
@@ -414,6 +414,28 @@ of that generation plus the retry, long enough that the browser dropped it
 as interrupted before the correction ever arrived. The guessed SQL now
 streams live and the correction follows right after it — a moment of a
 wrong-looking answer costs less than the connection itself.
+
+Past the model's own tool-calling reliability, two gaps sat on the
+orchestrator's own side of the contract, both in `make_chart` specifically.
+`MakeChartArgs` used to also require `data_ref`, checked against
+`conversation_id` — but the model is never told that id anywhere, not in
+`CHAT_SYSTEM_PROMPT`, not in the message history, so no real call could ever
+supply the one value that would pass; every `make_chart` call failed on this
+before it ever reached the sandbox. The lookup was already scoped by the
+trusted `conversation_id` `dispatch()` receives from the request itself, so
+the check guarded nothing a wrong `data_ref` could actually have exploited.
+`data_ref` is gone; `make_chart` takes only `spec`. Separately, unlike
+`/query`'s `plan_plot` stage — which hands the planning model an explicit
+capability string per engine (`llm/prompts.py`'s `_ENGINE_CAPABILITIES`:
+`df` is already loaded, the exact `fig.write_json(...)` call, the forbidden
+`fig.write_image()`) before it writes a line of script — `make_chart`'s tool
+description said only "chart the most recent result," leaving the model to
+guess the sandbox's variable names and output convention blind. The
+description now states the same contract `plan_plot` gets, scoped to what
+chat's fixed `outputs=["plotly_json"]` actually collects: a matplotlib
+`plt.savefig()` script — a valid choice for `/query`, which picks its own
+`outputs` — produces nothing `make_chart` reads, so the description says so
+explicitly rather than offering a path that always fails silently.
 
 The loop:
 

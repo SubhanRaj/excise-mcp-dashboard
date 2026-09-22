@@ -1,5 +1,6 @@
 """chat/loop.py's bounded tool loop. MCP_ENGINES.md §Chat and retrieval."""
 
+import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
@@ -9,6 +10,7 @@ from app.chat import loop as chat_loop
 from app.chat.loop import (
     ChartEvent,
     DoneEvent,
+    HeartbeatEvent,
     TokenEvent,
     ToolCallEvent,
     ToolResultEvent,
@@ -162,7 +164,7 @@ async def test_a_turn_with_one_tool_call_dispatches_and_continues(
 async def test_a_tool_result_with_a_chart_emits_a_chart_event(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    call = ToolCall(name="make_chart", arguments={"spec": "x", "data_ref": "c1"})
+    call = ToolCall(name="make_chart", arguments={"spec": "x"})
     ollama = _FakeOllama(
         [[_FakeChunk(content="", tool_calls=[call])], [_FakeChunk(content="Done.")]]
     )
@@ -228,6 +230,32 @@ async def test_a_silent_reply_after_a_tool_call_falls_back_to_the_tool_summary(
     tokens = "".join(e.delta for e in events if isinstance(e, TokenEvent))
     assert tokens == "560 row(s), columns: ['count']. Preview: [{'count': 560}]"
     assert isinstance(events[-1], DoneEvent)
+
+
+async def test_a_slow_tool_call_emits_heartbeats_before_its_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A compound question chains several full LLM round trips inside one tool call
+    # (build_sql_prompt -> generate_structured -> guard_sql -> run_sql) — long enough,
+    # unheartbeated, that a client-side idle timeout dropped a real connection before the
+    # turn ever reached done/error. dispatch() runs as a background task so the loop can
+    # keep yielding pings while it's still in flight.
+    monkeypatch.setattr(chat_loop, "_HEARTBEAT_INTERVAL_S", 0.01)
+    call = ToolCall(name="run_sql_query", arguments={"question": "x"})
+    ollama = _FakeOllama(
+        [[_FakeChunk(content="", tool_calls=[call])], [_FakeChunk(content="Done.")]]
+    )
+
+    async def fake_dispatch(call: ToolCall, **kwargs: object) -> ToolResult:
+        await asyncio.sleep(0.05)
+        return ToolResult(ok=True, summary="slow result")
+
+    monkeypatch.setattr(chat_loop, "dispatch", fake_dispatch)
+
+    events = await _events(ollama)
+    heartbeat_index = next(i for i, e in enumerate(events) if isinstance(e, HeartbeatEvent))
+    result_index = next(i for i, e in enumerate(events) if isinstance(e, ToolResultEvent) and e.ok)
+    assert heartbeat_index < result_index
 
 
 async def test_exceeding_the_tool_call_cap_raises_the_typed_error(

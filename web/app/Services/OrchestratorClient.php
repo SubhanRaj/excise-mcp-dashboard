@@ -107,10 +107,18 @@ class OrchestratorClient
 
     /**
      * Yields POST /chat's ndjson lines one decoded event at a time ({"token": ...},
-     * {"tool_call": ...}, {"tool_result": ...}, {"chart": ...}, {"done": ...},
-     * {"error": ...}). ChatSendController is the only caller — it pipes each event
-     * to the browser unmodified and persists it, so this stays a plain decoder
-     * with no buffering-to-a-final-result the way runQuery() has.
+     * {"tool_call": ...}, {"tool_result": ...}, {"chart": ...}, {"ping": true},
+     * {"done": ...}, {"error": ...}). ChatSendController is the only caller — it pipes
+     * each event to the browser unmodified and persists it, so this stays a plain
+     * decoder with no buffering-to-a-final-result the way runQuery() has.
+     *
+     * A compound question chains several full LLM round trips in one turn (a
+     * run_sql_query call per metric, then a chart), so this has no fixed total-duration
+     * cap — `run_chat` (orchestrator/app/chat/loop.py) sends a {"ping": true} line every
+     * 15s a tool call is still running, and `read_timeout` below is how a genuinely dead
+     * connection still gets caught, rather than a size guess for the slowest turn anyone
+     * will ever ask for. Apache's own `max_execution_time` is a separate backstop,
+     * scoped to this app's vhost (OPERATOR_SETUP.md §Apache PHP execution timeout).
      *
      * @param  array<string, mixed>  $payload
      * @return \Generator<int, array<string, mixed>>
@@ -121,8 +129,8 @@ class OrchestratorClient
     {
         $response = Http::baseUrl(config('services.orchestrator.base_url'))
             ->withToken(config('services.orchestrator.token'))
-            ->withOptions(['stream' => true])
-            ->timeout(300)
+            ->withOptions(['stream' => true, 'read_timeout' => 45])
+            ->timeout(0)
             ->post('/chat', $payload)
             ->throw();
 

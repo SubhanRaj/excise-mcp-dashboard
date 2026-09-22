@@ -57,5 +57,15 @@ CHAT_TOOL_SCHEMAS: list[dict[str, object]] = [
         "never raw SQL — the schema-aware planner writes the query.",
         RunSqlQueryArgs,
     ),
-    _tool_schema("make_chart", "Chart the most recent run_sql_query result.", MakeChartArgs),
+    _tool_schema(
+        "make_chart",
+        "Chart the most recent run_sql_query result in this conversation. `spec` is a "
+        "Python script: a pandas DataFrame `df` is already loaded from that result, "
+        "`OUT` is the output directory. Build a Plotly figure and call exactly "
+        '`fig.write_json(f"{OUT}/chart.plotly.json")` — this tool only ever collects '
+        "that file, so matplotlib's plt.savefig() produces nothing it reads. Never "
+        "call the figure's own fig.write_image() — it needs a headless Chrome the "
+        "sandbox cannot launch.",
+        MakeChartArgs,
+    ),
 ]

@@ -28,7 +28,7 @@ def _ollama_returning(response_text: str) -> OllamaClient:
     [
         (SearchKnowledgeArgs, {"query": "MGQ policy"}),
         (RunSqlQueryArgs, {"question": "how many districts?"}),
-        (MakeChartArgs, {"spec": "fig.write_json(...)", "data_ref": "conv-1"}),
+        (MakeChartArgs, {"spec": "fig.write_json(...)"}),
     ],
 )
 def test_tool_args_schema_round_trips(model: type, payload: dict[str, object]) -> None:
@@ -76,19 +76,35 @@ async def test_run_sql_query_with_a_bad_plan_returns_a_failed_tool_result() -> N
     assert result.ok is False
 
 
-async def test_make_chart_rejects_a_data_ref_for_a_different_conversation() -> None:
+async def test_make_chart_uses_the_conversations_own_last_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # data_ref (a required model-supplied argument matched against conversation_id)
+    # used to gate this — but the model is never told the conversation_id anywhere
+    # (not in CHAT_SYSTEM_PROMPT, not in the message history), so no real call could
+    # ever pass it. The lookup is scoped by the trusted conversation_id dispatch()
+    # already receives from the request, not by anything the model supplies.
+    class _FakeEngine:
+        supported_outputs = frozenset({"plotly_json"})
+
+        async def render(self, req: RenderRequest) -> RenderResult:
+            return RenderResult(plotly_json="{}", files={}, engine="python")
+
+    monkeypatch.setattr(chat_tools, "get_engine", lambda name: _FakeEngine())
     chat_tools._LAST_RESULT["c1"] = pd.DataFrame([{"a": 1}])
-    call = ToolCall(name="make_chart", arguments={"spec": "x", "data_ref": "someone-elses-conv"})
-    with pytest.raises(ChatToolArgumentError):
-        await dispatch(
-            call, ollama=_ollama_returning("{}"), schema_card="(schema)", conversation_id="c1"
-        )
+    chat_tools._LAST_RESULT["c2"] = pd.DataFrame([{"a": 2}])
+    call = ToolCall(name="make_chart", arguments={"spec": "fig.write_json(...)"})
+    result = await dispatch(
+        call, ollama=_ollama_returning("{}"), schema_card="(schema)", conversation_id="c1"
+    )
+    assert result.ok is True
     del chat_tools._LAST_RESULT["c1"]
+    del chat_tools._LAST_RESULT["c2"]
 
 
 async def test_make_chart_rejects_when_no_prior_result_exists() -> None:
     chat_tools._LAST_RESULT.pop("c-empty", None)
-    call = ToolCall(name="make_chart", arguments={"spec": "x", "data_ref": "c-empty"})
+    call = ToolCall(name="make_chart", arguments={"spec": "x"})
     with pytest.raises(ChatToolArgumentError):
         await dispatch(
             call, ollama=_ollama_returning("{}"), schema_card="(schema)", conversation_id="c-empty"
@@ -109,7 +125,7 @@ async def test_make_chart_returns_a_failed_tool_result_instead_of_raising(
 
     monkeypatch.setattr(chat_tools, "get_engine", lambda name: _FailingEngine())
     chat_tools._LAST_RESULT["c-fail"] = pd.DataFrame([{"a": 1}])
-    call = ToolCall(name="make_chart", arguments={"spec": "bad script", "data_ref": "c-fail"})
+    call = ToolCall(name="make_chart", arguments={"spec": "bad script"})
     result = await dispatch(
         call, ollama=_ollama_returning("{}"), schema_card="(schema)", conversation_id="c-fail"
     )

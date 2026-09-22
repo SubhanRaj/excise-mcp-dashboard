@@ -55,7 +55,6 @@ class RunSqlQueryArgs(BaseModel):
 
 class MakeChartArgs(BaseModel):
     spec: str
-    data_ref: str
 
 
 async def _search_knowledge(args: SearchKnowledgeArgs) -> ToolResult:
@@ -103,10 +102,12 @@ async def _run_sql_query(
 
 
 async def _make_chart(args: MakeChartArgs, *, conversation_id: str) -> ToolResult:
-    if args.data_ref != conversation_id:
-        raise ChatToolArgumentError(
-            "make_chart", "data_ref must point at this conversation's last run_sql_query result"
-        )
+    # The last run_sql_query result is already scoped by conversation_id — a trusted
+    # value dispatch() passes in from the request, never from the model's own tool
+    # arguments. An earlier data_ref argument asked the model to also state the
+    # conversation_id itself as a match check, but the model is never told that id
+    # anywhere (not in CHAT_SYSTEM_PROMPT, not in the message history), so it could
+    # never supply the one value that would pass — every make_chart call failed.
     df = _LAST_RESULT.get(conversation_id)
     if df is None:
         raise ChatToolArgumentError(
