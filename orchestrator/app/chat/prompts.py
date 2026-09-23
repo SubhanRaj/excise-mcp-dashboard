@@ -71,13 +71,17 @@ CHAT_TOOL_SCHEMAS: list[dict[str, object]] = [
     ),
     _tool_schema(
         "make_chart",
-        "Chart the most recent run_sql_query result in this conversation. `spec` is a "
-        "Python script: a pandas DataFrame `df` is already loaded from that result, "
-        "`OUT` is the output directory. Build a Plotly figure and call exactly "
-        '`fig.write_json(f"{OUT}/chart.plotly.json")` — this tool only ever collects '
-        "that file, so matplotlib's plt.savefig() produces nothing it reads. Never "
-        "call the figure's own fig.write_image() — it needs a headless Chrome the "
-        "sandbox cannot launch.",
+        "Chart the most recent run_sql_query result in this conversation. `spec` must "
+        "be real, immediately runnable Python source code — never a description, "
+        "placeholder, or comment about what the chart should show; a `spec` that isn't "
+        "actual code fails as a syntax error. A pandas DataFrame `df` is already loaded "
+        "from that result, `OUT` is the output directory. Build a Plotly figure and "
+        'call exactly `fig.write_json(f"{OUT}/chart.plotly.json")` — this tool only '
+        "ever collects that file, so matplotlib's plt.savefig() produces nothing it "
+        "reads. Never call the figure's own fig.write_image() — it needs a headless "
+        "Chrome the sandbox cannot launch. Example spec for a bar chart: "
+        '`fig = px.bar(df, x="category_name", y="total_bl"); '
+        'fig.write_json(f"{OUT}/chart.plotly.json")`',
         MakeChartArgs,
     ),
 ]

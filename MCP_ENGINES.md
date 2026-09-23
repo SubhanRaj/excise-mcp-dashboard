@@ -530,6 +530,14 @@ script is a valid choice for `/query`, which picks its own `outputs`, but
 produces nothing `make_chart` reads — the description says so explicitly, so
 that path never looks like a silent option.
 
+A live `make_chart` call sent `spec` as the literal text "chart specification
+code" — not a script, a description of one — which the sandbox ran as-is and
+failed on with a `SyntaxError` at the first line of the model's own content.
+The tool description had never shown a worked example, only prose describing
+the contract; it now ends with one concrete `spec` (a `px.bar` call plus the
+required `fig.write_json(...)`) and says directly that `spec` must be real,
+runnable Python, never a description or placeholder.
+
 The loop:
 
 ```
