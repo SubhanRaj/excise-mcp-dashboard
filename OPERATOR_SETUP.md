@@ -218,13 +218,14 @@ sudo -u postgres psql -d excise_bank -c \
    ALTER DEFAULT PRIVILEGES FOR ROLE excise_owner IN SCHEMA etl GRANT SELECT ON TABLES TO excise_ro;"
 ```
 
-**Pending — add `analytics.license_categories`** (found missing while tracing a
-live SQL failure back to the source IESCMS report, which carries a wholesale
-license type and a separate retail one on every row — nothing before this let
-the model look up what a code like `FL2` or `CL5DB` actually means, or which
-ones are wholesale-only. `db/analytics_views.sql` now creates the view;
-re-running the whole file is safe, `CREATE OR REPLACE VIEW` and its own
-trailing grants are idempotent):
+**`analytics.license_categories`** (found missing while tracing a live SQL
+failure back to the source IESCMS report, which carries a wholesale license
+type and a separate retail one on every row — nothing before this let the
+model look up what a code like `FL2` or `CL5DB` actually means, or which ones
+are wholesale-only. Applied and confirmed live — all 12 codes read back
+correctly, and the orchestrator has picked up the matching `VIEW_NOTES`
+entry. `db/analytics_views.sql` is safe to re-run — `CREATE OR REPLACE VIEW`
+and its own trailing grants are idempotent):
 
 ```bash
 sudo -u postgres psql -d excise_bank -f ~/Sites/excise-mcp-dashboard/db/analytics_views.sql
@@ -786,6 +787,7 @@ cloudflared tunnel route dns --overwrite-dns <uuid> visualizer.exciseup.in
 cat > ~/.cloudflared/excise-mcp-config.yml <<EOF
 tunnel: <uuid>
 credentials-file: /home/subhan/.cloudflared/<uuid>.json
+protocol: http2
 
 ingress:
   - hostname: visualizer.exciseup.in
@@ -837,6 +839,23 @@ systemctl --user status excise-mcp-dashboard-tunnel   # confirm active (running)
 
 The site is public on the subdomain; the app's Fortify email-OTP login is the
 only gate, the same as the other four apps. No Cloudflare Access step.
+
+`protocol: http2` above (`journalctl --user -u excise-mcp-dashboard-tunnel`)
+is a fix, not part of the original setup: cloudflared defaults to QUIC over
+UDP, and this box's network path was silently dropping idle QUIC sessions —
+`"failed to accept QUIC stream: timeout: no recent network activity"` in the
+tunnel's own log, 66 times over 48 hours, worse on the sibling apps' tunnels
+(over 500 times each, same error). A request caught mid-stream when this
+happens doesn't get a clean error back to the browser; the connection just
+goes silent, which is what a "connection was interrupted" or a chat turn
+stuck on its typing indicator forever actually was in every case traced back
+this far. Forcing HTTP/2 over TCP avoids the UDP path entirely. If a tunnel
+still shows this error after adding the line, confirm it actually
+registered with `protocol=http2` and not `protocol=quic`:
+
+```bash
+journalctl --user -u excise-mcp-dashboard-tunnel --since "5 minutes ago" | grep "Registered tunnel connection"
+```
 
 ---
 
@@ -899,6 +918,68 @@ systemctl --user restart excise-orchestrator
 
 ---
 
+## §Reset chat/Ask history (as needed)
+
+A full reset of every `queries` and `conversations` row — used after a heavy
+testing session, or to clear stuck rows left behind by a tunnel/connection
+drop (`§Cloudflare Tunnel`, above). It exports every question actually asked
+(Ask's `prompt` column and every chat message with `role = 'user'`, across
+all users) to a plain text file first, so nothing is lost even though the
+rows themselves are gone for good — a soft delete alone would leave the
+`chart_artifacts` rows and their rendered PNG/SVG/PDF files behind, since
+that table is a polymorphic owner with no DB-level foreign key to either
+`queries` or `message_tool_calls` (the same reason `Ask::forceDeleteQuery()`
+and `Chat::forceDeleteConversation()` clean it up by hand).
+
+```bash
+cd ~/Sites/excise-mcp-dashboard/web
+php artisan tinker
+```
+
+```php
+$lines = [];
+foreach (\App\Models\Query::withTrashed()->orderBy('created_at')->get() as $q) {
+    $lines[] = "[ask] {$q->created_at} (user {$q->user_id}, status {$q->status}): {$q->prompt}";
+}
+foreach (\App\Models\Message::where('role', 'user')->orderBy('created_at')->get() as $m) {
+    $lines[] = "[chat] {$m->created_at} (conversation {$m->conversation_id}): {$m->content}";
+}
+file_put_contents('/home/subhan/asked_questions.txt', implode("\n", $lines) . "\n");
+
+// Stop anything still mid-flight before the wipe.
+\App\Models\Query::whereIn('status', ['pending', 'running'])->update([
+    'status' => 'failed', 'error_message' => 'Cancelled by operator during a full reset.',
+]);
+
+$toolCallIds = \App\Models\MessageToolCall::withTrashed()->pluck('id');
+\App\Models\ChartArtifact::withTrashed()
+    ->where(fn ($q) => $q->where('owner_type', \App\Models\Query::class)
+        ->orWhere(fn ($q2) => $q2->where('owner_type', \App\Models\MessageToolCall::class)->whereIn('owner_id', $toolCallIds)))
+    ->get()
+    ->each(function (\App\Models\ChartArtifact $a) {
+        foreach (['png_path', 'svg_path', 'pdf_path'] as $c) {
+            if ($a->$c) \Illuminate\Support\Facades\Storage::disk('local')->delete($a->$c);
+        }
+        $a->forceDelete();
+    });
+
+\App\Models\Query::withTrashed()->forceDelete();
+\App\Models\Conversation::withTrashed()->forceDelete(); // cascades messages -> message_tool_calls via DB FK
+```
+
+This only touches `web/`'s own MariaDB (the operational store); the
+Postgres data bank (`excise_bank`) is never part of a reset. If the reset
+follows a tunnel drop or a stuck turn, restart the app's own services too so
+nothing half-finished is still running in the background:
+
+```bash
+systemctl --user restart excise-orchestrator excise-mcp-dashboard-queue
+sudo systemctl restart ollama          # unloads every resident model; the
+                                        # next request reloads whichever it needs
+```
+
+---
+
 ## Quick index
 
 | Need | Section | Milestone |
@@ -913,3 +994,4 @@ systemctl --user restart excise-orchestrator
 | Create `excise_mcp_dashboard_local` MariaDB DB + user | §web/ skeleton | 5 |
 | Apache vhost + `ReadWritePaths` | §Apache | 5 |
 | `cloudflared tunnel` + systemd unit | §Tunnel | 6 |
+| Wipe test chat/Ask history, keep the asked questions | §Reset chat/Ask history | — |

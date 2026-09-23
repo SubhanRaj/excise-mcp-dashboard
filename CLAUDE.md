@@ -756,7 +756,37 @@ surfaced one further, unbuilt gap: the legacy portal's own shop table has
 2,024 real shops under `Bhang`/`Bhang Shop`, a category this project's
 `license_categories` has never carried and the live IESCMS import doesn't
 either — noted in `ROADMAP.md`'s backlog, not started, since there is no
-source of shop-level Bhang data to ingest yet.
+source of shop-level Bhang data to ingest yet. `analytics.license_categories`
+is now live and confirmed — the pending `sudo -u postgres` step ran, all 12
+codes read back correctly, and the orchestrator's own restart picked up the
+matching `VIEW_NOTES` entry.
+
+A live report of Chat sticking on its typing indicator indefinitely, and the
+tunnel itself going down, traced past the app entirely: the Cloudflare
+Tunnel's own log (`journalctl --user -u excise-mcp-dashboard-tunnel`) showed
+`"failed to accept QUIC stream: timeout: no recent network activity"`
+dozens of times over 48 hours — cloudflared defaults to QUIC over UDP, and
+this box's network path was silently dropping idle QUIC sessions well
+before either side meant to close the connection. The sibling apps' tunnels
+showed the identical error hundreds of times over the same window, so this
+is the box's network path, not anything specific to this app. A request cut
+off mid-stream this way gets no clean error on the browser side — the
+connection just goes quiet, which is what every earlier "connection was
+interrupted" report and now a stuck typing indicator actually were.
+`~/.cloudflared/excise-mcp-config.yml` now pins `protocol: http2`, forcing
+HTTP/2 over TCP instead of QUIC over UDP — confirmed live, all four tunnel
+connections now register as `protocol=http2` in the log, with no further
+timeout errors since (`OPERATOR_SETUP.md` §Cloudflare Tunnel).
+
+The testing that surfaced all of the above left `queries` and `conversations`
+full of stuck and half-finished rows — two Ask queries stuck on `pending`
+from turns that died mid-stream, and chart artifacts and their rendered
+files pointing at rows that no longer meant anything. `OPERATOR_SETUP.md`'s
+new §Reset chat/Ask history runbook clears both tables and their chart
+artifacts, exporting every question actually asked (Ask's `prompt` and every
+`role = 'user'` chat message, all users) to a text file first — the actual
+data being tested against, `analytics.*` in Postgres, is untouched by this;
+it only ever reaches into `web/`'s own MariaDB store.
 
 ## What this project is
 
