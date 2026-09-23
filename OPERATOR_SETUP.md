@@ -218,6 +218,25 @@ sudo -u postgres psql -d excise_bank -c \
    ALTER DEFAULT PRIVILEGES FOR ROLE excise_owner IN SCHEMA etl GRANT SELECT ON TABLES TO excise_ro;"
 ```
 
+**Pending — add `analytics.license_categories`** (found missing while tracing a
+live SQL failure back to the source IESCMS report, which carries a wholesale
+license type and a separate retail one on every row — nothing before this let
+the model look up what a code like `FL2` or `CL5DB` actually means, or which
+ones are wholesale-only. `db/analytics_views.sql` now creates the view;
+re-running the whole file is safe, `CREATE OR REPLACE VIEW` and its own
+trailing grants are idempotent):
+
+```bash
+sudo -u postgres psql -d excise_bank -f ~/Sites/excise-mcp-dashboard/db/analytics_views.sql
+```
+
+Verify:
+
+```bash
+PGPASSWORD='CHANGE_ME_ro' psql -h 127.0.0.1 -U excise_ro -d excise_bank -c \
+  "select code, name, kind from analytics.license_categories order by code;"
+```
+
 **Create the read-only MariaDB user for the pdf-markdown-pipeline sync**
 (Milestone 3 needs this; the pipeline's DB is `pdf_markdown_pipeline_local`):
 

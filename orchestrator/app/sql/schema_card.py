@@ -13,6 +13,17 @@ from app.schemas import SchemaColumn, SchemaTable
 # needs one — a missing entry just renders without a description line.
 VIEW_NOTES = {
     "districts": "75 UP districts, each under one division, each division under one zone.",
+    "license_categories": (
+        "the lookup for every license_category / retail_license_category / "
+        "wholesale_license_type code seen elsewhere — code, name, and kind ('wholesale', "
+        "'country_liquor', 'foreign_liquor', 'composite', 'beer', 'model_shop', "
+        "'premium_retail_vend'). FL2 and CL2 are kind='wholesale' — the distributor a "
+        "shop's stock passes through on its way from the depot, never a retail shop's own "
+        "category. A shop's own category (analytics.shops.license_category, "
+        "analytics.dispatches.retail_license_category) is always one of the other kinds; "
+        "analytics.dispatches.wholesale_license_type is the one column that legitimately "
+        "holds FL2/CL2, for the wholesaler on that pass, not the retail shop receiving it."
+    ),
     "revenues": (
         "duty/fee collections, aggregated by district + financial_year + license_category — "
         "one row per combination, not per shop and not per month. metric is 'excise_duty' | "
@@ -44,7 +55,9 @@ VIEW_NOTES = {
         "FL4C (Premium Retail Vend), FL5DB (Composite: Foreign + Country Liquor). "
         "There is no separate 'beer shop' table or category — beer retail is folded "
         "into the CL5CC and FL5DB composite categories; filter license_category for those "
-        "two codes rather than inventing a beer_shops table."
+        "two codes rather than inventing a beer_shops table. See analytics.license_categories "
+        "for the full code/name/kind list, including wholesale-only codes that never appear "
+        "here (a shop's own license_category is never 'FL2' or 'CL2' — see that view's note)."
     ),
     "shop_years": (
         "quota/settlement per shop per financial year. mgq_bl is the minimum guaranteed quota."
@@ -52,9 +65,13 @@ VIEW_NOTES = {
     "dispatches": (
         "one row per wholesale-to-retail transport pass (a live IESCMS export, not the "
         "annual sales_volumes/revenues reconciliation, which has no shop or month "
-        "granularity). retail_license_category is the shop's category on that pass (same "
-        "codes as analytics.shops.license_category, including CL5CC/FL5DB for "
-        "composite/beer). transport_pass_issued_at is the real business date — filter on "
+        "granularity). Two different license-type columns exist on the same row, from the "
+        "same source report: wholesale_license_type is the distributor's own code (FL2/CL2, "
+        "kind='wholesale' in analytics.license_categories, never a shop's own category), and "
+        "retail_license_category is the receiving shop's actual category (same codes as "
+        "analytics.shops.license_category, including CL5CC/FL5DB for composite/beer) — a "
+        "question about shop types always means retail_license_category. "
+        "transport_pass_issued_at is the real business date — filter on "
         "it (not shops.created_at) for a 'how many shops in [month/year]' question; count "
         "DISTINCT shop_id, since one shop has many passes. duty_fee_inr is the amount and "
         "dispatched_bulk_litres/dispatched_cases/dispatched_bottles are the volume for a "

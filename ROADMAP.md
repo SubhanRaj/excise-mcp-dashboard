@@ -728,3 +728,11 @@ PDF / XLSX / ZIP with the data vintage on it.
   series becomes a published spotlight or dataset there. Needs an export
   contract and an admin review step; not started until this tool is in daily
   use (Milestone 7's `saved_analyses` + `report_exports` are the source side)
+- Bhang as a real license category — the legacy Mentor portal DB
+  (`~/mentor_portal_db`, a restored dump of the department's own predecessor
+  system) shows 2,024 real shops under `Bhang`/`Bhang Shop`, and
+  `upexcise-stats-dashboard`'s own `docs/data-model.md` independently flags
+  the same gap. Neither this project's `license_categories` table nor its
+  live IESCMS import carries it — the wholesale-to-retail dispatch reports
+  this app ingests are liquor-only. Needs a source of shop-level Bhang data
+  before there's anything to ingest; not started

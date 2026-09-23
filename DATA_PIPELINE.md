@@ -428,6 +428,22 @@ a month or to individual shops — it already carries `duty_fee_inr` (amount)
 and `dispatched_bulk_litres`/`dispatched_cases`/`dispatched_bottles`
 (volume) at exactly that granularity.
 
+Tracing that same failure back to the source uncovered a second gap: the
+IESCMS dispatch report each row comes from carries two separate license-type
+columns — a wholesale one (`FL2`/`CL2`, the distributor) and a retail one
+(the actual shop, e.g. `FL5DB`/`CL5C`) — and `analytics.dispatches` already
+keeps them apart as `wholesale_license_type` and `retail_license_category`.
+What was missing was anywhere to look up what any code actually means:
+`license_categories` (code, name, kind) has held the full list since the
+dispatch-report milestone but was never exposed as its own view.
+`analytics.license_categories` now is one, `CREATE OR REPLACE VIEW` in
+`db/analytics_views.sql` like every other view here, picked up automatically
+by `excise_ro`'s `ALTER DEFAULT PRIVILEGES` grant (`db/roles.sql`) with no
+separate grant needed. `VIEW_NOTES` for `dispatches` and `shops` now name it
+directly, and say plainly that a shop's own category is never `FL2`/`CL2` —
+those two are `kind = 'wholesale'` and only ever belong to
+`dispatches.wholesale_license_type`.
+
 ### BI access (future — Power BI and similar, not built)
 
 `analytics.*` and `kb.*` are the entire surface any read-only consumer ever

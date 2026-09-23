@@ -27,6 +27,16 @@ JOIN divisions dv ON dv.id = d.division_id
 JOIN zones z      ON z.id = dv.zone_id
 WHERE d.deleted_at IS NULL AND d.published_at IS NOT NULL;
 
+-- A reference lookup, not a fact table — every other view already denormalizes a
+-- shop's or a row's own license_category code inline, but nothing before this
+-- exposed what a code actually means or which ones are wholesale-only (FL2, CL2)
+-- versus a retail shop's own category (CL5C, CL5CC, FL4A, FL4C, FL5DB), found
+-- missing while tracing a live question back to the source IESCMS report, which
+-- carries both a wholesale license type and a separate retail one on every row.
+CREATE OR REPLACE VIEW analytics.license_categories AS
+SELECT id, code, name, kind
+FROM license_categories;
+
 CREATE OR REPLACE VIEW analytics.revenues AS
 SELECT r.id, r.district_id, r.financial_year_id, r.license_category_id,
        r.metric, r.amount_inr, r.source_ref,

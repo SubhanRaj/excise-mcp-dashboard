@@ -735,6 +735,29 @@ guessing what the data probably contains. Clicking one fills the composer
 without submitting it, so a first-time visitor sees the pipeline answer a
 real question with one click and can still edit it first.
 
+Tracing that `sales_volumes` hallucination back to its source — the raw
+IESCMS Excel reports in `scripts_and_data/sample_data/` — found a second,
+related gap. Every row in those reports carries two separate license-type
+columns: a wholesale one (`FL2`/`CL2`, the distributor) and a retail one
+(the actual shop, e.g. `FL5DB`/`CL5C`), and `analytics.dispatches` already
+keeps them apart correctly. What the model never had was anywhere to look
+up what any code means, or that `FL2`/`CL2` are wholesale-only —
+`license_categories` (code, name, kind) has held the full list since the
+dispatch-report milestone but was never exposed as its own view.
+`analytics.license_categories` now is one (`db/analytics_views.sql`,
+picked up by `excise_ro`'s existing default-privileges grant with no
+separate `GRANT` needed), and `VIEW_NOTES` for `dispatches`/`shops` now
+name it directly (`DATA_PIPELINE.md` §Row visibility for the AI path). A
+pending `sudo -u postgres psql -f db/analytics_views.sql` step, same shape
+as the earlier `etl` schema grant. Checking three related repos
+(`~/Sites/upexcise-stats-dashboard`, the restored legacy `~/mentor_portal_db`
+dump, `~/Projects/*`) for anything else the schema notes were missing
+surfaced one further, unbuilt gap: the legacy portal's own shop table has
+2,024 real shops under `Bhang`/`Bhang Shop`, a category this project's
+`license_categories` has never carried and the live IESCMS import doesn't
+either — noted in `ROADMAP.md`'s backlog, not started, since there is no
+source of shop-level Bhang data to ingest yet.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures
