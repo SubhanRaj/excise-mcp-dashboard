@@ -48,7 +48,9 @@ orchestrator/
     sql/
       guard.py         "single read-only SELECT/WITH" parser + checks
       runner.py        asyncpg pool, READ ONLY txn, statement timeout
-      schema_card.py   renders analytics.* views into the prompt schema description
+      schema_card.py   renders analytics.* views into the prompt schema description;
+                       also backs GET /schema/tables and .../sample, and pulls
+                       admin-edited notes from web/ into the schema description
     kb/
       retrieve.py      FTS query over kb.chunks (+ pgvector path when enabled)
       embed.py         local Ollama embed model client (only when KB_EMBEDDINGS_ENABLED)
@@ -79,10 +81,23 @@ orchestrator/
 | `POST` | `/chat` | `ChatRequest` | streamed newline-delimited JSON (`application/x-ndjson`, matching `/query`) — `token` / `tool_call` / `tool_result` / `chart` / `done` / `error` lines |
 | `POST` | `/kb/search` | `{query: str, k: int}` | `{chunks: [...]}` — ranked FTS retrieval, no LLM (used by tests and the "cite sources" panel) |
 | `GET` | `/kb/documents` | — (paginated: `?page`) | `{documents: [...], total}` — unranked listing of `kb.documents` for the admin "browse the corpus" screen |
+| `POST` | `/chart/render` | `ChartRenderRequest` (`spec`: a Plotly figure dict, `format`: `png`/`svg`/`pdf`) | the rasterized bytes, correct `Content-Type` — rasterizes an already-produced figure through `get_static_renderer()` (`engines/static_render.py`), the same persistent-browser renderer the sandboxed render step uses; no LLM-authored code runs on this path |
+| `GET` | `/etl/runs` | — (paginated: `?page`) | `{runs: [...], total}` — `etl.ingestion_runs` rows for the admin ETL visibility screen |
+| `GET` | `/etl/quarantine` | — (paginated: `?page`, optional `?run_id`) | `{rows: [...], total}` — `etl.quarantine` rows, optionally filtered to one run |
+| `GET` | `/schema/tables` | — | `{tables: [...]}` — every `analytics.*` table/view and its columns, each carrying its current note (`VIEW_NOTES`, an admin's own edit, or none) for the data-dictionary screen |
+| `GET` | `/schema/tables/{name}/sample` | — | `{rows: [...]}` — five rows from the named table; 404 if `name` isn't a real `analytics.*` table |
 
 Both `/query` and `/chat` require the bearer token. `/query` is the one-shot
 analytical form (question in, chart + table + SQL + summary out). `/chat` is
 the free-form conversation where the model decides which tools to call.
+`/chart/render`, `/etl/runs`, `/etl/quarantine`, `/schema/tables`, and
+`/schema/tables/{name}/sample` are also bearer-gated; none of them touches an
+LLM.
+
+The orchestrator also calls outward to `web/`'s own `GET /api/schema-notes`
+(§`sql/schema_card.py` below), gated by the same shared bearer token the
+other direction uses (`SECURITY.md` §3) — the one HTTP call in this app that
+runs from the orchestrator into web/.
 
 `QueryRequest`:
 
@@ -136,7 +151,8 @@ flowchart TD
     G -->|reject, reason to planner| P1
     G -->|rejected twice| Err
     G -->|ok — tables_used recorded| RS
-    RS -->|DB error| Err
+    RS -->|DB error, reason to planner| P1
+    RS -->|DB error twice| Err
     RS --> P2 --> R
     R -->|sandbox timeout / violation / no output| Err
     R --> S --> Out
@@ -155,7 +171,11 @@ flowchart TD
 3. **run_sql** — `sql/runner.py`: acquire from the read-only `asyncpg` pool,
    `BEGIN READ ONLY`, `SET LOCAL statement_timeout = '10s'`,
    `SET LOCAL idle_in_transaction_session_timeout = '15s'`, execute, fetch up
-   to `row_limit`, rollback. DB errors surface as `SQL error` with the
+   to `row_limit`, rollback. `guard_sql` only proves the statement is a
+   single read-only `SELECT` — it does not know whether the tables and
+   columns it references exist, so a hallucinated table or an ambiguous cast
+   only surfaces here, as a genuine Postgres error. One re-plan with the
+   error message appended, then a second failure is `SQL error` with the
    Postgres message.
 4. **plan_plot** — prompt Ollama with the result columns, dtypes, row count,
    and the question; require a `PlotPlan`
@@ -282,6 +302,8 @@ SANDBOX_WALLCLOCK_SECONDS   15
 SANDBOX_MEMORY_MB           1024
 QUERY_ROW_LIMIT_DEFAULT     5000
 STATEMENT_TIMEOUT           10s
+WEB_BASE_URL                 http://127.0.0.1:8084   (empty disables the data-dictionary
+                                                       notes fetch, not a startup error)
 ```
 
 ## Chat and retrieval
@@ -304,9 +326,10 @@ class ChatRequest(BaseModel):
 `model` is a key from the model registry (`config.py`), not a free-form Ollama
 tag. An unknown key is rejected before any Ollama call. The registry is the
 same idea as `~/Sites/pdf-markdown-pipeline`'s `config/ocr.php`: `key`,
-`label`, `role` (`sql` / `chat` / `embed`), Ollama tag. `/health` reports
-which registry models are actually pulled, and the Livewire picker offers only
-those.
+`label`, `role` (`sql` / `chat` / `embed`), Ollama tag. The Livewire picker
+offers only registry entries with `role: chat` that `/health` also reports as
+pulled — the coder model that plans SQL and plot scripts is never a
+conversational choice, regardless of what `/health` reports for it.
 
 ### Streamed events
 
@@ -315,20 +338,166 @@ One JSON object per line (`application/x-ndjson`, the same wire format
 has the reasoning): `token` (assistant text delta), `tool_call` (`{name,
 arguments}` as the model emits it), `tool_result` (`{name, ok, summary}` —
 never the full row set), `chart` (`{plotly_json?, files}` when `make_chart`
-ran), `done` (`{message_id, tool_calls_count}`), `error` (`{stage,
+ran), `ping` (`{ping: true}`, sent every 15s a tool call is still in
+flight), `done` (`{message_id, tool_calls_count}`), `error` (`{stage,
 message}`). Laravel pipes these lines to the browser unmodified and persists
-`messages` + `message_tool_calls` as they arrive.
+`messages` + `message_tool_calls` as they arrive — a `ping` line carries
+nothing to persist, so it passes straight through.
+
+A tool call that runs long — a compound SQL plan, a slow render — would
+otherwise leave the wire silent for its whole duration, long enough for
+Apache's `max_execution_time` or Cloudflare's idle-connection handling to
+end the request before a `done` or `error` line ever gets sent. `run_chat`
+runs `dispatch()` as a background task so the loop can keep yielding a
+`ping` every 15s while the call is still in flight.
+
+Getting a `ping` line to actually leave the box needed two separate fixes
+past the orchestrator's own side, both found by timing real event arrival
+end to end — "streams token by token" turned out to describe only the
+orchestrator's own output, not every hop the events cross after that.
+`web/`'s original relay used Laravel's `Http`
+facade with Guzzle's `stream => true` — every handler Guzzle has (curl, its
+PHP stream-wrapper fallback, with or without Laravel's own wrapping)
+buffered the *entire* orchestrator response and released it only once the
+connection closed, confirmed directly: a plain `curl` CLI call to the same
+endpoint streamed normally, no PHP variant of the same request did.
+`app/Services/CurlOrchestratorStream.php` replaces it with PHP's own curl
+extension driven directly — `CURLOPT_WRITEFUNCTION`, polled through
+`curl_multi_exec`, is the one mechanism that actually delivers each chunk
+as it lands on the socket, the same thing the curl binary itself uses.
+`OrchestratorClient::chatStream()` and `runQuery()` both go through it now
+(`OrchestratorStream`, an interface only because `Http::fake()` cannot
+intercept a raw curl call — a test binds `Tests\Support\FakeOrchestratorStream`
+in its place). Past that: Apache's own `output_buffering` php.ini setting
+holds a flushed line in PHP's buffer until enough bytes accumulate, which
+would have defeated the heartbeat on the one hop (`web/` → Cloudflare →
+browser) it exists to protect even with genuinely streamed input.
+`deploy/apache-vhost.conf` sets `output_buffering 0` for this vhost so nothing
+sits waiting for a buffer to fill (`OPERATOR_SETUP.md` §Apache PHP execution
+timeout).
 
 ### Tools (`chat/tools.py`)
 
 | Tool | Arguments | Does | Guardrails |
 |---|---|---|---|
-| `search_knowledge` | `{query: str, k?: int}` | Retrieves from `kb.chunks` (§Retrieval), returns chunk text + `heading_path` + `source_url` | read-only; `withdrawn_at IS NULL`; `k` capped at 12 |
-| `run_sql_query` | `{sql: str}` or `{question: str}` | If `question`, first plan SQL like `/query`'s `plan_sql`; then `guard.py` -> `runner.py` (READ ONLY txn, statement timeout, row cap); returns column list + row count + a small preview | identical guard + read-only role as the one-shot path; no writes possible |
-| `make_chart` | `{spec: str, data_ref: str}` | Runs a generated Python plot script over the last `run_sql_query` result in the `bwrap` sandbox; returns artifact refs | same sandbox, same caps; `data_ref` must point at a result from this conversation |
+| `search_knowledge` | `{query: str, k?: int \| null}` | Retrieves from `kb.chunks` (§Retrieval), returns chunk text + `heading_path` + `source_url` | read-only; `withdrawn_at IS NULL`; `k` capped at 12, defaults to 6 on `null` |
+| `run_sql_query` | `{question: str}` | Plans SQL like `/query`'s `plan_sql`, always — no raw-`sql` argument, so the chat model (which never sees the schema) can't hand-write a query against a table it invented; then `guard.py` -> `runner.py` (READ ONLY txn, statement timeout, row cap); returns column list + row count + a small preview | identical guard + read-only role as the one-shot path; no writes possible; a rejected or failing statement comes back as a failed tool result (see below), not a turn-ending exception |
+| `make_chart` | `{spec: str}` | Runs a generated Python plot script over the last `run_sql_query` result in the `bwrap` sandbox; returns artifact refs | same sandbox, same caps; the DataFrame is looked up by the request's own `conversation_id`, a trusted value the model never supplies and is never shown — an earlier `data_ref` argument asked the model to restate that id as a match check, which no real call could ever pass |
 
 Ollama's native tool-calling (`tools=[...]` on `/api/chat`) drives this;
-Qwen 2.5 and Llama 3.1 both support it. The loop:
+Qwen 2.5 and Llama 3.1 both support it. A live chat turn on a plain greeting
+surfaced Llama narrating its own tool-call decision as if it were the reply
+— "No tool call is needed as it's a greeting..." streamed to the user token
+by token, since every `content` delta the model emits is streamed as-is
+with nothing held back. `CHAT_SYSTEM_PROMPT` now tells the model directly
+not to narrate that decision: call a tool silently or write the answer
+itself, nothing else. A second, related failure surfaced the same way:
+attaching `CHAT_TOOL_SCHEMAS` at all sometimes makes Llama answer a trivial
+message with a bare `"{}"` instead of prose or a real tool call — confirmed
+directly against Ollama, since the identical prompt with no `tools=`
+answers normally. `chat/loop.py` holds back a reply that is nothing but
+braces/whitespace instead of streaming it, and on a turn that made no tool
+call and produced only that, retries once with `tools=[]`.
+
+A tool call that fails — a rejected or erroring `run_sql_query` statement, a
+`make_chart` script the sandbox rejects — comes back as a failed tool result
+(`{name, ok: false, summary}`), not a raised exception that would end the
+turn. The model sees why its call failed and can call the tool again with a
+correction, inside its own `CHAT_MAX_TOOL_CALLS` budget — the same recovery
+`/query`'s `guard_sql` and `run_sql` retries give the one-shot pipeline,
+adapted to the chat loop's own turn-taking instead of a fixed one-shot retry.
+
+A malformed tool call gets the same treatment. `dispatch()` raises
+`ChatToolArgumentError` when a call's arguments fail their Pydantic schema —
+this used to propagate out of `run_chat()` uncaught, ending the turn
+silently. It is caught around the `dispatch()` call and returned as a failed
+tool result instead, the same shape as a rejected SQL statement above.
+`search_knowledge`'s `k` argument needed a schema fix on top of that:
+Llama's tool-calling fills in every schema property rather than omitting the
+ones it means to leave unset, sending an explicit `k: null` — a plain
+`int = 6` rejects that, since a default only applies when the key is
+absent, not when it is `null`; `k` is `int | None` now.
+
+A live turn also showed Llama narrate a *second* tool call as plain text
+instead of a real `tool_calls` entry: after an earlier `run_sql_query` call
+failed, it answered with the literal string `run_sql_query(question="...")`
+as if that were its reply, leaving the user with a failed-query card and no
+actual answer. The same bare-`{}` check above now also holds back any reply
+that is a prefix of one of the three tool names, on the reasoning that both
+are the tool-calling template breaking down the same way, so both get the
+same one-retry-with-`tools=[]` recovery.
+
+A live turn surfaced a fourth shape of the same underlying weakness: after a
+real `run_sql_query` call succeeded, the follow-up turn produced no content
+at all — not a bare `"{}"`, genuinely empty — on both the tool-aware attempt
+and the `tools=[]` retry, leaving the user with a tool call card and nothing
+else, no answer and no `make_chart` call either. `CHAT_SYSTEM_PROMPT` already
+asks the model never to let a tool result be the last thing in the turn, but
+an 8B model cannot be relied on to follow that every time. `run_chat` now
+keeps the most recent tool result and, if both attempts still come back
+degenerate, surfaces that result's own summary as the turn's answer instead
+of ending on nothing.
+
+That retry itself turned out to have the same gap it was meant to fix. It
+streamed every chunk unconditionally, with none of the bare-`"{}"`/narrated-
+call holdback the first attempt already has — confirmed live, after a real
+`run_sql_query` call failed with a Postgres column error, the retry
+narrated the exact same fake call (`run_sql_query(question="...")`) again,
+and this time nothing caught it before it reached the user. The retry now
+gets the same per-chunk `_is_degenerate` check. The fallback for a retry
+that's still degenerate after that changed too: a failed tool's own
+`summary` is a database or engine error (`column sv.shop_id does not
+exist`), which read as a stray error message to someone who never asked a
+SQL question. `_tool_failure_fallback` states the failure in plain terms
+first and keeps the technical detail after it; a successful call's summary
+is unchanged, since it already reads fine standing alone.
+
+A fifth shape mixed a real tool call with hallucinated content: asked a
+two-metric question (revenue and volume together), Llama wrote its own
+guessed SQL against a table that doesn't exist, in a fenced code block
+introduced by "let me try running the following query" — skipping
+`run_sql_query` even though `CHAT_SYSTEM_PROMPT` already said never to
+invent a table or column name. `CHAT_SYSTEM_PROMPT` now names the narrated
+SQL itself, not just the decision to call a tool, and once a completed
+turn's text contains a fenced ```sql block and made no tool call,
+`chat/loop.py` retries it once, the same as a bare `"{}"` or a narrated fake
+call, rather than showing it to the user as a final answer against a table
+that was never real.
+
+Unlike those two, a fenced sql block can't be told apart from ordinary prose
+until most of it has already streamed, so this check runs only once the
+turn's full text is in — it does not hold the live stream back the way the
+bare-`"{}"`/narrated-call checks do. An earlier version of this fix withheld
+the guessed SQL from the stream entirely while it decided whether to retry,
+and that broke a real turn: the connection sent nothing for the whole length
+of that generation plus the retry, long enough that the browser dropped it
+as interrupted before the correction ever arrived. The guessed SQL now
+streams live and the correction follows right after it — a moment of a
+wrong-looking answer costs less than the connection itself.
+
+Past the model's own tool-calling reliability, two gaps sat on the
+orchestrator's own side of the contract, both in `make_chart` specifically.
+`MakeChartArgs` used to also require `data_ref`, checked against
+`conversation_id` — but the model is never told that id anywhere, not in
+`CHAT_SYSTEM_PROMPT`, not in the message history, so no real call could ever
+supply the one value that would pass; every `make_chart` call failed on this
+before it ever reached the sandbox. The lookup was already scoped by the
+trusted `conversation_id` `dispatch()` receives from the request itself, so
+the check guarded nothing a wrong `data_ref` could actually have exploited.
+`data_ref` is gone; `make_chart` takes only `spec`. Separately, `/query`'s
+`plan_plot` stage hands the planning model an explicit capability string per
+engine (`llm/prompts.py`'s `_ENGINE_CAPABILITIES`: `df` is already loaded,
+the exact `fig.write_json(...)` call, the forbidden `fig.write_image()`)
+before it writes a line of script. `make_chart`'s tool description said only
+"chart the most recent result," leaving the model to guess the sandbox's
+variable names and output convention blind. The description now states the
+same contract `plan_plot` gets, scoped to what chat's fixed
+`outputs=["plotly_json"]` actually collects: a matplotlib `plt.savefig()`
+script is a valid choice for `/query`, which picks its own `outputs`, but
+produces nothing `make_chart` reads — the description says so explicitly, so
+that path never looks like a silent option.
+
+The loop:
 
 ```
 messages = system + history + [user message]
@@ -364,6 +533,10 @@ sequenceDiagram
         alt the turn made a tool call
             O-->>L: ndjson line: {"tool_call": ...}
             O->>T: dispatch — same guard + read-only role + sandbox
+            loop every 15s T is still running
+                O-->>L: ndjson line: {"ping": true}
+                L-->>B: (keeps the connection alive; nothing shown)
+            end
             T-->>O: result (preview only, never the full row set)
             O-->>L: ndjson line: {"tool_result": ...} (+ {"chart": ...} if make_chart)
             O->>M: append the tool result and continue
@@ -425,6 +598,10 @@ Same as `/query`: an in-memory `deque` per `conversation_id`, capped at
 `CHAT_CONTEXT_TURNS` or ~3k tokens. Laravel also resends trimmed history and
 owns the durable record (`conversations` / `messages` / `message_tool_calls`
 in its MariaDB). An orchestrator restart loses only the in-memory window.
+A new conversation's `title` (shown in the conversation rail and the browser
+tab) is the Laravel side's own concern — `Chat::send()` sets it from the
+first message, truncated to 60 characters, entirely independent of the
+orchestrator.
 
 ### Model roles, restated
 

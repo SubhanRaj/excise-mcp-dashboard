@@ -55,7 +55,7 @@ The data bank is `excise_bank` on the local cluster (`18/main`, port 5432,
 |---|---|---|
 | `excise_owner` | owns the schema; `CREATE`/`ALTER` | migrations only, run by the operator |
 | `excise_etl` | `INSERT`/`UPDATE`/`DELETE` on data tables + `etl.*`; no DDL | `etl/` cron jobs |
-| `excise_ro` | `SELECT` on `analytics.*` only; `default_transaction_read_only = on` | the orchestrator (the AI path) |
+| `excise_ro` | `SELECT` on `analytics.*` + `kb.*` + `etl.*`; `default_transaction_read_only = on` | the orchestrator (the AI path) |
 
 ### Provisioning script (`db/roles.sql`)
 
@@ -77,16 +77,18 @@ ALTER DEFAULT PRIVILEGES FOR ROLE excise_owner IN SCHEMA public, kb, etl
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO excise_etl;
 -- no CREATE: excise_etl cannot add or drop tables
 
--- Read-only AI role: analytics views + the knowledge base, nothing else
+-- Read-only AI role: analytics views, the knowledge base, and etl's own
+-- bookkeeping tables (ingestion_runs, quarantine) — never the base data
+-- tables etl writes into, which stay behind analytics.* views only.
 CREATE ROLE excise_ro LOGIN PASSWORD :'ro_pw';
 GRANT CONNECT ON DATABASE excise_bank TO excise_ro;
-GRANT USAGE ON SCHEMA analytics, kb TO excise_ro;
-GRANT SELECT ON ALL TABLES IN SCHEMA analytics, kb TO excise_ro;
-ALTER DEFAULT PRIVILEGES FOR ROLE excise_owner IN SCHEMA analytics, kb
+GRANT USAGE ON SCHEMA analytics, kb, etl TO excise_ro;
+GRANT SELECT ON ALL TABLES IN SCHEMA analytics, kb, etl TO excise_ro;
+ALTER DEFAULT PRIVILEGES FOR ROLE excise_owner IN SCHEMA analytics, kb, etl
     GRANT SELECT ON TABLES TO excise_ro;
 
 -- excise_ro must not see base data or write anywhere
-REVOKE ALL ON SCHEMA public, etl FROM excise_ro;
+REVOKE ALL ON SCHEMA public FROM excise_ro;
 REVOKE CREATE ON SCHEMA public, kb, analytics FROM PUBLIC;   -- no ad-hoc object creation by anyone
 REVOKE ALL ON DATABASE excise_bank FROM PUBLIC;
 
@@ -102,6 +104,14 @@ ALTER ROLE excise_ro SET search_path = analytics, kb;
 (FTS or `pgvector`) is a read; the model cannot write to the knowledge base.
 Ingestion writes as `excise_etl` only. The retrieval query always adds
 `WHERE d.withdrawn_at IS NULL`.
+
+`etl.*` is also `SELECT`-only to `excise_ro`, but scoped to
+`etl.ingestion_runs` and `etl.quarantine` only — the audit trail of what a
+run wrote and skipped, read by the admin ETL visibility screen
+(`/admin/etl`, privilege `etl.view`) through two orchestrator routes,
+`GET /etl/runs` and `GET /etl/quarantine`. It does not extend to the base
+data tables `etl` ingests into; those stay reachable only through
+`analytics.*` views.
 
 ### Why each layer
 
@@ -353,6 +363,22 @@ The orchestrator copies the declared outputs out of `/scratch` to the Laravel
 sweeper (systemd timer) deletes any `/var/tmp/excise-charts/*` older than 1 h
 in case a crash left one behind.
 
+The `excise-sandbox-*.scope` unit itself needs the same guarantee twice
+over. `systemd-run --scope` execs straight into the `timeout`/`bwrap` chain,
+so the awaiting `asyncio.subprocess.Process` is that scope's own main PID —
+but cancelling the coroutine that awaits it (a client disconnect, or the
+orchestrator shutting down) does not by itself kill the process, confirmed
+live: a chart render left running past a `systemctl restart` kept its memory
+cgroup alive for several minutes until it happened to hit its own
+`MemoryMax`. `run_in_sandbox` now kills the process explicitly on
+`CancelledError` before re-raising, which tears the scope down immediately.
+That only covers a cancellable shutdown; a `SIGKILL` (systemd's own
+stop-sigterm timeout expiring) gives the orchestrator no chance to run that
+handler at all, so `stop_orphaned_sandbox_scopes()` runs once at startup and
+stops any `excise-sandbox-*.scope` still active from a run that ended that
+way — the next orchestrator process sweeps up after the last one instead of
+leaving it to its own wallclock timeout or memory cap.
+
 ### `/etc/sudoers.d/excise-sandbox` (draft, operator applies with `visudo`)
 
 Only needed if the `systemd-run` route is not used:
@@ -428,7 +454,7 @@ and `Analyst` (ask questions, see own ledger, export). The full shape —
 `role` + `privileges` JSON + `designation_id` (FK to a `designations` preset
 table) + a free-text `post` column — is ported from the pattern
 `excise-budget-tracker`, `UP-excise-mailer`, and `upexcise-stats-dashboard`
-converged on independently, trimmed to this app's two roles and four
+converged on independently, trimmed to this app's two roles and seven
 privileges (`web/plan/webui.md` §6 has the full design and the seeded
 designation data). A `designations.default_privileges` preset is copied onto
 `users.privileges` at account creation, not live-linked — editing a user's
@@ -437,6 +463,51 @@ privileges afterward doesn't stay tied to their designation.
 The tunnel is the only inbound path — `cloudflared` dials out over loopback, no
 firewall port is opened, and Apache binds `127.0.0.1:8084`. The orchestrator's
 `/health` is loopback-only and never passes through the tunnel.
+
+### Pulse and Telescope — locked to Admin regardless of `APP_ENV`
+
+Both ship a default authorization that grants access to anyone at all —
+including an unauthenticated request — when `app()->environment('local')` is
+true. That's this box's real `APP_ENV` (nothing here runs as `production`
+yet), and the app is simultaneously reachable by the entire internet through
+the Cloudflare Tunnel, so the shipped default would leave both dashboards
+open to any visitor. Neither is left at that default:
+
+- **Telescope**: `TelescopeServiceProvider::authorization()` (`app/Providers/
+  TelescopeServiceProvider.php`) is overridden entirely, not just its
+  `gate()` — the vendor scaffold's `authorization()` calls
+  `app()->environment('local') || Gate::check('viewTelescope', ...)`, so
+  overriding `gate()` alone leaves that `||` bypass in place. The override
+  calls `Telescope::auth()` directly: `$request->user()?->isAdmin() ?? false`,
+  no environment check at all. Request-parameter and header redaction
+  (`_token`, `password`, `otp`, cookies, `Authorization`) is applied
+  unconditionally for the same reason — the scaffold's version only ran
+  outside `local` env.
+- **Pulse** has no equivalent auth-closure hook to override, only a
+  `Gate::define('viewPulse', ...)` ability that Pulse's own service provider
+  also defines a default for on the same `environment('local')` basis —
+  redefining the same ability name from `AppServiceProvider` would work only
+  if it runs after Pulse's own registration, which isn't guaranteed. Instead
+  `config/pulse.php`'s `middleware` array gets `'auth'` and the existing
+  `IsAdmin` middleware ahead of Pulse's own `Authorize::class`, which enforces
+  admin-only access unconditionally regardless of that registration order.
+
+Verified against real accounts, not just read from the source: a signed-in
+non-admin gets 403 on both `/pulse` and `/telescope`; an Admin gets 200.
+
+Both packages also bundle `laravel/sentinel`, a middleware that runs before
+session/auth starts and denies any request reaching them through a trusted
+reverse proxy from a public IP while `APP_ENV=local` — a guard against a
+local-only dashboard leaking through a forgotten tunnel. This box's tunnel
+exposure is deliberate, so the heuristic is a false positive here: it denied
+a genuinely signed-in Admin with a 401, ahead of the `IsAdmin` /
+`Telescope::auth()` checks above, not in place of them.
+`AppServiceProvider::configureSentinel()` registers a `Sentinel::extend()`
+driver for `pulse` and `telescope` that always authorizes, leaving those
+checks as the only real gate. Flipping `APP_ENV` away from `local` instead
+would silently break Pulse further: its own default `viewPulse` gate
+(`fn ($user = null) => $app->environment('local')`) would deny everyone,
+Admin included, the moment the environment stopped reading as `local`.
 
 ### Headers, logging, rate limits
 
@@ -462,6 +533,14 @@ firewall port is opened, and Apache binds `127.0.0.1:8084`. The orchestrator's
 - The orchestrator refuses any `/query` or `/chat` call whose bearer token
   does not match `ORCH_BEARER_TOKEN` (constant-time compare), logs the
   request-id, and never logs the token or the DB password.
+- `web/`'s `GET /api/schema-notes` runs the opposite direction — the
+  orchestrator calling into web/, to read the data dictionary's admin-edited
+  schema notes (`DATA_PIPELINE.md` §Row visibility for the AI path) — behind
+  `VerifyOrchestratorToken`, a constant-time compare against the same shared
+  `ORCH_BEARER_TOKEN` / `ORCHESTRATOR_TOKEN` value the outbound direction
+  already uses. A blank request token never reaches the comparison — it's
+  rejected outright first, so a misconfigured empty token on either side
+  fails closed instead of matching by accident.
 - Chat rendering: assistant Markdown is rendered client-side with output
   sanitised (no raw HTML passthrough); a fenced code block is display-only,
   never executed in the browser. Retrieved knowledge snippets are shown as

@@ -181,6 +181,71 @@ CREATE TABLE shop_years (                  -- quota / settlement per shop per FY
 );
 ```
 
+### Dispatches (IESCMS wholesale-to-retail transport-pass log)
+
+`sales_volumes` above holds one row per district+year+category — the annual
+reconciled NITI figure. This is a different, finer-grained source: IESCMS
+(the department's live supply-chain system) exports a shop-wise dispatch
+report per month, one row per individual transport pass/indent, not an
+aggregate. A country-liquor indent's quantities come broken down by liquor
+strength (25% V/V, 36% V/V, ...); a foreign-liquor indent's don't, so that
+breakdown lives in a child table instead of six columns a foreign-liquor row
+never fills in.
+
+```sql
+CREATE TABLE dispatches (
+    id                       BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    district_id              BIGINT NOT NULL REFERENCES districts(id),
+    financial_year_id        BIGINT NOT NULL REFERENCES financial_years(id),
+    shop_id                  BIGINT NOT NULL REFERENCES shops(id),          -- retail side
+    wholesale_license_type   CITEXT NOT NULL,     -- 'FL2' | 'CL2', as printed on the wholesale license
+    wholesale_license_number TEXT NOT NULL,
+    wholesale_entity_name    TEXT NOT NULL,
+    circle_sector            CITEXT,
+    indent_number            TEXT NOT NULL UNIQUE,
+    indent_received_at       TIMESTAMPTZ,
+    indent_accepted_at       TIMESTAMPTZ,
+    transport_pass_issued_at TIMESTAMPTZ,
+    tp_reference_no          TEXT,
+    requested_cases          NUMERIC(18,3),       -- NULL for a country-liquor indent: see dispatch_strength_lines
+    requested_bottles        NUMERIC(18,3),       -- foreign-liquor indents only
+    requested_bulk_litres    NUMERIC(18,3),       -- NULL for a country-liquor indent: see dispatch_strength_lines
+    dispatched_cases         NUMERIC(18,3),
+    dispatched_bottles       NUMERIC(18,3),
+    dispatched_bulk_litres   NUMERIC(18,3) NOT NULL,
+    duty_fee_inr             NUMERIC(18,2) NOT NULL,
+    published_at             TIMESTAMPTZ NULL,
+    source_ref               TEXT,
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+    deleted_at               TIMESTAMPTZ NULL
+);
+
+CREATE TABLE dispatch_strength_lines (     -- country-liquor per-strength breakdown
+    id                     BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    dispatch_id            BIGINT NOT NULL REFERENCES dispatches(id) ON DELETE CASCADE,
+    strength_label         TEXT NOT NULL,        -- '25% V/V' | '36% V/V' | '42.8% V/V 100 ML' | ...
+    requested_cases        NUMERIC(18,3),
+    requested_bulk_litres  NUMERIC(18,3),
+    dispatched_cases       NUMERIC(18,3),
+    dispatched_bulk_litres NUMERIC(18,3),
+    UNIQUE (dispatch_id, strength_label)
+    -- visibility inherited from dispatches.published_at, same as shop_years from shops
+);
+```
+
+`etl/sources/iescms_dispatch.py` reads both report layouts (`read_fl_rows`,
+`read_cl_rows`) and upserts a `shops` row for the retail side alongside each
+`dispatches` row — the shop dimension isn't seeded separately for this
+source, it's built from the same report. `indent_number` is the natural key
+for `dispatches`; the IESCMS report already guarantees it's unique, so a
+re-run of the same file changes no counts. Both tables set `published_at`
+at import time — an IESCMS export is the department's own live system
+record, not a draft submission that needs a separate review step before an
+analyst can query it. Registered as two `etl.source_registry` rows (source
+`iescms_dispatch`, one per report layout), same as any other source;
+`OPERATOR_SETUP.md` §Data bank has the exact commands.
+
 ### Reference tables
 
 ```sql
@@ -249,6 +314,7 @@ CREATE TABLE etl.ingestion_runs (
     id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     source        TEXT NOT NULL,           -- 'google_sheet' | 'google_drive' | 'excel' | 'csv'
     source_ref    TEXT NOT NULL,           -- sheet id / drive file id / path
+    report_period DATE,                    -- first-of-month; see §Periodic sources below
     started_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     finished_at   TIMESTAMPTZ,
     status        TEXT NOT NULL DEFAULT 'running',  -- running | ok | failed | partial
@@ -267,16 +333,45 @@ CREATE TABLE etl.quarantine (
 );
 
 CREATE TABLE etl.source_registry (        -- what to sync and how often
-    id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    name          TEXT NOT NULL UNIQUE,
-    source        TEXT NOT NULL,
-    source_ref    TEXT NOT NULL,
-    target_table  TEXT NOT NULL,
-    schedule      TEXT NOT NULL,           -- cron expression
-    enabled       BOOLEAN NOT NULL DEFAULT true,
-    last_run_id   BIGINT REFERENCES etl.ingestion_runs(id)
+    id               BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    name             TEXT NOT NULL UNIQUE,
+    source           TEXT NOT NULL,
+    source_ref       TEXT NOT NULL,
+    target_table     TEXT NOT NULL,
+    schedule         TEXT NOT NULL,           -- cron expression
+    enabled          BOOLEAN NOT NULL DEFAULT true,
+    requires_period  BOOLEAN NOT NULL DEFAULT false,  -- see §Periodic sources below
+    last_run_id      BIGINT REFERENCES etl.ingestion_runs(id)
 );
 ```
+
+### Periodic sources without a per-row date
+
+A source like `iescms_dispatch` stamps a real business date on every row it
+produces (`transport_pass_issued_at` and the rest), so `dispatches` never
+needs to be told what period it belongs to — each row already says. Some
+future sources won't: a monthly shops roster, or a monthly revenue / quota /
+enforcement figure, arrives as one file that represents a whole reporting
+month with no such column on any individual row. Nothing marks that period
+once the file has been read, other than `created_at`, which is when the ETL
+happened to run — already documented as unusable for a business-date
+question (`guard_sql`, `MCP_ENGINES.md` §Pipeline stages).
+
+A source registered with `etl.source_registry.requires_period = true` makes
+the operator state that period explicitly, as `etl sync --source NAME
+--period 2026-08`. `etl/etl/run.py` records the parsed period (first of the
+named month) on that run's `etl.ingestion_runs.report_period`, and refuses to
+run the source at all without one, recording a typed `failed` run row
+instead of guessing at "now." A source not registered this way ignores
+`--period` entirely and behaves exactly as it did before this existed.
+
+This only carries the period onto the run's own bookkeeping row. A table
+that mutates in place from such a source — the way `shops` already does from
+`iescms_dispatch` — still only reflects its latest import once one lands.
+Answering "what did this look like as of period X" once a later import has
+overwritten it needs its own period-stamped table, the way `shop_years`
+already answers the equivalent question at financial-year grain — built
+alongside whichever source turns out to need it first.
 
 ### Indexes
 
@@ -309,6 +404,45 @@ The LLM is told about `analytics.*` only. It never learns the base table names,
 the `id` columns are still present for joins but the natural-language layer
 works in district names and FY labels. `SECURITY.md` §Read-only role grants
 `SELECT` on `analytics.*` and nothing else.
+
+What the model is told about each view has two sources: `schema_card.py`'s own
+`VIEW_NOTES`, a fixed dict in the orchestrator's source, and an admin-editable
+overlay — the data dictionary (Admin -> Data dictionary, privilege
+`schema.manage`), one note per table and, unlike `VIEW_NOTES`, one per column
+too. A note there is saved to web/'s own `schema_notes` table and read back by
+the orchestrator over `GET /api/schema-notes` (`MCP_ENGINES.md` §HTTP surface,
+`SECURITY.md` §3), taking effect on the orchestrator's next restart. The same
+screen lists every table's columns and a five-row sample of each, from the
+orchestrator's own `GET /schema/tables` and `GET /schema/tables/{name}/sample`
+— the same route `web/` uses everywhere else it needs something out of
+Postgres, since `web/` holds no database connection of its own.
+
+A live question asking for a specific month's sales in amount and volume by
+shop category repeatedly failed on a hallucinated `shop_id`/`dispatch_id`
+column against `analytics.sales_volumes` — that view is aggregated by
+district + financial year + license category, with no shop-level or
+monthly breakdown at all, so no column by either name has ever existed on
+it. `analytics.revenues` has the same shape. `VIEW_NOTES` now says so for
+both, and points at `analytics.dispatches` instead for a question scoped to
+a month or to individual shops — it already carries `duty_fee_inr` (amount)
+and `dispatched_bulk_litres`/`dispatched_cases`/`dispatched_bottles`
+(volume) at exactly that granularity.
+
+Tracing that same failure back to the source uncovered a second gap: the
+IESCMS dispatch report each row comes from carries two separate license-type
+columns — a wholesale one (`FL2`/`CL2`, the distributor) and a retail one
+(the actual shop, e.g. `FL5DB`/`CL5C`) — and `analytics.dispatches` already
+keeps them apart as `wholesale_license_type` and `retail_license_category`.
+What was missing was anywhere to look up what any code actually means:
+`license_categories` (code, name, kind) has held the full list since the
+dispatch-report milestone but was never exposed as its own view.
+`analytics.license_categories` now is one, `CREATE OR REPLACE VIEW` in
+`db/analytics_views.sql` like every other view here, picked up automatically
+by `excise_ro`'s `ALTER DEFAULT PRIVILEGES` grant (`db/roles.sql`) with no
+separate grant needed. `VIEW_NOTES` for `dispatches` and `shops` now name it
+directly, and say plainly that a shop's own category is never `FL2`/`CL2` —
+those two are `kind = 'wholesale'` and only ever belong to
+`dispatches.wholesale_license_type`.
 
 ### BI access (future — Power BI and similar, not built)
 
@@ -731,7 +865,7 @@ One `/query` or chat `make_chart` call yields:
 |---|---|
 | the question + generated SQL + engine + model + timings + status | a `queries` row (chat: the `message` + `message_tool_calls` rows) in MariaDB |
 | interactive chart spec | `chart_artifacts.spec` — a `JSON` / `LONGTEXT` column in MariaDB (the Plotly figure, needed on every render, small because charts plot aggregates) |
-| rendered chart files | `chart.{png,svg,pdf}` on the `local` disk, path on the `chart_artifacts` row |
+| rendered chart files | not persisted — `chart_artifacts` carries `png_path`/`svg_path`/`pdf_path` columns for a future cached export, but a PNG/SVG/PDF download today calls the orchestrator's `POST /chart/render` on the stored spec and streams the bytes back without writing them to disk (`ROADMAP.md` Milestone 5) |
 | table | `rows_preview` (first N rows) inline as JSON on the row; full rows re-run from the stored SQL on export, not persisted |
 | written summary | text column on the `queries` / `messages` row |
 
@@ -789,7 +923,7 @@ latest`) or is frozen to a point in time.
 
 | Scope | Formats | Built from |
 |---|---|---|
-| one chart | PNG / SVG / PDF (disk files), `plotly.json` (re-embeddable) | the disk files + the `spec` column |
+| one chart | PNG / SVG / PDF, `plotly.json` (re-embeddable) | rendered on request from the `spec` column via `POST /chart/render`, not a pre-rendered disk file |
 | one result | CSV / XLSX of the full rows | re-run the stored SQL, stream through the sibling `ExportService` (`openspout`) |
 | saved analysis | the chart + a `recipe.json` (reproducible) | the row + files |
 | report | one **PDF** (a print-view Blade → `barryvdh/laravel-dompdf`, DejaVu Sans for `₹` + Devanagari, the sibling `AnnualReport` shape); **XLSX** workbook, one sheet of rows per analysis block; **ZIP** bundle of the PDF + per-block CSVs + `plotly.json` + recipes | the blocks, resolved at export time; `etl_epoch` stamped on the output so the data vintage is on the page |
