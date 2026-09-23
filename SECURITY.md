@@ -169,7 +169,11 @@ read-only and least-privilege:
   write. Created by the operator (`OPERATOR_SETUP.md` §Knowledge base). The
   sync reads `documents` joined to `sections`/`rule_sets`/`departments`,
   filtered to `visibility='public' AND status='verified' AND deleted_at IS
-  NULL`. A non-public or non-verified document is never read.
+  NULL AND (rule_sets.state IS NULL OR rule_sets.state = 'Uttar Pradesh')`.
+  A non-public or non-verified document is never read, and neither is one
+  filed under another state's rule set — that repository also holds ten
+  other states' excise policies as comparative reference material, out of
+  scope for this UP-only tool.
 - **Markdown files** — `~/Sites/pdf-markdown-pipeline/storage/app/public/`,
   group-read for the ETL user. The sync only opens paths taken from a matched
   `documents.markdown_path`; it never lists the tree or follows a path with

@@ -323,7 +323,7 @@ flowchart TD
     end
 
     GAPI[["Google Drive / Sheets / Docs API<br/>read-only scopes"]]:::edge
-    PDFP[("pdf-markdown-pipeline<br/>MariaDB + public .md<br/>verified + public only")]:::db
+    PDFP[("pdf-markdown-pipeline<br/>MariaDB + public .md<br/>verified + public + UP only")]:::db
 
     User <-->|HTTPS| CF
     CF <-->|reverse proxy| WebTier
@@ -474,7 +474,7 @@ flowchart TD
         E3["gdocs / gdrive sync"]:::app
     end
 
-    PDFP[("pdf-markdown-pipeline<br/>MariaDB + public .md files<br/>public + verified only")]:::db
+    PDFP[("pdf-markdown-pipeline<br/>MariaDB + public .md files<br/>public + verified + UP only")]:::db
     UP["Admin .md uploads<br/>web/ kb-uploads disk"]:::app
     G[["Google Drive / Sheets / Docs"]]:::ext
 

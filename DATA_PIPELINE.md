@@ -684,7 +684,7 @@ flowchart TD
     classDef edge fill:#d97706,stroke:#b45309,stroke-width:2px,color:#fff
     classDef ai fill:#7c3aed,stroke:#6d28d9,stroke-width:2px,color:#fff
 
-    PDFP[("pdf-markdown-pipeline<br/>MariaDB documents + public .md files<br/>visibility=public AND status=verified AND not deleted")]:::db
+    PDFP[("pdf-markdown-pipeline<br/>MariaDB documents + public .md files<br/>public + verified + not deleted, UP rule_sets only")]:::db
     Upload["web/ Knowledge base screen<br/>admin .md upload — extension, size, UTF-8, no path separators"]:::app
     KBU[("kb_uploads<br/>MariaDB in web/ — pending row + file on the kb-uploads disk")]:::db
     GAPI[["Google Docs / Drive API"]]:::edge
@@ -698,7 +698,7 @@ flowchart TD
     Chunk["chunk.py<br/>heading-aware, ~1,200-token cap, ~100-token overlap,<br/>tables kept whole, heading_path recorded"]:::app
 
     subgraph Bank["PostgreSQL — kb schema"]
-        Docs[("kb.documents<br/>origin, rule_set, source_url, content_sha256, withdrawn_at")]:::db
+        Docs[("kb.documents<br/>origin, rule_set, effective_from, source_url, content_sha256, withdrawn_at")]:::db
         Chunks[("kb.chunks<br/>content + tsvector fts (+ embedding when enabled)")]:::db
     end
 
