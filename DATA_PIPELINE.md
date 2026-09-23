@@ -669,7 +669,10 @@ policies — not only the numbers. The corpus is verified Markdown, stored in a
 1. **pdf-markdown-pipeline** — the department's verified document repository
    (`~/Sites/pdf-markdown-pipeline`, live at `docsrepo.exciseup.in`). Only
    `visibility = 'public'` **and** `status = 'verified'` **and**
-   `deleted_at IS NULL` documents are ingested.
+   `deleted_at IS NULL` **and** (no state-specific `rule_set`, or one tagged
+   `Uttar Pradesh`) documents are ingested — that repository also holds ten
+   other states' excise policies as comparative reference material, out of
+   scope for this UP-only tool.
 2. **Admin `.md` uploads** — the "Knowledge base" screen in `web/`. An
    uploaded file lands on a dedicated disk with a `kb_uploads` row; the ETL
    picks it up on the next run.
@@ -773,21 +776,33 @@ Reads from two places on the same box, both read-only:
 
 - **MariaDB `pdf_markdown_pipeline_local`** (the app's DB): the `documents`
   table, filtered `visibility = 'public' AND status = 'verified' AND
-  deleted_at IS NULL`, joined to `sections` / `rule_sets` / `departments` for
+  deleted_at IS NULL AND (rule_sets.state IS NULL OR rule_sets.state =
+  'Uttar Pradesh')`, joined to `sections` / `rule_sets` / `departments` for
   `rule_set`, `doc_type` (`documents.document_type`), `language`, and the slug
-  segments that build the `docsrepo.exciseup.in` URL. A dedicated read-only
-  MariaDB user (`excise_mcp_kb_ro`, `SELECT` on that DB only) — the operator
-  creates it, `OPERATOR_SETUP.md` §KB.
+  segments that build the `docsrepo.exciseup.in` URL. `rule_sets.state` also
+  names the other ten states whose policies live in that repository as
+  comparative reference material; a `NULL` state (a generic Act or government
+  order with no state-specific rule set) stays in scope, a different state's
+  does not. A dedicated read-only MariaDB user (`excise_mcp_kb_ro`, `SELECT`
+  on that DB only) — the operator creates it, `OPERATOR_SETUP.md` §KB.
 - **Filesystem**: the Markdown for each row is at
   `~/Sites/pdf-markdown-pipeline/storage/app/public/<markdown_path>`
   (`markdown_path` is relative to the `public` disk). Read-only file access;
   the ETL user needs group read on that tree.
 
 Per document: hash the Markdown, compare to `kb.documents.content_sha256`;
-if new or changed, re-chunk and replace the document's `kb.chunks`. A
-`documents` row that no longer matches the filter (unpublished, un-verified,
-deleted) sets `withdrawn_at` — the content stays for audit but retrieval
-skips it. Idempotent: an unchanged corpus changes no rows.
+if new or changed, re-chunk and replace the document's `kb.chunks`.
+`documents.metadata` (JSON) carries `effective_year` for a rule amendment —
+when present, it becomes `kb.documents.effective_from` as `<year>-01-01`, so
+retrieval can cite a real date rather than whatever a title happens to spell
+out; a document with no `effective_year` of its own stays undated, since the
+source repository has none to give it either. A `documents` row that no
+longer matches the filter (unpublished, un-verified, deleted, or now outside
+the state scope) sets `withdrawn_at` — the content stays for audit but
+retrieval skips it. Idempotent on an unchanged corpus; a document whose
+`effective_from` changes without its Markdown changing (the state filter
+above, or backfilling a column added after the document first synced) is not
+treated as unchanged, so it still gets re-applied.
 
 ### Admin upload flow
 

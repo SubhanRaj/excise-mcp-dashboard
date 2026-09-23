@@ -11,6 +11,7 @@ from typing import TypeVar
 import httpx
 from pydantic import BaseModel, ValidationError
 
+from app.config import settings
 from app.schemas import LLMStructuredOutputError, OllamaUnreachableError, ToolCall
 
 T = TypeVar("T", bound=BaseModel)
@@ -97,7 +98,10 @@ class OllamaClient:
         payload = {"model": model, "messages": messages, "tools": tools, "stream": True}
         try:
             async with self.http.stream(
-                "POST", f"{self.base_url}/api/chat", json=payload, timeout=120.0
+                "POST",
+                f"{self.base_url}/api/chat",
+                json=payload,
+                timeout=settings.ollama_chat_timeout_seconds,
             ) as resp:
                 resp.raise_for_status()
                 async for line in resp.aiter_lines():
@@ -128,7 +132,9 @@ class OllamaClient:
             payload["format"] = format_schema
         try:
             resp = await self.http.post(
-                f"{self.base_url}/api/generate", json=payload, timeout=120.0
+                f"{self.base_url}/api/generate",
+                json=payload,
+                timeout=settings.ollama_generate_timeout_seconds,
             )
             resp.raise_for_status()
         except httpx.HTTPError as e:

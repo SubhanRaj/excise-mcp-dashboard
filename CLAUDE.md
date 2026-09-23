@@ -788,6 +788,58 @@ artifacts, exporting every question actually asked (Ask's `prompt` and every
 data being tested against, `analytics.*` in Postgres, is untouched by this;
 it only ever reaches into `web/`'s own MariaDB store.
 
+A pre-demo pass surfaced two SQL bugs on the same prepared question ("how
+many country liquor and composite shops are in Lucknow in August 2026")
+stacked on top of each other. First, `sql/guard.py`'s `guard_sql` caught
+`sqlglot.errors.ParseError` but not its sibling `TokenError` — a tokenizer
+failure on text that isn't SQL at all, which is exactly what the SQL model
+returned once, live. Neither exception is a subclass of the other, so the
+`TokenError` escaped uncaught and crashed the whole request as an unhandled
+500 instead of getting the same reject-and-retry every other bad-SQL case
+gets; the guard now catches their common `SqlglotError` base. Second, once
+that was fixed, the same question still failed on its first real attempt:
+the model joined `analytics.shops` to `analytics.districts` and filtered on
+`transport_pass_issued_at`, a column that only exists on
+`analytics.dispatches` — a hallucination `VIEW_NOTES` already warned against
+in prose but the model didn't reliably follow. `dispatches` already carries
+`district` and `retail_license_category` as its own columns, so the correct
+query needs no join at all; `llm/prompts.py`'s `FEW_SHOT_SQL_EXAMPLES` now
+has this exact question worked correctly, and a live re-run answered it
+right on the first attempt with no retry. Alongside both fixes, Ollama's
+single `OLLAMA_TIMEOUT_SECONDS` split into `OLLAMA_GENERATE_TIMEOUT_SECONDS`
+(480s — `plan_sql`/`plan_plot`/`summarize`, non-streaming, already running
+inside a heartbeated tool call or a queued job) and
+`OLLAMA_CHAT_TIMEOUT_SECONDS` (300s — a live chat turn a person is actually
+watching stream, tighter margin), after a live retry on the slow path
+measurably needed more than the old flat 300s.
+
+The same pass found Chat's third example question ("What does the excise
+policy say about MGQ?") had nothing to retrieve — `kb.documents` was empty.
+`etl/.env` had no `KB_RO_MYSQL_PASSWORD` set, so the MariaDB connection to
+`pdf_markdown_pipeline_local` was rejected outright; the sync ran clean once
+that credential was set and populated 334 documents. That sync also carried
+two structural gaps of its own past just getting it running. `kb.documents`
+already had `effective_from`/`effective_to` columns for exactly this, but
+`etl/sources/pdf_pipeline.py` never read `documents.metadata`'s
+`effective_year` — pdf-markdown-pipeline's own structured field for a rule
+amendment's year — so every synced document read as undated regardless of
+what its title said. The sync now parses it, and `search_knowledge`'s
+formatted output cites the real year (`[Bar Rules 2022 (1st amendment)
+(effective 2022) — ...]`) instead of only whatever text happened to be in
+the title; re-running the sync backfilled 196 of the (then-)334 documents,
+since a metadata-only change had to stop counting as "unchanged content" for
+that backfill to apply to documents synced before the column existed.
+Separately, pdf-markdown-pipeline's `excise` department also holds ten other
+states' excise policies as comparative reference material (`rule_sets.state`
+names which) — this tool answers for UP only, and plain FTS ranking put a
+couple of OCR-noisy Himachal Pradesh/Punjab fragments ahead of the relevant
+UP text on a live retrieval test. The sync query now excludes any document
+under a rule set tagged for a state other than Uttar Pradesh (a `NULL` state
+— a generic Act or government order with no state-specific rule set — stays
+in scope); the twelve already-synced other-state documents went through the
+sync's existing withdrawal path, the same one an unpublished or deleted
+upstream document already used, rather than a direct delete.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures

@@ -298,6 +298,35 @@ async def test_a_slow_tool_call_emits_heartbeats_before_its_result(
     assert heartbeat_index < result_index
 
 
+async def test_make_chart_dispatches_after_run_sql_query_in_the_same_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Confirmed live: llama3.1 sometimes emits both calls for one turn at once, and
+    # not always in query-then-chart order. A make_chart dispatched before its
+    # run_sql_query always fails (chat/tools.py's _LAST_RESULT isn't set yet), so the
+    # loop must dispatch run_sql_query first regardless of the order the model listed
+    # them in.
+    sql_call = ToolCall(name="run_sql_query", arguments={"question": "x"})
+    chart_call = ToolCall(name="make_chart", arguments={"spec": "x"})
+    ollama = _FakeOllama(
+        [
+            [_FakeChunk(content="", tool_calls=[chart_call, sql_call])],
+            [_FakeChunk(content="Here it is.")],
+        ]
+    )
+
+    dispatched_order: list[str] = []
+
+    async def fake_dispatch(call: ToolCall, **kwargs: object) -> ToolResult:
+        dispatched_order.append(call.name)
+        return ToolResult(ok=True, summary="ok")
+
+    monkeypatch.setattr(chat_loop, "dispatch", fake_dispatch)
+
+    await _events(ollama)
+    assert dispatched_order == ["run_sql_query", "make_chart"]
+
+
 async def test_exceeding_the_tool_call_cap_raises_the_typed_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -257,6 +257,13 @@ async def run_chat(
             )
             return
 
+        # Llama sometimes emits a whole turn's tool calls at once (e.g. run_sql_query
+        # and make_chart together) with no guarantee they're listed in a usable order —
+        # a make_chart before its run_sql_query always fails, since nothing to chart
+        # exists yet. Stable sort keeps every other call's relative order and only moves
+        # make_chart calls after it, so they always see that turn's own query result.
+        pending_calls.sort(key=lambda c: c.name == "make_chart")
+
         for call in pending_calls:
             yield ToolCallEvent(name=call.name, arguments=call.arguments)
             result: ToolResult | None = None

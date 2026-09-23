@@ -72,6 +72,17 @@ def test_rejects_unparseable_sql() -> None:
         guard_sql("not sql at all !!!", row_limit=10)
 
 
+def test_rejects_plain_text_that_only_tokenizer_fails_on() -> None:
+    # sqlglot raises TokenError (an unterminated string, from the odd number of
+    # apostrophes below) and ParseError (a statement that tokenizes fine but
+    # doesn't parse) as sibling exceptions, neither a subclass of the other.
+    # Confirmed live: the SQL model replied with a plain-English sentence
+    # instead of SQL, guard_sql only caught ParseError, and the TokenError
+    # escaped uncaught and crashed the whole request.
+    with pytest.raises(SqlRejectedError):
+        guard_sql("it's still loading", row_limit=10)
+
+
 def test_rejects_shops_created_at_as_a_date_filter() -> None:
     # analytics.shops is a present-day snapshot — created_at is an ETL load timestamp, not
     # a business date. Confirmed live twice: filtering on it for a month/year question

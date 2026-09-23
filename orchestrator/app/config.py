@@ -14,6 +14,18 @@ class Settings(BaseSettings):
     ollama_chat_model: str = "llama3.1:8b-instruct-q4_K_M"
     ollama_embed_model: str = "nomic-embed-text"
     ollama_allowed_models: str = "qwen2.5-coder:7b-instruct-q4_K_M,llama3.1:8b-instruct-q4_K_M"
+    # This box runs every model CPU-only (Ollama drops the Intel iGPU unless
+    # OLLAMA_IGPU_ENABLE=1) at ~9 tokens/s regardless of CPU clock or thread
+    # count — measured directly, memory-bandwidth-bound, not a config gap
+    # (EVALUATION.md §Runtime settings). A single fixed timeout doesn't fit
+    # both call shapes well: /api/generate (SQL/plot planning, non-streaming
+    # — correctness matters more than speed, and it already runs inside a
+    # heartbeated tool call or a queued job with its own long ceiling, so
+    # nothing user-visible is silently waiting on it) gets real headroom;
+    # /api/chat (the live token-by-token chat reply) is what a person is
+    # actually watching stream, so it keeps tighter margin.
+    ollama_generate_timeout_seconds: float = 480.0
+    ollama_chat_timeout_seconds: float = 300.0
 
     kb_embeddings_enabled: bool = False
     kb_embed_dim: int = 768

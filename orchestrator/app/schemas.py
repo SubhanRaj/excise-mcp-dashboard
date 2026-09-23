@@ -76,6 +76,7 @@ class KbChunk(BaseModel):
     title: str
     source_url: str | None
     doc_type: str | None
+    effective_from: date | None
     rank: float
 
 
@@ -92,6 +93,7 @@ class KbDocument(BaseModel):
     id: int
     title: str
     doc_type: str | None
+    effective_from: date | None
     source_url: str | None
     ingested_at: datetime
     withdrawn_at: datetime | None

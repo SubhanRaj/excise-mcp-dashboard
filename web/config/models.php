@@ -15,9 +15,19 @@ return [
             'ollama_tag' => 'qwen2.5-coder:7b-instruct-q4_K_M',
         ],
         'llama3.1' => [
-            'label' => 'Llama 3.1 (chat)',
+            'label' => 'Llama 3.1 8B (chat, best quality)',
             'role' => 'chat',
             'ollama_tag' => 'llama3.1:8b-instruct-q4_K_M',
+        ],
+        'qwen2.5-3b' => [
+            'label' => 'Qwen 2.5 3B (chat, fast)',
+            'role' => 'chat',
+            'ollama_tag' => 'qwen2.5:3b-instruct-q4_K_M',
+        ],
+        'qwen2.5-1.5b' => [
+            'label' => 'Qwen 2.5 1.5B (chat, fastest)',
+            'role' => 'chat',
+            'ollama_tag' => 'qwen2.5:1.5b-instruct-q4_K_M',
         ],
     ],
 

@@ -62,7 +62,9 @@ async def _search_knowledge(args: SearchKnowledgeArgs) -> ToolResult:
     if not chunks:
         return ToolResult(ok=True, summary="No matching passages in the knowledge base.")
     lines = [
-        f"[{c.title}{f' — {c.heading_path}' if c.heading_path else ''}] {c.content}" for c in chunks
+        f"[{c.title}{f' (effective {c.effective_from.year})' if c.effective_from else ''}"
+        f"{f' — {c.heading_path}' if c.heading_path else ''}] {c.content}"
+        for c in chunks
     ]
     return ToolResult(ok=True, summary="\n\n".join(lines))
 

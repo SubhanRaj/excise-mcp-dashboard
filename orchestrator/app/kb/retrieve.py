@@ -10,7 +10,7 @@ from app.schemas import KbChunk, KbDocument
 from app.sql.runner import get_pool
 
 _RETRIEVE_QUERY = """
-    SELECT c.content, c.heading_path, d.title, d.source_url, d.doc_type,
+    SELECT c.content, c.heading_path, d.title, d.source_url, d.doc_type, d.effective_from,
            ts_rank(c.fts, websearch_to_tsquery('simple', $1)) AS rank
     FROM kb.chunks c
     JOIN kb.documents d ON d.id = c.document_id
@@ -21,7 +21,7 @@ _RETRIEVE_QUERY = """
 """
 
 _DOCUMENTS_PAGE_QUERY = """
-    SELECT id, title, doc_type, source_url, ingested_at, withdrawn_at
+    SELECT id, title, doc_type, effective_from, source_url, ingested_at, withdrawn_at
     FROM kb.documents
     ORDER BY ingested_at DESC
     LIMIT $1 OFFSET $2

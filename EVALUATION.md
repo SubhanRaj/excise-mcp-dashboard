@@ -165,16 +165,43 @@ Sources: [Qwen2.5-LLM blog](https://qwenlm.github.io/blog/qwen2.5-llm/),
   reload cost acceptable.
 - `OLLAMA_NUM_PARALLEL=1` — one decode at a time; the box cannot run two 7B
   decodes plus a plot process plus Postgres at once.
-- `OLLAMA_MAX_LOADED_MODELS=2` — both `qwen2.5-coder:7b` and `llama3.1:8b`
-  stay resident (§RAM budget below). Live chat turns needing a tool call
-  were swapping between the two on every call at `MAX_LOADED_MODELS=1`, and
-  a full turn took 1–3 minutes as a result.
-- Expect **5–15 tokens/s** decode CPU-only at 3.0 GHz cap, ~10–25 tok/s
-  uncapped. A typical query (SQL + a short script + a one-paragraph summary)
-  is 15–45 s wall-clock. This is fine for a handful of internal analysts; it
-  is not a many-concurrent-user service. The web layer must queue requests,
-  not fan them out.
-- No GPU flags. Confirm `ollama ps` shows `100% CPU`.
+- `OLLAMA_MAX_LOADED_MODELS=2` (4 once the chat picker's 3B/1.5B options
+  below are actually enabled — `OLLAMA_ALLOWED_MODELS` needs the two extra
+  tags added and a systemd bump to match first, both pending operator steps)
+  — `qwen2.5-coder:7b` and `llama3.1:8b` stay resident (§RAM budget below).
+  Live chat turns needing a tool call were swapping between the two on every
+  call at `MAX_LOADED_MODELS=1`, and a full turn took 1–3 minutes as a
+  result.
+- Decode is memory-bandwidth-bound, not clock- or thread-bound: measured
+  directly against this box's real Ollama instance, `qwen2.5-coder:7b` and
+  `llama3.1:8b` both land at **~9 tokens/s** regardless of CPU frequency cap
+  (3.0 GHz capped and fully uncapped measured within noise of each other —
+  the CPU is not the bottleneck) and regardless of thread count past 16 (24
+  threads is consistently *slower* than 16, the signature of threads
+  contending over RAM bandwidth once it's saturated, not adding compute
+  capacity). `tokens/s × model size on disk` comes out to a roughly constant
+  ~35–40 GB/s across every model size tested, confirming the ceiling is this
+  box's RAM bandwidth: `qwen2.5:3b` (~2.0 GB) measured ~19 tok/s,
+  `qwen2.5:1.5b` (~1.0 GB) measured ~35 tok/s, both at `num_thread=16`. A
+  typical 7B/8B query (SQL + a short script + a one-paragraph summary) is
+  15–45 s wall-clock at ~9 tok/s; a compound multi-tool-call turn can run
+  past two minutes, which is what the orchestrator's two Ollama call timeouts
+  (`app/config.py`'s `ollama_generate_timeout_seconds`, 480 s for SQL/plot
+  planning, and `ollama_chat_timeout_seconds`, 300 s for a live chat turn)
+  and chat's heartbeat pings size against. This is fine for a handful of
+  internal analysts; it is
+  not a many-concurrent-user service. The web layer must queue requests, not
+  fan them out.
+- No GPU flags. Confirm `ollama ps` shows `100% CPU`. This box's integrated
+  GPU is deliberately dropped (`OLLAMA_IGPU_ENABLE` unset) — untested whether
+  enabling it would help, since it shares the same system RAM the CPU path
+  is already bandwidth-limited by.
+- `config/models.php`'s chat picker also offers `qwen2.5:3b-instruct-q4_K_M`
+  and `qwen2.5:1.5b-instruct-q4_K_M` as faster, lower-quality alternatives to
+  `llama3.1:8b` for conversation — chat and summarization tolerate a weaker
+  model; the schema-aware SQL planner (`ollama_sql_model`) does not and stays
+  fixed on `qwen2.5-coder:7b` regardless of which chat model is picked, so a
+  faster chat pick does not weaken SQL accuracy.
 
 ### JSON reliability approach
 

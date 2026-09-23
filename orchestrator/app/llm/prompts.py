@@ -63,6 +63,20 @@ FEW_SHOT_SQL_EXAMPLES: list[dict[str, str]] = [
         "sql": "SELECT district, COUNT(*) AS shop_count FROM analytics.shops "
         "GROUP BY district ORDER BY shop_count DESC LIMIT 100;",
     },
+    {
+        # Confirmed live: without a worked example in exactly this shape, the model
+        # pattern-matched the shops-per-district example above, joined shops to
+        # districts, and referenced transport_pass_issued_at on that join anyway —
+        # a column that only exists on analytics.dispatches, which UndefinedColumnError
+        # on. dispatches already carries district and retail_license_category as its
+        # own columns, so a shop-count-by-district-and-month question needs no join at
+        # all, just COUNT(DISTINCT shop_id) since one shop has many dispatch rows.
+        "question": ("How many country liquor and composite shops are in Lucknow in August 2026?"),
+        "sql": "SELECT COUNT(DISTINCT shop_id) AS shop_count FROM analytics.dispatches "
+        "WHERE district = 'Lucknow' AND retail_license_category IN ('CL5C', 'CL5CC') "
+        "AND EXTRACT(MONTH FROM transport_pass_issued_at) = 8 "
+        "AND EXTRACT(YEAR FROM transport_pass_issued_at) = 2026 LIMIT 100;",
+    },
 ]
 
 

@@ -141,6 +141,7 @@
                                         <i class="ti" :class="toolIcon(tc.name)"></i>
                                         <span x-text="toolLabel(tc.name)"></span>
                                         <i class="ti ti-loader-2 animate-spin" x-show="!tc.result"></i>
+                                        <span class="text-slate-400 font-normal" x-show="!tc.result && tc.pings" x-text="'· still working (' + (tc.pings * 15) + 's)'"></span>
                                     </p>
                                     <p class="text-slate-500 mt-1" x-show="tc.result" x-text="tc.result?.summary"></p>
                                     <div x-show="tc.chart" wire:ignore x-init="$watch('tc.chart', (v) => v && Plotly.newPlot($refs['livechart' + i], JSON.parse(v.plotly_json ?? '{}').data ?? [], JSON.parse(v.plotly_json ?? '{}').layout ?? [], {responsive: true}))" :x-ref="'livechart' + i" style="min-height:280px;"></div>
@@ -306,6 +307,13 @@
                 } else if (event.chart) {
                     const tc = this.liveToolCalls.at(-1);
                     if (tc) tc.chart = event.chart;
+                } else if (event.ping) {
+                    // The orchestrator sends one of these every ~15s while a tool call
+                    // (a SQL plan, a chart render) is still running, purely to keep the
+                    // connection alive — surfaced here as an elapsed-time tick so a long
+                    // wait reads as "still working" instead of looking stuck.
+                    const tc = this.liveToolCalls.at(-1);
+                    if (tc && !tc.result) tc.pings = (tc.pings ?? 0) + 1;
                 } else if (event.error) {
                     this.liveError = event.error.message ?? 'Something went wrong.';
                 }

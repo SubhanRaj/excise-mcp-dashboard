@@ -243,14 +243,17 @@ PGPASSWORD='CHANGE_ME_ro' psql -h 127.0.0.1 -U excise_ro -d excise_bank -c \
 
 ```bash
 sudo mariadb <<'SQL'
-CREATE USER 'excise_mcp_kb_ro'@'127.0.0.1' IDENTIFIED BY 'CHANGE_ME_kb_ro';
+CREATE USER IF NOT EXISTS 'excise_mcp_kb_ro'@'127.0.0.1' IDENTIFIED BY '2002';
+ALTER USER 'excise_mcp_kb_ro'@'127.0.0.1' IDENTIFIED BY '2002';
 GRANT SELECT ON pdf_markdown_pipeline_local.* TO 'excise_mcp_kb_ro'@'127.0.0.1';
 FLUSH PRIVILEGES;
 SQL
 ```
 
-Put `CHANGE_ME_kb_ro` in `etl/.env` as `KB_RO_MYSQL_PASSWORD` (`etl/.env.example`
-has the full set of `KB_RO_MYSQL_*` vars). Also give the ETL user group read on
+Put `2002` in `etl/.env` as `KB_RO_MYSQL_PASSWORD` (`etl/.env.example` has the
+full set of `KB_RO_MYSQL_*` vars) — `CREATE USER IF NOT EXISTS` plus a
+following `ALTER USER` covers both a first-time grant and resetting an
+already-existing one to this password. Also give the ETL user group read on
 the pipeline's Markdown tree:
 
 ```bash
@@ -263,7 +266,7 @@ ls -ld ~/Sites/pdf-markdown-pipeline/storage/app/public
 Verify:
 
 ```bash
-mariadb -h127.0.0.1 -u excise_mcp_kb_ro -p'CHANGE_ME_kb_ro' \
+mariadb -h127.0.0.1 -u excise_mcp_kb_ro -p'2002' \
   -e "SELECT visibility,status,COUNT(*) FROM pdf_markdown_pipeline_local.documents GROUP BY 1,2;"
 ```
 

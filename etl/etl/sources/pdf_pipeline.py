@@ -12,7 +12,9 @@ list of fixture rows, with no MariaDB driver involved.
 """
 
 import hashlib
+import json
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import TypedDict
 
@@ -30,11 +32,16 @@ ORIGIN = "pdf_pipeline"
 
 # Mirrors SitemapController::documentUrl() in pdf-markdown-pipeline — the exact
 # route shape per document kind (rule_set/policy, folder, division, section).
+# pdf-markdown-pipeline's excise department also holds other states' policies as
+# comparative reference material (rule_sets.state tags which one) — this app answers
+# for UP only, so a document under a rule_set tagged for a different state never
+# syncs. rule_sets.state is NULL for a document with no state-specific rule_set
+# (a generic Act/GO), which is not comparative material and stays in scope.
 _DOCUMENTS_QUERY = """
     SELECT
         doc.id AS id, doc.slug AS slug, doc.title AS title,
         doc.document_type AS document_type, doc.language AS language,
-        doc.markdown_path AS markdown_path,
+        doc.markdown_path AS markdown_path, doc.metadata AS metadata,
         dept.slug AS dept_slug, dept.level AS dept_level,
         sec.slug AS section_slug,
         dv.slug AS division_slug,
@@ -50,6 +57,7 @@ _DOCUMENTS_QUERY = """
       AND doc.status = 'verified'
       AND doc.deleted_at IS NULL
       AND dept.slug = %s
+      AND (rs.state IS NULL OR rs.state = 'Uttar Pradesh')
 """
 
 
@@ -60,6 +68,7 @@ class SourceDocRow(TypedDict):
     document_type: str
     language: str
     markdown_path: str | None
+    effective_year: int | None
     dept_slug: str
     dept_level: str
     section_slug: str | None
@@ -80,6 +89,23 @@ class RunCounts:
 
 def _level_alias(dept_level: str) -> str:
     return "sectt" if dept_level == "secretariat_level" else "dept"
+
+
+def _parse_effective_year(metadata_json: str | None) -> int | None:
+    """pdf-markdown-pipeline stamps a rule/amendment's year in its own
+    documents.metadata JSON (e.g. {"amendment_number": 1, "effective_year":
+    2022, ...}) — this app's kb.documents.effective_from column exists for
+    exactly this but was never populated, so every synced document read as
+    undated past whatever year happened to be spelled out in its title text.
+    Missing or malformed metadata is not a sync failure, just an undated doc.
+    """
+    if not metadata_json:
+        return None
+    try:
+        year = json.loads(metadata_json).get("effective_year")
+    except (json.JSONDecodeError, AttributeError):
+        return None
+    return year if isinstance(year, int) else None
 
 
 def document_url(base_url: str, row: SourceDocRow) -> str | None:
@@ -137,6 +163,7 @@ async def fetch_documents(department_slug: str) -> list[SourceDocRow]:
             document_type=r["document_type"],
             language=r["language"],
             markdown_path=r["markdown_path"],
+            effective_year=_parse_effective_year(r["metadata"]),
             dept_slug=r["dept_slug"],
             dept_level=r["dept_level"],
             section_slug=r["section_slug"],
@@ -185,8 +212,9 @@ async def sync_documents(
             continue
 
         content_sha256 = hashlib.sha256(markdown.encode("utf-8")).hexdigest()
+        effective_from = date(row["effective_year"], 1, 1) if row["effective_year"] else None
         existing = await pg_conn.fetchrow(
-            "SELECT content_sha256, withdrawn_at FROM kb.documents "
+            "SELECT content_sha256, effective_from, withdrawn_at FROM kb.documents "
             "WHERE origin = $1 AND origin_ref = $2",
             ORIGIN,
             origin_ref,
@@ -194,6 +222,7 @@ async def sync_documents(
         if (
             existing
             and existing["content_sha256"] == content_sha256
+            and existing["effective_from"] == effective_from
             and existing["withdrawn_at"] is None
         ):
             continue  # unchanged and live — re-running the same corpus changes no rows
@@ -202,11 +231,12 @@ async def sync_documents(
             """
             INSERT INTO kb.documents
                 (origin, origin_ref, title, doc_type, language, department, rule_set,
-                 source_url, content_sha256, ingested_at, withdrawn_at)
-            VALUES ($1, $2, $3, $4, $5, 'excise', $6, $7, $8, now(), NULL)
+                 effective_from, source_url, content_sha256, ingested_at, withdrawn_at)
+            VALUES ($1, $2, $3, $4, $5, 'excise', $6, $7, $8, $9, now(), NULL)
             ON CONFLICT (origin, origin_ref) DO UPDATE SET
                 title = EXCLUDED.title, doc_type = EXCLUDED.doc_type,
                 language = EXCLUDED.language, rule_set = EXCLUDED.rule_set,
+                effective_from = EXCLUDED.effective_from,
                 source_url = EXCLUDED.source_url, content_sha256 = EXCLUDED.content_sha256,
                 ingested_at = now(), withdrawn_at = NULL
             RETURNING id
@@ -217,6 +247,7 @@ async def sync_documents(
             row["document_type"],
             row["language"],
             row["rule_set_name"],
+            effective_from,
             url,
             content_sha256,
         )

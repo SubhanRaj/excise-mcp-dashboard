@@ -46,18 +46,22 @@ async def seeded_document() -> AsyncIterator[int]:
             "VALUES ('test', $1, 'MGQ Test Policy', 'policy', 'deadbeef') RETURNING id",
             _TEST_ORIGIN_REF,
         )
+        # A nonsense term, not real policy language: the live KB now holds the real
+        # UP Excise corpus (CLAUDE.md's pdf-markdown-pipeline sync), so a real phrase
+        # like "minimum guaranteed quota" genuinely appears elsewhere in it and would
+        # compete with this fixture's own ranking on equal footing.
         # denser term match -> higher ts_rank, should come back first
         await conn.execute(
             "INSERT INTO kb.chunks (document_id, ord, heading_path, content, token_estimate) "
             "VALUES ($1, 0, 'Section 12', "
-            "'The minimum guaranteed quota is fixed annually. "
-            "Minimum guaranteed quota applies to every licensed shop.', 25)",
+            "'The zorquil bendrafta is fixed annually. "
+            "Zorquil bendrafta applies to every licensed shop.', 25)",
             doc_id,
         )
         await conn.execute(
             "INSERT INTO kb.chunks (document_id, ord, heading_path, content, token_estimate) "
             "VALUES ($1, 1, 'Section 20', "
-            "'Guaranteed minimum quota may be reviewed once by policy note.', 15)",
+            "'Bendrafta zorquil may be reviewed once by policy note.', 15)",
             doc_id,
         )
         yield doc_id
@@ -67,7 +71,7 @@ async def seeded_document() -> AsyncIterator[int]:
 
 
 async def test_retrieve_ranks_denser_match_first(seeded_document: int) -> None:
-    chunks = await retrieve("minimum guaranteed quota", k=6)
+    chunks = await retrieve("zorquil bendrafta", k=6)
     assert len(chunks) == 2
     assert chunks[0].heading_path == "Section 12"
     assert chunks[0].title == "MGQ Test Policy"
@@ -83,7 +87,7 @@ async def test_retrieve_excludes_withdrawn_documents(seeded_document: int) -> No
     finally:
         await conn.close()
 
-    chunks = await retrieve("minimum guaranteed quota", k=6)
+    chunks = await retrieve("zorquil bendrafta", k=6)
     assert chunks == []
 
 

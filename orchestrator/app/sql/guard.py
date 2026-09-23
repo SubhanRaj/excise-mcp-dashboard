@@ -76,7 +76,15 @@ class GuardResult:
 def guard_sql(sql: str, row_limit: int) -> GuardResult:
     try:
         statements = sqlglot.parse(sql, read="postgres")
-    except sqlglot.errors.ParseError as e:
+    except sqlglot.errors.SqlglotError as e:
+        # ParseError (malformed SQL) and TokenError (text sqlglot's tokenizer
+        # can't lex at all, e.g. a model reply that isn't SQL) are sibling
+        # subclasses of SqlglotError, not one a subclass of the other — a
+        # bare `except ParseError` let a TokenError escape uncaught and crash
+        # the whole request instead of getting the same reject-and-retry
+        # every other bad-SQL case gets. Confirmed live: qwen2.5-coder
+        # returned a Chinese apology sentence instead of SQL, which failed
+        # here with TokenError and killed the query as an unhandled 500.
         raise SqlRejectedError(f"could not parse: {e}") from e
 
     parsed = [s for s in statements if s is not None]

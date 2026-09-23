@@ -167,7 +167,13 @@ flowchart TD
    statements; no DML/DDL/`COPY`/`CALL`/`DO`/`SET`/`GRANT`; no reference to
    anything outside schema `analytics`; enforce a `LIMIT` (inject
    `row_limit` if absent). A failure here is `SQL rejected` — one re-plan with
-   the reason appended, then error.
+   the reason appended, then error. `sqlglot` raises either `ParseError`
+   (malformed SQL) or `TokenError` (text its tokenizer can't lex at all, e.g.
+   a reply that isn't SQL) — sibling exceptions, neither a subclass of the
+   other — so the guard catches their common `SqlglotError` base rather than
+   `ParseError` alone; a bare `except ParseError` lets a `TokenError` escape
+   uncaught and crash the whole request instead of getting this same
+   reject-and-retry.
 3. **run_sql** — `sql/runner.py`: acquire from the read-only `asyncpg` pool,
    `BEGIN READ ONLY`, `SET LOCAL statement_timeout = '10s'`,
    `SET LOCAL idle_in_transaction_session_timeout = '15s'`, execute, fetch up
@@ -291,6 +297,12 @@ OLLAMA_CHAT_MODEL           llama3.1:8b-instruct-q4_K_M         (default for cha
 OLLAMA_ALLOWED_MODELS       qwen2.5-coder:7b-instruct-q4_K_M,llama3.1:8b-instruct-q4_K_M
                             (registry the UI picker and the request `model` override are validated against)
 OLLAMA_EMBED_MODEL          nomic-embed-text            (only used when embeddings enabled)
+OLLAMA_GENERATE_TIMEOUT_SECONDS  480  (plan_sql / plan_plot / summarize — /api/generate,
+                                       non-streaming; runs inside a heartbeated tool call or a
+                                       queued job with its own long ceiling, so real headroom
+                                       costs nothing user-visible)
+OLLAMA_CHAT_TIMEOUT_SECONDS      300  (a live chat turn — /api/chat, streaming; a person is
+                                       actually watching this one, so it keeps tighter margin)
 KB_EMBEDDINGS_ENABLED       false                       (FTS-only until flipped)
 KB_EMBED_DIM               768
 KB_RETRIEVE_K              6                            (chunks injected per turn)
@@ -571,7 +583,7 @@ router (`EVALUATION.md` §Right-sizing point 3).
 Default path, no embeddings:
 
 ```sql
-SELECT c.content, c.heading_path, d.title, d.source_url, d.doc_type,
+SELECT c.content, c.heading_path, d.title, d.source_url, d.doc_type, d.effective_from,
        ts_rank(c.fts, websearch_to_tsquery('simple', $1)) AS rank
 FROM kb.chunks c
 JOIN kb.documents d ON d.id = c.document_id
@@ -580,6 +592,12 @@ WHERE d.withdrawn_at IS NULL
 ORDER BY rank DESC
 LIMIT $2;                                    -- KB_RETRIEVE_K
 ```
+
+`chat/tools.py`'s `search_knowledge` formats each retrieved chunk for the
+model as `[<title> (effective <year>) — <heading_path>] <content>` when
+`effective_from` is set (`DATA_PIPELINE.md` §Knowledge base has where that
+date comes from), so a rule amendment can be cited by its real year rather
+than whatever a title happens to spell out.
 
 With `KB_EMBEDDINGS_ENABLED`: also embed the query via `kb/embed.py`
 (local Ollama embed model), run an HNSW cosine search on `kb.chunks.embedding`,
