@@ -125,6 +125,28 @@ def _needs_retry(text: str) -> bool:
     return "```sql" in text.strip().lower()
 
 
+def _tool_failure_fallback(result: ToolResult) -> str:
+    """The final answer when neither the tool-aware attempt nor the tools=[] retry
+    produced usable prose — both held back per chunk by `_is_degenerate`, so this
+    replaces what would otherwise have been an empty turn, not something already
+    shown to the user.
+
+    A successful call's own summary already reads fine standing alone ("Chart
+    rendered." or a row-count sentence). A failed call's summary is a database or
+    engine error — 'column sv.shop_id does not exist' means nothing to someone who
+    didn't ask a SQL question — so this states the failure in plain terms first and
+    keeps the technical detail after it, for whoever does want to check.
+    """
+    if result.ok:
+        return result.summary
+    return (
+        f"I couldn't finish this part of the analysis: {result.summary}\n\n"
+        "This usually means the question needs a different table, column, or date "
+        "range than the one tried — try narrowing the date range, naming the shop "
+        "category directly, or rephrasing the question."
+    )
+
+
 async def _dispatch_with_heartbeats(
     call: ToolCall,
     *,
@@ -199,21 +221,31 @@ async def run_chat(
             # The turn didn't need a tool and the model's tool-aware reply came
             # back degenerate — retry once as a plain chat call, same
             # retry-once shape guard_sql/render already use for a bad first
-            # attempt.
+            # attempt. A live turn showed this retry can degenerate the exact same
+            # way the first attempt did — narrating run_sql_query(question="...")
+            # again after a failed call, even with no tools attached this time — so
+            # the retry gets the same per-chunk holdback the first attempt already
+            # has, instead of streaming it unconditionally.
             assistant_text = ""
+            held = ""
             async for chunk in ollama.chat_stream(
                 model=model, messages=messages, tools=[], usage=usage
             ):
                 if chunk.content:
                     assistant_text += chunk.content
-                    yield TokenEvent(delta=chunk.content)
+                    held += chunk.content
+                    if not _is_degenerate(held):
+                        yield TokenEvent(delta=held)
+                        held = ""
             if _is_degenerate(assistant_text) and last_tool_result is not None:
-                # Both attempts came back empty — an 8B model can fail to produce any
-                # follow-up text at all after a tool result. Fall back to the tool's own
-                # summary rather than end the turn with nothing visible past the tool
-                # call card, which is what the system prompt asks the model to avoid but
-                # cannot itself guarantee.
-                assistant_text = last_tool_result.summary
+                # Both attempts came back degenerate — either genuinely empty (an 8B
+                # model can fail to produce any follow-up text at all after a tool
+                # result) or still narrating a fake call. The per-chunk holdback above
+                # kept every degenerate attempt off the wire, so nothing has been
+                # shown to the user yet; this is the turn's first and only answer, a
+                # plain statement of the failure with the tool's own error kept
+                # available underneath it for whoever wants to check.
+                assistant_text = _tool_failure_fallback(last_tool_result)
                 yield TokenEvent(delta=assistant_text)
         messages.append({"role": "assistant", "content": assistant_text})
 

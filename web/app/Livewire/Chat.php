@@ -18,6 +18,18 @@ class Chat extends Component
 {
     use ConfirmsWithSweetAlert;
 
+    /**
+     * Verified against the real August 2026 Lucknow import (CLAUDE.md's dispatch-report
+     * milestone) and the live knowledge base — a first-time visitor's proof that the tool
+     * loop produces a real answer, not a hypothetical one. Shown only on the empty thread;
+     * not a data source of any kind, so a plain const is enough.
+     */
+    public const EXAMPLE_QUESTIONS = [
+        ['question' => 'How many country liquor and composite shops are in Lucknow in August 2026?', 'chart' => false],
+        ['question' => 'Compare dispatched volume by shop category in Lucknow for August 2026.', 'chart' => true],
+        ['question' => 'What does the excise policy say about MGQ?', 'chart' => false],
+    ];
+
     public ?string $conversationId = null;
 
     public string $message = '';
@@ -45,6 +57,12 @@ class Chat extends Component
             $this->model = $conversation->model;
         }
         $this->mountedConversationId = $this->conversationId;
+    }
+
+    public function useExample(string $question, bool $chart = false): void
+    {
+        $this->message = $question;
+        $this->includeChart = $chart;
     }
 
     public function send(): void

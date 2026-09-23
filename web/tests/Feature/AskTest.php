@@ -73,6 +73,16 @@ class AskTest extends TestCase
             ->assertForbidden();
     }
 
+    public function test_clicking_an_example_question_fills_the_composer(): void
+    {
+        $user = User::factory()->create();
+        $question = Ask::EXAMPLE_QUESTIONS[0];
+
+        Livewire::actingAs($user)->test(Ask::class)
+            ->call('useExample', $question)
+            ->assertSet('prompt', $question);
+    }
+
     public function test_a_blank_question_is_rejected(): void
     {
         $user = User::factory()->create();

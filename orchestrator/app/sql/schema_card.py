@@ -14,12 +14,21 @@ from app.schemas import SchemaColumn, SchemaTable
 VIEW_NOTES = {
     "districts": "75 UP districts, each under one division, each division under one zone.",
     "revenues": (
-        "duty/fee collections. metric is 'excise_duty' | 'license_fee' | 'import_fee' | "
-        "'total'; amount_inr in rupees."
+        "duty/fee collections, aggregated by district + financial_year + license_category — "
+        "one row per combination, not per shop and not per month. metric is 'excise_duty' | "
+        "'license_fee' | 'import_fee' | 'total'; amount_inr in rupees. There is no shop_id "
+        "column here; a question scoped to a specific month or to individual shops needs "
+        "analytics.dispatches instead (duty_fee_inr for amount, transport_pass_issued_at "
+        "for the date)."
     ),
     "sales_volumes": (
-        "dispatch/consumption volumes. metric is 'dispatch_bl' | 'consumption_bl' | "
-        "'cases'; quantity in the given unit."
+        "dispatch/consumption volumes, aggregated by district + financial_year + "
+        "license_category — one row per combination, not per shop and not per month. "
+        "metric is 'dispatch_bl' | 'consumption_bl' | 'cases'; quantity in the given unit. "
+        "There is no shop_id or dispatch_id column here; a question scoped to a specific "
+        "month or to individual shops needs analytics.dispatches instead — "
+        "dispatched_bulk_litres/dispatched_cases for volume, duty_fee_inr for amount, "
+        "retail_license_category for the shop type, transport_pass_issued_at for the date."
     ),
     "operations": (
         "enforcement stats. metric is 'raids' | 'cases_registered' | 'arrests' | "
@@ -42,11 +51,15 @@ VIEW_NOTES = {
     ),
     "dispatches": (
         "one row per wholesale-to-retail transport pass (a live IESCMS export, not the "
-        "annual sales_volumes reconciliation). retail_license_category is the shop's "
-        "category on that pass (same codes as analytics.shops.license_category, including "
-        "CL5CC/FL5DB for composite/beer). transport_pass_issued_at is the real business "
-        "date — filter on it (not shops.created_at) for a 'how many shops in "
-        "[month/year]' question; count DISTINCT shop_id, since one shop has many passes."
+        "annual sales_volumes/revenues reconciliation, which has no shop or month "
+        "granularity). retail_license_category is the shop's category on that pass (same "
+        "codes as analytics.shops.license_category, including CL5CC/FL5DB for "
+        "composite/beer). transport_pass_issued_at is the real business date — filter on "
+        "it (not shops.created_at) for a 'how many shops in [month/year]' question; count "
+        "DISTINCT shop_id, since one shop has many passes. duty_fee_inr is the amount and "
+        "dispatched_bulk_litres/dispatched_cases/dispatched_bottles are the volume for a "
+        "'sales in amount and volume' question scoped to a month or a shop category — this "
+        "is the only view with that combination at that granularity."
     ),
     "dispatch_strength_lines": (
         "per-strength breakdown of a country-liquor dispatch; one or more rows per "

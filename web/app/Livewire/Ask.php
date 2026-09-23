@@ -17,6 +17,18 @@ class Ask extends Component
 {
     use ConfirmsWithSweetAlert;
 
+    /**
+     * Verified against the real August 2026 Lucknow import (CLAUDE.md's dispatch-report
+     * milestone) — a first-time visitor's proof that the pipeline produces a real answer,
+     * not a hypothetical one. Shown only on the empty composer; not a data source of any
+     * kind, so a plain const is enough.
+     */
+    public const EXAMPLE_QUESTIONS = [
+        'How many country liquor and composite shops are in Lucknow in August 2026?',
+        'What was the total dispatch amount and volume for Lucknow in August 2026?',
+        'How many CL5C shops are there in Lucknow?',
+    ];
+
     public string $prompt = '';
 
     public ?string $activeQueryId = null;
@@ -29,6 +41,11 @@ class Ask extends Component
             abort_unless($query->user_id === Auth::id(), 403);
             $this->activeQueryId = $query->id;
         }
+    }
+
+    public function useExample(string $question): void
+    {
+        $this->prompt = $question;
     }
 
     public function submit(): void

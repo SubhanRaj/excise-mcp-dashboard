@@ -702,6 +702,39 @@ the live Apache vhost, showed a `tool_call` at 21.7s and pings at 36.7s and
 51.7s — exactly the 15s cadence the design calls for, for the first time
 confirmed the whole way from `run_chat` to the browser's own connection.
 
+The connection fixed, the same live question surfaced a data-modeling gap
+behind the SQL error underneath it: asking for a specific month's sales in
+amount and volume by shop category kept failing on a hallucinated
+`shop_id`/`dispatch_id` column against `analytics.sales_volumes`, since
+that view (and `analytics.revenues`) has no shop-level or monthly
+granularity at all — it's aggregated by district, financial year, and
+license category only. `VIEW_NOTES` now says so for both and points at
+`analytics.dispatches` instead, which already carries `duty_fee_inr` and
+the `dispatched_*` volume columns at exactly the granularity a month- or
+shop-scoped question needs (`DATA_PIPELINE.md` §Row visibility for the AI
+path). Past that, a real `run_sql_query` failure surfaced a second gap in
+the retry that was supposed to cover exactly this: the `tools=[]` retry
+streamed every chunk unconditionally, with none of the bare-`"{}"`/
+narrated-call holdback the first attempt already has, so when the retry
+also narrated the same fake call after a failed SQL statement, nothing
+caught it before it reached the user. The retry now gets the same per-chunk
+check, and the fallback for a still-degenerate retry changed too: a failed
+tool's raw `summary` (`column sv.shop_id does not exist`) meant nothing
+shown as a stand-alone reply to someone who didn't ask a SQL question, so
+`_tool_failure_fallback` states the failure in plain terms first and keeps
+the technical detail after it — a successful call's summary is unchanged,
+since it already reads fine on its own (`MCP_ENGINES.md` §Tools). Ask's own
+failed-query box gets the same plain-terms-first treatment, with the
+technical `error_message` kept as supporting detail underneath it.
+
+Both Ask and Chat also gained a small set of example questions on their
+empty state — three each, verified directly against the real August 2026
+Lucknow import before being shown as "try an example," not written from
+guessing what the data probably contains. Clicking one fills the composer
+(and, on Chat, sets the chart toggle where the example calls for one)
+without submitting it, so a first-time visitor sees the pipeline answer a
+real question with one click and can still edit it first.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures

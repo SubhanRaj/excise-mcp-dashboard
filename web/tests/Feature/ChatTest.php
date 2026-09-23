@@ -36,6 +36,17 @@ class ChatTest extends TestCase
         $this->assertDatabaseHas('conversations', ['user_id' => $user->id]);
     }
 
+    public function test_clicking_an_example_question_fills_the_composer(): void
+    {
+        $user = User::factory()->create();
+        $example = Chat::EXAMPLE_QUESTIONS[1];
+
+        Livewire::actingAs($user)->test(Chat::class)
+            ->call('useExample', $example['question'], $example['chart'])
+            ->assertSet('message', $example['question'])
+            ->assertSet('includeChart', $example['chart']);
+    }
+
     public function test_a_blank_message_is_rejected(): void
     {
         $user = User::factory()->create();

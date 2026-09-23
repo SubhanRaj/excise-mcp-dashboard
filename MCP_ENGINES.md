@@ -438,6 +438,20 @@ keeps the most recent tool result and, if both attempts still come back
 degenerate, surfaces that result's own summary as the turn's answer instead
 of ending on nothing.
 
+That retry itself turned out to have the same gap it was meant to fix. It
+streamed every chunk unconditionally, with none of the bare-`"{}"`/narrated-
+call holdback the first attempt already has — confirmed live, after a real
+`run_sql_query` call failed with a Postgres column error, the retry
+narrated the exact same fake call (`run_sql_query(question="...")`) again,
+and this time nothing caught it before it reached the user. The retry now
+gets the same per-chunk `_is_degenerate` check. The fallback for a retry
+that's still degenerate after that changed too: a failed tool's own
+`summary` is a database or engine error (`column sv.shop_id does not
+exist`), which read as a stray error message to someone who never asked a
+SQL question. `_tool_failure_fallback` states the failure in plain terms
+first and keeps the technical detail after it; a successful call's summary
+is unchanged, since it already reads fine standing alone.
+
 A fifth shape mixed a real tool call with hallucinated content: asked a
 two-metric question (revenue and volume together), Llama wrote its own
 guessed SQL against a table that doesn't exist, in a fenced code block

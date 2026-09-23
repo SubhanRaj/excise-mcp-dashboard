@@ -417,6 +417,17 @@ orchestrator's own `GET /schema/tables` and `GET /schema/tables/{name}/sample`
 — the same route `web/` uses everywhere else it needs something out of
 Postgres, since `web/` holds no database connection of its own.
 
+A live question asking for a specific month's sales in amount and volume by
+shop category repeatedly failed on a hallucinated `shop_id`/`dispatch_id`
+column against `analytics.sales_volumes` — that view is aggregated by
+district + financial year + license category, with no shop-level or
+monthly breakdown at all, so no column by either name has ever existed on
+it. `analytics.revenues` has the same shape. `VIEW_NOTES` now says so for
+both, and points at `analytics.dispatches` instead for a question scoped to
+a month or to individual shops — it already carries `duty_fee_inr` (amount)
+and `dispatched_bulk_litres`/`dispatched_cases`/`dispatched_bottles`
+(volume) at exactly that granularity.
+
 ### BI access (future — Power BI and similar, not built)
 
 `analytics.*` and `kb.*` are the entire surface any read-only consumer ever

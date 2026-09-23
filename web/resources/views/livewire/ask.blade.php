@@ -74,6 +74,16 @@
         <a href="{{ route('ask') }}" class="text-sm text-slate-500 hover:underline flex items-center gap-1.5">
             <i class="ti ti-plus"></i> New question
         </a>
+        @else
+        <div class="space-y-1.5">
+            <p class="text-xs font-medium text-slate-400 dark:text-slate-500 uppercase tracking-wide">Try an example</p>
+            @foreach(self::EXAMPLE_QUESTIONS as $q)
+            <button type="button" wire:click="useExample(@js($q))"
+                    class="block w-full text-left text-sm text-govviolet-700 dark:text-govviolet-300 hover:bg-govviolet-50 dark:hover:bg-govviolet-900/30 rounded-lg px-3 py-2 transition-colors">
+                {{ $q }}
+            </button>
+            @endforeach
+        </div>
         @endif
 
         @if($recentQueries->isNotEmpty())
@@ -160,7 +170,10 @@
         <div class="flex items-start gap-2 text-sm text-red-700 dark:text-red-400 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-700 rounded-lg px-4 py-3">
             <i class="ti ti-alert-circle flex-shrink-0 mt-0.5"></i>
             <div>
-                <span>{{ $activeQuery->error_message ?: 'The query failed. Please try again.' }}</span>
+                <p>This question couldn't be answered. Try narrowing the date range, naming the shop category directly, or rephrasing the question.</p>
+                @if($activeQuery->error_message)
+                <p class="text-xs text-red-600/70 dark:text-red-400/70 mt-1 font-mono">{{ $activeQuery->error_message }}</p>
+                @endif
                 @if(config('app.debug'))
                 <p class="text-xs text-red-600/70 dark:text-red-400/70 mt-1 font-mono">
                     stage: {{ $activeQuery->current_stage ?? 'unknown' }}

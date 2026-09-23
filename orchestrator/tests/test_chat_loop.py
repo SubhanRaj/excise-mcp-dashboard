@@ -232,6 +232,46 @@ async def test_a_silent_reply_after_a_tool_call_falls_back_to_the_tool_summary(
     assert isinstance(events[-1], DoneEvent)
 
 
+async def test_a_failed_tool_call_narrated_again_on_retry_falls_back_cleanly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Confirmed live: after a real run_sql_query call failed with a Postgres column
+    # error, the tools=[] retry narrated the exact same fake call again
+    # (`run_sql_query(question="...")`) instead of a plain answer — the retry had no
+    # holdback of its own, so the garbled text streamed straight to the user. Both
+    # attempts must be held back the same way, and the final answer must state the
+    # failure in plain terms plus the technical detail, not just repeat the raw
+    # database error as if it were the whole reply.
+    call = ToolCall(name="run_sql_query", arguments={"question": "x"})
+    ollama = _FakeOllama(
+        [
+            [_FakeChunk(content="", tool_calls=[call])],
+            [
+                _FakeChunk(content="run"),
+                _FakeChunk(content="_sql"),
+                _FakeChunk(content='_query(question="x")'),
+            ],
+            [
+                _FakeChunk(content="run"),
+                _FakeChunk(content="_sql"),
+                _FakeChunk(content='_query(question="x")'),
+            ],
+        ]
+    )
+
+    async def fake_dispatch(call: ToolCall, **kwargs: object) -> ToolResult:
+        return ToolResult(ok=False, summary="column sv.shop_id does not exist")
+
+    monkeypatch.setattr(chat_loop, "dispatch", fake_dispatch)
+
+    events = await _events(ollama)
+    tokens = "".join(e.delta for e in events if isinstance(e, TokenEvent))
+    assert "run_sql_query(" not in tokens
+    assert "column sv.shop_id does not exist" in tokens
+    assert "couldn't finish this part of the analysis" in tokens
+    assert isinstance(events[-1], DoneEvent)
+
+
 async def test_a_slow_tool_call_emits_heartbeats_before_its_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

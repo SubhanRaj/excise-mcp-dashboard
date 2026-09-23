@@ -82,6 +82,15 @@
                     <i class="ti ti-message-chatbot"></i>
                 </div>
                 <p class="text-sm text-slate-400 dark:text-slate-500 mt-4">Type a question below to begin.</p>
+                <div class="mt-6 space-y-1.5 w-full">
+                    <p class="text-xs font-medium text-slate-400 dark:text-slate-500 uppercase tracking-wide">Or try an example</p>
+                    @foreach(self::EXAMPLE_QUESTIONS as $ex)
+                    <button type="button" wire:click="useExample(@js($ex['question']), @js($ex['chart']))"
+                            class="block w-full text-left text-sm text-govviolet-700 dark:text-govviolet-300 hover:bg-govviolet-50 dark:hover:bg-govviolet-900/30 rounded-lg px-3 py-2 transition-colors">
+                        {{ $ex['question'] }}
+                    </button>
+                    @endforeach
+                </div>
             </div>
             @else
                 @foreach($activeConversation->messages as $m)
