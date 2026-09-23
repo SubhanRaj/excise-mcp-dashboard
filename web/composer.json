@@ -17,6 +17,7 @@
         "livewire/livewire": "^4.4",
         "openspout/openspout": "^5.11",
         "php-flasher/flasher-laravel": "^2.6",
+        "php-flasher/flasher-sweetalert-laravel": "^2.6",
         "resend/resend-php": "^1.9"
     },
     "require-dev": {

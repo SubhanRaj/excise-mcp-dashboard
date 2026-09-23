@@ -566,6 +566,71 @@ send had picked it up. `includeChart` (`Chat.php`) now holds its value the
 way the model picker beside it does — a standing choice for the composer,
 kept until the person using it changes it themselves.
 
+The same rail's menu had two more bugs that visual opacity alone didn't fix.
+It was `position: absolute` inside the rail's own `overflow-y-auto` div, so
+opening it on a row near the bottom grew the rail's scrollable content
+instead of showing a floating menu — the list visibly jumped to make room.
+Both rails now put the menu in a `<template x-teleport="body">`, positioned
+`fixed` from the trigger button's own `getBoundingClientRect()` at open
+time, opening upward when there is not 90px of room below — it floats over
+the page and never touches the rail's scroll height. Separately, the trigger
+button sits on top of the row's own link with nothing stopping a click from
+reaching past it, so the button's handler now carries `.stop.prevent`.
+Neither row's `<div>` carried a `wire:key` before this either — every other
+keyed Livewire loop in this app has one (`query-ledger.blade.php`'s rows,
+for one) — and a teleported node makes that matter more than it already
+did, so both loops key each row on the conversation/query id now.
+
+A live report of the same conversation getting stuck again traced to a
+different cause than any code bug: `excise-orchestrator.service` had been
+running since 2026-09-19, well before all three of that day's orchestrator
+fixes (the heartbeat pings, `data_ref`'s removal, `make_chart`'s script
+contract) — a `systemd --user` service does not pick up new code on its own,
+`web/`'s plain PHP files do on every request. The mismatch made the specific
+symptom worse: the new PHP-side fix traded a blunt 300s total-duration cap
+for a 45s *silence* cap, sized on the assumption the orchestrator's own
+heartbeat would keep the wire fed — running the old code with no heartbeat,
+a single slow step (the coder model planning SQL for a compound question)
+could go quiet past 45s and get cut sooner than the old 300s cap would have
+allowed. `OPERATOR_SETUP.md` gains no new step for this — restarting a
+`systemd --user` service after an orchestrator code change is not itself a
+milestone step, it is the standing operator action a code change like this
+always needs; `systemctl --user restart excise-orchestrator` is a pending
+`--user` service restart Claude documents rather than runs, per this file's
+own hard constraint.
+
+The five browser `confirm()` dialogs (`wire:confirm`, on conversation/query
+permanent-delete, knowledge upload withdraw, Google disconnect, and user
+deactivate) are now SweetAlert2 popups instead, matching the styled-confirm
+convention the sibling apps already use. `php-flasher/flasher-sweetalert-laravel`
+is the new dependency — a second php-flasher plugin package alongside the
+toast one already installed, sharing the same `@flasher_render` bootstrap,
+so it needed nothing beyond `composer require` + `php artisan flasher:install`
+to publish its assets. `ConfirmsWithSweetAlert`
+(`app/Livewire/Concerns/`) is the reusable half: a component calls
+`confirm($method, $arg, $message)` from its own trigger method in place of
+`wire:confirm`, and a trait-provided `#[On('sweetalert:confirmed')]` handler
+calls `$method($arg)` once SweetAlert2's own confirm button is clicked — the
+method name and its one argument ride through as `sweetalert()` options,
+read back off the event's `envelope.options` on confirm. That exact wire
+shape (`envelope.options`, not a top-level payload key) came from reading
+the installed package's own JS and PHP source directly, not the docs, which
+show the calling pattern but not the shape a listener actually receives.
+Building it caught two bugs before either shipped: `sweetalert()->question()`
+sets the dialog's icon and message but never queues the notification on its
+own — only a terminal call like `warning()` does, ending its own internal
+chain in `push()` — so `confirm()` had to end there instead, a mistake a
+live click never would have surfaced as anything but "nothing happens";
+and the trait's own `confirm()` needed to be `public`, not `protected`, to
+be reachable from `wire:click` at all, the same visibility `wire:click`
+already needs on every other component method. Both surfaced from a real
+test exercising the actual installed package rather than a mocked one —
+`Livewire::test()`'s own `->call()` never sets the `X-Livewire` header
+`isLivewireRequest()` checks, so the bridge that turns a queued envelope
+into a `flasher:render` browser event never fires under it; the test for
+`confirm()` itself uses a plain object with the trait instead, sidestepping
+that gap rather than working around it.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures

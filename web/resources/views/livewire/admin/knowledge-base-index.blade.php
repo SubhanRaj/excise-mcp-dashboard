@@ -45,7 +45,7 @@
                         </td>
                         <td class="px-4 py-3 text-right">
                             @if($upload->status !== 'withdrawn')
-                            <button wire:click="withdraw('{{ $upload->id }}')" wire:confirm="Withdraw \"{{ $upload->title }}\"?"
+                            <button wire:click="confirm('withdraw', '{{ $upload->id }}', 'Withdraw &quot;{{ $upload->title }}&quot;?', 'Yes, withdraw')"
                                     class="text-slate-400 hover:text-red-600 p-1.5" title="Withdraw">
                                 <i class="ti ti-file-off"></i>
                             </button>

@@ -81,29 +81,47 @@
             <p class="text-xs font-semibold uppercase tracking-wide text-slate-400 px-1">Recent questions</p>
             <div class="max-h-96 overflow-y-auto space-y-1">
                 @foreach($recentQueries as $q)
-                <div class="group relative flex items-center" x-data="{ menuOpen: false }">
+                <div class="group relative flex items-center"
+                     wire:key="query-{{ $q->id }}"
+                     x-data="{
+                         menuOpen: false,
+                         menuStyle: '',
+                         // Teleported to <body> and positioned fixed from the button's own screen
+                         // position — matches chat.blade.php's identical rail menu (its own
+                         // comment there has the full reasoning: this used to grow the rail's
+                         // scroll height instead of floating over the page).
+                         openMenu(e) {
+                             const r = e.currentTarget.getBoundingClientRect();
+                             this.menuStyle = (r.bottom + 90 > window.innerHeight)
+                                 ? `left:${r.right - 176}px; bottom:${window.innerHeight - r.top + 4}px;`
+                                 : `left:${r.right - 176}px; top:${r.bottom + 4}px;`;
+                             this.menuOpen = ! this.menuOpen;
+                         },
+                     }">
                     <a href="{{ route('ask.show', $q) }}"
                        class="flex-1 min-w-0 block pl-3 pr-8 py-2 rounded-lg text-sm truncate {{ $activeQuery?->id === $q->id ? 'bg-govviolet-50 dark:bg-govviolet-900/30 text-govviolet-700 dark:text-govviolet-300 font-medium' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800' }}">
                         {{ $q->prompt }}
                     </a>
-                    <button x-on:click="menuOpen = !menuOpen"
+                    <button x-on:click.stop.prevent="openMenu($event)"
                             class="absolute right-1.5 w-7 h-7 flex items-center justify-center rounded text-slate-400 opacity-60 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-slate-200 dark:hover:bg-slate-700"
                             title="Question options">
                         <i class="ti ti-dots-vertical text-base"></i>
                     </button>
-                    <div x-show="menuOpen" x-cloak x-on:click.outside="menuOpen = false"
-                         class="absolute right-0 top-full z-10 mt-1 w-44 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg py-1 text-xs">
-                        <button wire:click="deleteQuery('{{ $q->id }}')" x-on:click="menuOpen = false"
-                                class="w-full text-left px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300">
-                            Delete
-                        </button>
-                        <button wire:click="forceDeleteQuery('{{ $q->id }}')"
-                                wire:confirm="Permanently delete this question? This cannot be undone."
-                                x-on:click="menuOpen = false"
-                                class="w-full text-left px-3 py-1.5 hover:bg-red-50 dark:hover:bg-red-900/30 text-red-600">
-                            Delete permanently
-                        </button>
-                    </div>
+                    <template x-teleport="body">
+                        <div x-show="menuOpen" x-cloak x-on:click.outside="menuOpen = false"
+                             x-bind:style="menuStyle"
+                             class="fixed z-50 w-44 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg py-1 text-xs">
+                            <button wire:click="deleteQuery('{{ $q->id }}')" x-on:click="menuOpen = false"
+                                    class="w-full text-left px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300">
+                                Delete
+                            </button>
+                            <button wire:click="confirm('forceDeleteQuery', '{{ $q->id }}', 'Permanently delete this question? This cannot be undone.', 'Yes, delete permanently')"
+                                    x-on:click="menuOpen = false"
+                                    class="w-full text-left px-3 py-1.5 hover:bg-red-50 dark:hover:bg-red-900/30 text-red-600">
+                                Delete permanently
+                            </button>
+                        </div>
+                    </template>
                 </div>
                 @endforeach
             </div>

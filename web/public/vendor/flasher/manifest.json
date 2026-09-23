@@ -35,5 +35,8 @@
     "/vendor/flasher/themes/amber/amber.min.css": "/vendor/flasher/themes/amber/amber.min.css?id=20aa374b7ede682a6a0eb00c19a0013c",
     "/vendor/flasher/themes/google/google.min.js": "/vendor/flasher/themes/google/google.min.js?id=ce9d22b65c40f5537bd3dca88029bfa8",
     "/vendor/flasher/themes/google/google.min.css": "/vendor/flasher/themes/google/google.min.css?id=b5f06fb2a4795ce361e94113d3b91822",
-    "/vendor/flasher/flasher.min.css": "/vendor/flasher/flasher.min.css?id=746d392dc765db03127c7de0d5d26d4b"
+    "/vendor/flasher/flasher.min.css": "/vendor/flasher/flasher.min.css?id=746d392dc765db03127c7de0d5d26d4b",
+    "/vendor/flasher/sweetalert2.min.js": "/vendor/flasher/sweetalert2.min.js?id=bba3afcfe7dcc339fa25fad49842c2bf",
+    "/vendor/flasher/sweetalert2.min.css": "/vendor/flasher/sweetalert2.min.css?id=83b54381abbed7676c22f411eba2c61d",
+    "/vendor/flasher/flasher-sweetalert.min.js": "/vendor/flasher/flasher-sweetalert.min.js?id=471a0b1aec6d6adc8e42a7c5dfcf0a93"
 }

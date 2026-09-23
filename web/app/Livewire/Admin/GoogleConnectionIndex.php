@@ -2,11 +2,14 @@
 
 namespace App\Livewire\Admin;
 
+use App\Livewire\Concerns\ConfirmsWithSweetAlert;
 use App\Models\GoogleConnection;
 use Livewire\Component;
 
 class GoogleConnectionIndex extends Component
 {
+    use ConfirmsWithSweetAlert;
+
     public function mount(): void
     {
         abort_unless(auth()->user()->hasPrivilege('google.manage'), 403);

@@ -11,29 +11,51 @@
         </a>
         <div class="flex-1 overflow-y-auto space-y-1">
             @forelse($conversations as $c)
-            <div class="group relative flex items-center" x-data="{ menuOpen: false }">
+            <div class="group relative flex items-center"
+                 wire:key="conversation-{{ $c->id }}"
+                 x-data="{
+                     menuOpen: false,
+                     menuStyle: '',
+                     // The menu used to be absolute inside this scrolling rail, so opening it on
+                     // a row near the bottom pushed the rail's own scrollable area taller instead
+                     // of showing the menu — the list visibly jumped to make room. Teleported to
+                     // <body> and positioned fixed from the button's own screen position instead,
+                     // so it floats over the page and never touches the rail's scroll height, and
+                     // can open upward when there isn't 90px of room below.
+                     openMenu(e) {
+                         const r = e.currentTarget.getBoundingClientRect();
+                         this.menuStyle = (r.bottom + 90 > window.innerHeight)
+                             ? `left:${r.right - 176}px; bottom:${window.innerHeight - r.top + 4}px;`
+                             : `left:${r.right - 176}px; top:${r.bottom + 4}px;`;
+                         this.menuOpen = ! this.menuOpen;
+                     },
+                 }">
                 <a href="{{ route('chat.show', $c) }}"
                    class="flex-1 min-w-0 block pl-3 pr-8 py-2 rounded-lg text-sm truncate {{ $activeConversation?->id === $c->id ? 'bg-govviolet-50 dark:bg-govviolet-900/30 text-govviolet-700 dark:text-govviolet-300 font-medium' : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800' }}">
                     {{ $c->title ?? 'New conversation' }}
                 </a>
-                <button x-on:click="menuOpen = !menuOpen"
+                {{-- .stop.prevent: this sits on top of the row's own link, and a plain click
+                     handler here is not enough insurance against a stray navigation. --}}
+                <button x-on:click.stop.prevent="openMenu($event)"
                         class="absolute right-1.5 w-7 h-7 flex items-center justify-center rounded text-slate-400 opacity-60 group-hover:opacity-100 focus-visible:opacity-100 hover:bg-slate-200 dark:hover:bg-slate-700"
                         title="Conversation options">
                     <i class="ti ti-dots-vertical text-base"></i>
                 </button>
-                <div x-show="menuOpen" x-cloak x-on:click.outside="menuOpen = false"
-                     class="absolute right-0 top-full z-10 mt-1 w-44 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg py-1 text-xs">
-                    <button wire:click="deleteConversation('{{ $c->id }}')" x-on:click="menuOpen = false"
-                            class="w-full text-left px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300">
-                        Delete
-                    </button>
-                    <button wire:click="forceDeleteConversation('{{ $c->id }}')"
-                            wire:confirm="Permanently delete this conversation? This cannot be undone."
-                            x-on:click="menuOpen = false"
-                            class="w-full text-left px-3 py-1.5 hover:bg-red-50 dark:hover:bg-red-900/30 text-red-600">
-                        Delete permanently
-                    </button>
-                </div>
+                <template x-teleport="body">
+                    <div x-show="menuOpen" x-cloak x-on:click.outside="menuOpen = false"
+                         x-bind:style="menuStyle"
+                         class="fixed z-50 w-44 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg py-1 text-xs">
+                        <button wire:click="deleteConversation('{{ $c->id }}')" x-on:click="menuOpen = false"
+                                class="w-full text-left px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300">
+                            Delete
+                        </button>
+                        <button wire:click="confirm('forceDeleteConversation', '{{ $c->id }}', 'Permanently delete this conversation? This cannot be undone.', 'Yes, delete permanently')"
+                                x-on:click="menuOpen = false"
+                                class="w-full text-left px-3 py-1.5 hover:bg-red-50 dark:hover:bg-red-900/30 text-red-600">
+                            Delete permanently
+                        </button>
+                    </div>
+                </template>
             </div>
             @empty
             <p class="text-xs text-slate-400 px-3">No conversations yet.</p>

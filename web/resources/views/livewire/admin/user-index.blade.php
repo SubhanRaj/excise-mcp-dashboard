@@ -53,7 +53,7 @@
                             </button>
                             @endif
                             @if($user->id !== auth()->id())
-                            <button wire:click="delete('{{ $user->id }}')" wire:confirm="Deactivate {{ $user->name }}'s account?" class="p-1.5 hover:text-red-600" title="Deactivate">
+                            <button wire:click="confirm('delete', '{{ $user->id }}', 'Deactivate {{ $user->name }}\'s account?', 'Yes, deactivate')" class="p-1.5 hover:text-red-600" title="Deactivate">
                                 <i class="ti ti-trash"></i>
                             </button>
                             @endif

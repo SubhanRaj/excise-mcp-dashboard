@@ -2,6 +2,7 @@
 
 namespace App\Livewire\Admin;
 
+use App\Livewire\Concerns\ConfirmsWithSweetAlert;
 use App\Models\KbUpload;
 use App\Services\OrchestratorClient;
 use Illuminate\Http\Client\ConnectionException;
@@ -16,7 +17,7 @@ use Livewire\WithPagination;
 
 class KnowledgeBaseIndex extends Component
 {
-    use WithFileUploads, WithPagination;
+    use ConfirmsWithSweetAlert, WithFileUploads, WithPagination;
 
     #[Validate('nullable|file|extensions:md|max:2048')]
     public $file = null;

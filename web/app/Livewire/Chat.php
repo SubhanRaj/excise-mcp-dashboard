@@ -2,6 +2,7 @@
 
 namespace App\Livewire;
 
+use App\Livewire\Concerns\ConfirmsWithSweetAlert;
 use App\Models\ChartArtifact;
 use App\Models\Conversation;
 use App\Models\MessageToolCall;
@@ -15,6 +16,8 @@ use Livewire\Component;
 
 class Chat extends Component
 {
+    use ConfirmsWithSweetAlert;
+
     public ?string $conversationId = null;
 
     public string $message = '';

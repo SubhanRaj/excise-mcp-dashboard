@@ -3,6 +3,7 @@
 namespace App\Livewire;
 
 use App\Jobs\RunExciseQuery;
+use App\Livewire\Concerns\ConfirmsWithSweetAlert;
 use App\Models\ChartArtifact;
 use App\Models\Query;
 use App\Models\QueryFeedback;
@@ -14,6 +15,8 @@ use Livewire\Component;
 
 class Ask extends Component
 {
+    use ConfirmsWithSweetAlert;
+
     public string $prompt = '';
 
     public ?string $activeQueryId = null;

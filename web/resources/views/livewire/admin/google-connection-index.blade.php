@@ -30,7 +30,7 @@
                         @endif
                     </td>
                     <td class="px-4 py-3 text-right">
-                        <button wire:click="disconnect('{{ $connection->id }}')" wire:confirm="Disconnect {{ $connection->email }}?"
+                        <button wire:click="confirm('disconnect', '{{ $connection->id }}', 'Disconnect {{ $connection->email }}?', 'Yes, disconnect')"
                                 class="text-slate-400 hover:text-red-600 p-1.5" title="Disconnect">
                             <i class="ti ti-plug-connected-x"></i>
                         </button>

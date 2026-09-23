@@ -2,6 +2,7 @@
 
 namespace App\Livewire\Admin;
 
+use App\Livewire\Concerns\ConfirmsWithSweetAlert;
 use App\Mail\AccountOnboarding;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
@@ -14,7 +15,7 @@ use Livewire\WithPagination;
 
 class UserIndex extends Component
 {
-    use WithPagination;
+    use ConfirmsWithSweetAlert, WithPagination;
 
     public string $search = '';
 
