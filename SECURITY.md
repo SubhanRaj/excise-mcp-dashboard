@@ -454,7 +454,7 @@ and `Analyst` (ask questions, see own ledger, export). The full shape —
 `role` + `privileges` JSON + `designation_id` (FK to a `designations` preset
 table) + a free-text `post` column — is ported from the pattern
 `excise-budget-tracker`, `UP-excise-mailer`, and `upexcise-stats-dashboard`
-converged on independently, trimmed to this app's two roles and five
+converged on independently, trimmed to this app's two roles and seven
 privileges (`web/plan/webui.md` §6 has the full design and the seeded
 designation data). A `designations.default_privileges` preset is copied onto
 `users.privileges` at account creation, not live-linked — editing a user's
@@ -533,6 +533,14 @@ Admin included, the moment the environment stopped reading as `local`.
 - The orchestrator refuses any `/query` or `/chat` call whose bearer token
   does not match `ORCH_BEARER_TOKEN` (constant-time compare), logs the
   request-id, and never logs the token or the DB password.
+- `web/`'s `GET /api/schema-notes` runs the opposite direction — the
+  orchestrator calling into web/, to read the data dictionary's admin-edited
+  schema notes (`DATA_PIPELINE.md` §Row visibility for the AI path) — behind
+  `VerifyOrchestratorToken`, a constant-time compare against the same shared
+  `ORCH_BEARER_TOKEN` / `ORCHESTRATOR_TOKEN` value the outbound direction
+  already uses. A blank request token never reaches the comparison — it's
+  rejected outright first, so a misconfigured empty token on either side
+  fails closed instead of matching by accident.
 - Chat rendering: assistant Markdown is rendered client-side with output
   sanitised (no raw HTML passthrough); a fenced code block is display-only,
   never executed in the browser. Retrieved knowledge snippets are shown as

@@ -31,7 +31,7 @@
         </a>
 
         @auth
-        @if(auth()->user()->isAdmin() || auth()->user()->hasPrivilege('google.manage') || auth()->user()->hasPrivilege('kb.manage') || auth()->user()->hasPrivilege('users.manage') || auth()->user()->hasPrivilege('activity-logs.view') || auth()->user()->hasPrivilege('system.monitor') || auth()->user()->hasPrivilege('etl.view'))
+        @if(auth()->user()->isAdmin() || auth()->user()->hasPrivilege('google.manage') || auth()->user()->hasPrivilege('kb.manage') || auth()->user()->hasPrivilege('users.manage') || auth()->user()->hasPrivilege('activity-logs.view') || auth()->user()->hasPrivilege('system.monitor') || auth()->user()->hasPrivilege('etl.view') || auth()->user()->hasPrivilege('schema.manage'))
         <span class="nav-section-label">Admin</span>
         @endif
 
@@ -80,6 +80,14 @@
            class="nav-link {{ request()->routeIs('admin.etl.*') ? 'nav-link-active' : 'nav-link-idle' }}">
             <i class="ti ti-refresh w-5 text-center text-base flex-shrink-0"></i>
             <span class="sidebar-text">ETL runs</span>
+        </a>
+        @endif
+
+        @if(auth()->user()->isAdmin() || auth()->user()->hasPrivilege('schema.manage'))
+        <a href="{{ route('admin.schema.index') }}" wire:navigate data-tooltip="Data dictionary"
+           class="nav-link {{ request()->routeIs('admin.schema.*') ? 'nav-link-active' : 'nav-link-idle' }}">
+            <i class="ti ti-database-cog w-5 text-center text-base flex-shrink-0"></i>
+            <span class="sidebar-text">Data dictionary</span>
         </a>
         @endif
 

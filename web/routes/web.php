@@ -12,6 +12,7 @@ use App\Livewire\Admin\ActivityLogIndex;
 use App\Livewire\Admin\EtlRunsIndex;
 use App\Livewire\Admin\GoogleConnectionIndex;
 use App\Livewire\Admin\KnowledgeBaseIndex;
+use App\Livewire\Admin\SchemaNotesIndex;
 use App\Livewire\Admin\SystemHealth;
 use App\Livewire\Admin\UserForm;
 use App\Livewire\Admin\UserIndex;
@@ -105,6 +106,10 @@ Route::middleware('auth')->group(function () {
 
         Route::middleware('privilege:etl.view')->prefix('etl')->name('etl.')->group(function () {
             Route::get('/', EtlRunsIndex::class)->name('index');
+        });
+
+        Route::middleware('privilege:schema.manage')->prefix('schema')->name('schema.')->group(function () {
+            Route::get('/', SchemaNotesIndex::class)->name('index');
         });
     });
 

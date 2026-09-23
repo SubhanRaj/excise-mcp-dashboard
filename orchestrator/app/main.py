@@ -52,10 +52,12 @@ from app.schemas import (
     QuarantineResponse,
     QueryRequest,
     QueryResponse,
+    SchemaSampleResponse,
+    SchemaTablesResponse,
     Stage,
 )
 from app.sql.runner import close_pool, get_pool
-from app.sql.schema_card import render_schema_card
+from app.sql.schema_card import list_schema_tables, render_schema_card, sample_table
 
 # CLAUDE.md's Python conventions call for "structlog to stdout as JSON lines" — this was
 # never actually configured, so it ran on structlog's plain-text defaults instead. journald
@@ -103,7 +105,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     ctx = AppContext(http_client=http_client, ollama=ollama)
     try:
         ctx.pool = await get_pool()
-        ctx.schema_card = await render_schema_card(ctx.pool)
+        ctx.schema_card = await render_schema_card(ctx.pool, ctx.http_client)
     except Exception as e:  # noqa: BLE001 — startup must not crash if Postgres isn't up yet
         logger.warning("postgres unavailable at startup, will retry per-request", error=str(e))
     try:
@@ -130,7 +132,7 @@ async def _ensure_ready(ctx: AppContext) -> None:
         return
     try:
         ctx.pool = await get_pool()
-        ctx.schema_card = await render_schema_card(ctx.pool)
+        ctx.schema_card = await render_schema_card(ctx.pool, ctx.http_client)
     except Exception as e:
         raise PostgresUnavailableError(str(e)) from e
 
@@ -207,6 +209,26 @@ async def etl_quarantine(
     await _ensure_ready(_ctx())
     rows, total = await list_quarantine(page, per_page, run_id)
     return QuarantineResponse(rows=rows, total=total)
+
+
+@app.get("/schema/tables", dependencies=[Depends(require_bearer_token)])
+async def schema_tables() -> SchemaTablesResponse:
+    ctx = _ctx()
+    await _ensure_ready(ctx)
+    assert ctx.pool is not None
+    return SchemaTablesResponse(tables=await list_schema_tables(ctx.pool, ctx.http_client))
+
+
+@app.get("/schema/tables/{table_name}/sample", dependencies=[Depends(require_bearer_token)])
+async def schema_table_sample(table_name: str) -> SchemaSampleResponse:
+    ctx = _ctx()
+    await _ensure_ready(ctx)
+    assert ctx.pool is not None
+    try:
+        rows = await sample_table(ctx.pool, table_name)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    return SchemaSampleResponse(rows=rows)
 
 
 @app.post("/query", dependencies=[Depends(require_bearer_token)])

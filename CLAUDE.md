@@ -631,6 +631,29 @@ into a `flasher:render` browser event never fires under it; the test for
 `confirm()` itself uses a plain object with the trait instead, sidestepping
 that gap rather than working around it.
 
+An admin data dictionary followed a request to make it easier to tell the SQL-planning
+model what a table or column actually means, and to see the schema itself from the UI.
+`schema_card.py`'s `VIEW_NOTES` already carried this kind of note, but as a fixed
+table-level dict in the orchestrator's own source — changing one meant a code change and
+a restart, and there was no per-column equivalent at all. Admin -> Data dictionary
+(`schema.manage`) now lists every `analytics.*` table and column from a new
+`GET /schema/tables` (the orchestrator's own read-only introspection of
+`information_schema.columns`, the same query `render_schema_card` already ran), with an
+editable note per table and per column. A note is saved to web/'s own `schema_notes`
+table, since web/ has no Postgres connection of its own to write anywhere else. The
+orchestrator reads them back over a new `GET /api/schema-notes` on web/ — every earlier
+orchestrator/web/ call has run from web/ into the orchestrator, so this is the first one
+running the opposite direction — gated by the same shared bearer token web/'s
+`OrchestratorClient` already sends outbound, and
+merged into `VIEW_NOTES` at the next `render_schema_card` call (`schema_card.py`'s
+`fetch_note_overrides`). web/ being unreachable or the table empty degrades to `VIEW_NOTES`
+alone, not a startup failure. "See the database" is `GET /schema/tables/{name}/sample`,
+five rows from the named view — `table_name` is checked against `information_schema.tables`
+first, so only a name that already exists in the schema this endpoint just listed can ever
+reach the interpolated query after it. Notes reach the model only on the orchestrator's
+next start; `OPERATOR_SETUP.md`'s existing restart-after-a-code-change guidance covers this
+the same way it covers `VIEW_NOTES` itself.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures

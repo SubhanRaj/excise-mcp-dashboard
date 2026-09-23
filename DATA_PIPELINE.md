@@ -405,6 +405,18 @@ the `id` columns are still present for joins but the natural-language layer
 works in district names and FY labels. `SECURITY.md` §Read-only role grants
 `SELECT` on `analytics.*` and nothing else.
 
+What the model is told about each view has two sources: `schema_card.py`'s own
+`VIEW_NOTES`, a fixed dict in the orchestrator's source, and an admin-editable
+overlay — the data dictionary (Admin -> Data dictionary, privilege
+`schema.manage`), one note per table and, unlike `VIEW_NOTES`, one per column
+too. A note there is saved to web/'s own `schema_notes` table and read back by
+the orchestrator over `GET /api/schema-notes` (`MCP_ENGINES.md` §HTTP surface,
+`SECURITY.md` §3), taking effect on the orchestrator's next restart. The same
+screen lists every table's columns and a five-row sample of each, from the
+orchestrator's own `GET /schema/tables` and `GET /schema/tables/{name}/sample`
+— the same route `web/` uses everywhere else it needs something out of
+Postgres, since `web/` holds no database connection of its own.
+
 ### BI access (future — Power BI and similar, not built)
 
 `analytics.*` and `kb.*` are the entire surface any read-only consumer ever

@@ -476,6 +476,15 @@ the detail and the reasoning behind each decision below.
       §3 has the reasoning) — `telescope:prune` is scheduled but needs a
       `schedule:run` cron entry that doesn't exist on this box yet
       (`OPERATOR_SETUP.md` §Monitoring)
+- [x] Data dictionary (Admin -> Data dictionary, privilege `schema.manage`,
+      also not part of the original Phase 4 admin set): every `analytics.*`
+      table and column, from a new orchestrator `GET /schema/tables`, with an
+      admin-editable note per table and per column and a five-row sample per
+      table (`GET /schema/tables/{name}/sample`). A note is stored in `web/`'s
+      own new `schema_notes` table and read back into the SQL-planning
+      prompt by the orchestrator's own `GET /api/schema-notes` call into
+      `web/` — the first HTTP call in this app running that direction
+      (`DATA_PIPELINE.md` §Row visibility for the AI path, `SECURITY.md` §3).
 - [x] `deploy/`: Apache vhost on `127.0.0.1:8084`, `DocumentRoot web/public`;
       owner runs `OPERATOR_SETUP.md` §Apache (append `ReadWritePaths`, incl.
       the `kb-uploads` disk path) — done ahead of schedule via

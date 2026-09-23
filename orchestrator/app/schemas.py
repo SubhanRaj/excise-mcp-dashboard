@@ -143,6 +143,26 @@ class QuarantineResponse(BaseModel):
     total: int
 
 
+class SchemaColumn(BaseModel):
+    name: str
+    data_type: str
+    note: str | None = None
+
+
+class SchemaTable(BaseModel):
+    name: str
+    note: str | None = None
+    columns: list[SchemaColumn]
+
+
+class SchemaTablesResponse(BaseModel):
+    tables: list[SchemaTable]
+
+
+class SchemaSampleResponse(BaseModel):
+    rows: list[dict[str, str | None]]
+
+
 class QueryResponse(BaseModel):
     request_id: str
     sql: str

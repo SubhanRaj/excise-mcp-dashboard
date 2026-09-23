@@ -1,8 +1,13 @@
-"""Renders analytics.* into the prompt schema card handed to plan_sql.
-DATA_PIPELINE.md §Row visibility for the AI path.
+"""Renders analytics.* into the prompt schema card handed to plan_sql, and backs the
+admin data-dictionary screen's GET /schema/tables and GET /schema/tables/{name}/sample
+(CLAUDE.md §Data dictionary). DATA_PIPELINE.md §Row visibility for the AI path.
 """
 
 import asyncpg
+import httpx
+
+from app.config import settings
+from app.schemas import SchemaColumn, SchemaTable
 
 # One line of business context per view, keyed by table_name. Not every view
 # needs one — a missing entry just renders without a description line.
@@ -67,18 +72,96 @@ ORDER BY table_name, ordinal_position
 """
 
 
-async def render_schema_card(pool: asyncpg.Pool) -> str:
-    rows = await pool.fetch(_SCHEMA_QUERY)
-    tables: dict[str, list[tuple[str, str]]] = {}
+async def fetch_note_overrides(
+    http_client: httpx.AsyncClient,
+) -> tuple[dict[str, str], dict[str, dict[str, str]]]:
+    """Admin-edited notes from web/'s schema_notes table (GET /api/schema-notes), split
+    into table-level overrides (of VIEW_NOTES) and per-column notes (VIEW_NOTES has no
+    per-column granularity of its own). web/ unset, unreachable, or empty -> no
+    overrides, not an error — this is optional prompt enrichment, not required data.
+    """
+    if not settings.web_base_url:
+        return {}, {}
+    try:
+        response = await http_client.get(
+            f"{settings.web_base_url}/api/schema-notes",
+            headers={"Authorization": f"Bearer {settings.orch_bearer_token}"},
+            timeout=5,
+        )
+        response.raise_for_status()
+        rows = response.json()
+    except (httpx.HTTPError, ValueError):
+        return {}, {}
+
+    table_notes: dict[str, str] = {}
+    column_notes: dict[str, dict[str, str]] = {}
     for row in rows:
-        tables.setdefault(row["table_name"], []).append((row["column_name"], row["data_type"]))
+        if row["column_name"]:
+            column_notes.setdefault(row["table_name"], {})[row["column_name"]] = row["note"]
+        else:
+            table_notes[row["table_name"]] = row["note"]
+    return table_notes, column_notes
+
+
+async def list_schema_tables(
+    pool: asyncpg.Pool, http_client: httpx.AsyncClient
+) -> list[SchemaTable]:
+    table_notes, column_notes = await fetch_note_overrides(http_client)
+    rows = await pool.fetch(_SCHEMA_QUERY)
+
+    tables: dict[str, list[SchemaColumn]] = {}
+    for row in rows:
+        table_name = row["table_name"]
+        tables.setdefault(table_name, []).append(
+            SchemaColumn(
+                name=row["column_name"],
+                data_type=row["data_type"],
+                note=column_notes.get(table_name, {}).get(row["column_name"]),
+            )
+        )
+
+    return [
+        SchemaTable(
+            name=table_name,
+            note=table_notes.get(table_name, VIEW_NOTES.get(table_name)),
+            columns=columns,
+        )
+        for table_name, columns in sorted(tables.items())
+    ]
+
+
+async def sample_table(
+    pool: asyncpg.Pool, table_name: str, limit: int = 5
+) -> list[dict[str, str | None]]:
+    """A handful of rows from one analytics.* view, for the data-dictionary screen's
+    "see the data" panel. table_name must exactly match a real information_schema entry
+    first — that check is what makes it safe to interpolate straight into the query
+    after, since it can only ever match a table this schema genuinely has.
+    """
+    is_real_table = await pool.fetchval(
+        "SELECT count(*) > 0 FROM information_schema.tables "
+        "WHERE table_schema = 'analytics' AND table_name = $1",
+        table_name,
+    )
+    if not is_real_table:
+        raise ValueError(f"unknown table: {table_name}")
+
+    rows = await pool.fetch(f'SELECT * FROM analytics."{table_name}" LIMIT {limit}')
+    return [
+        {key: str(value) if value is not None else None for key, value in r.items()} for r in rows
+    ]
+
+
+async def render_schema_card(pool: asyncpg.Pool, http_client: httpx.AsyncClient) -> str:
+    tables = await list_schema_tables(pool, http_client)
 
     lines = ["Schema: analytics (the only schema you may query, SELECT only)", ""]
-    for table_name, columns in sorted(tables.items()):
-        note = VIEW_NOTES.get(table_name)
-        header = f"analytics.{table_name}" + (f" — {note}" if note else "")
+    for table in tables:
+        header = f"analytics.{table.name}" + (f" — {table.note}" if table.note else "")
         lines.append(header)
-        col_list = ", ".join(f"{name} {dtype}" for name, dtype in columns)
+        col_list = ", ".join(
+            f"{c.name} {c.data_type}" + (f" ({c.note})" if c.note else "") for c in table.columns
+        )
         lines.append(f"  {col_list}")
         lines.append("")
     return "\n".join(lines)

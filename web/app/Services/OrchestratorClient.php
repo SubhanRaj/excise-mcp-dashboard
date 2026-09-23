@@ -181,6 +181,26 @@ class OrchestratorClient
     }
 
     /**
+     * @return array<int, array<string, mixed>>
+     *
+     * @throws ConnectionException|RequestException
+     */
+    public function schemaTables(): array
+    {
+        return $this->request()->get('/schema/tables')->throw()->json('tables', []);
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     *
+     * @throws ConnectionException|RequestException
+     */
+    public function schemaSample(string $table): array
+    {
+        return $this->request()->get("/schema/tables/{$table}/sample")->throw()->json('rows', []);
+    }
+
+    /**
      * @param  array<string, mixed>  $spec
      *
      * @throws ConnectionException|RequestException

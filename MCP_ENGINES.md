@@ -48,7 +48,9 @@ orchestrator/
     sql/
       guard.py         "single read-only SELECT/WITH" parser + checks
       runner.py        asyncpg pool, READ ONLY txn, statement timeout
-      schema_card.py   renders analytics.* views into the prompt schema description
+      schema_card.py   renders analytics.* views into the prompt schema description;
+                       also backs GET /schema/tables and .../sample, and pulls
+                       admin-edited notes from web/ into the schema description
     kb/
       retrieve.py      FTS query over kb.chunks (+ pgvector path when enabled)
       embed.py         local Ollama embed model client (only when KB_EMBEDDINGS_ENABLED)
@@ -82,12 +84,20 @@ orchestrator/
 | `POST` | `/chart/render` | `ChartRenderRequest` (`spec`: a Plotly figure dict, `format`: `png`/`svg`/`pdf`) | the rasterized bytes, correct `Content-Type` — rasterizes an already-produced figure through `get_static_renderer()` (`engines/static_render.py`), the same persistent-browser renderer the sandboxed render step uses; no LLM-authored code runs on this path |
 | `GET` | `/etl/runs` | — (paginated: `?page`) | `{runs: [...], total}` — `etl.ingestion_runs` rows for the admin ETL visibility screen |
 | `GET` | `/etl/quarantine` | — (paginated: `?page`, optional `?run_id`) | `{rows: [...], total}` — `etl.quarantine` rows, optionally filtered to one run |
+| `GET` | `/schema/tables` | — | `{tables: [...]}` — every `analytics.*` table/view and its columns, each carrying its current note (`VIEW_NOTES`, an admin's own edit, or none) for the data-dictionary screen |
+| `GET` | `/schema/tables/{name}/sample` | — | `{rows: [...]}` — five rows from the named table; 404 if `name` isn't a real `analytics.*` table |
 
 Both `/query` and `/chat` require the bearer token. `/query` is the one-shot
 analytical form (question in, chart + table + SQL + summary out). `/chat` is
 the free-form conversation where the model decides which tools to call.
-`/chart/render`, `/etl/runs`, and `/etl/quarantine` are also bearer-gated;
-none of the three touches an LLM.
+`/chart/render`, `/etl/runs`, `/etl/quarantine`, `/schema/tables`, and
+`/schema/tables/{name}/sample` are also bearer-gated; none of them touches an
+LLM.
+
+The orchestrator also calls outward to `web/`'s own `GET /api/schema-notes`
+(§`sql/schema_card.py` below), gated by the same shared bearer token the
+other direction uses (`SECURITY.md` §3) — the one HTTP call in this app that
+runs from the orchestrator into web/.
 
 `QueryRequest`:
 
@@ -292,6 +302,8 @@ SANDBOX_WALLCLOCK_SECONDS   15
 SANDBOX_MEMORY_MB           1024
 QUERY_ROW_LIMIT_DEFAULT     5000
 STATEMENT_TIMEOUT           10s
+WEB_BASE_URL                 http://127.0.0.1:8084   (empty disables the data-dictionary
+                                                       notes fetch, not a startup error)
 ```
 
 ## Chat and retrieval

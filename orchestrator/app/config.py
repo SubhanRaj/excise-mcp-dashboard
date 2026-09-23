@@ -39,6 +39,13 @@ class Settings(BaseSettings):
     query_row_limit_default: int = 5000
     statement_timeout: str = "10s"
 
+    # web/'s own base URL, for the one call that runs the opposite direction of every
+    # other orchestrator<->web/ request: pulling admin-edited schema notes
+    # (schema_card.py's fetch_note_overrides) from web/'s GET /api/schema-notes, using
+    # the same ORCH_BEARER_TOKEN both sides already share. Empty disables it — no
+    # overrides, not a startup failure (schema_card.py falls back to VIEW_NOTES alone).
+    web_base_url: str = ""
+
     # MCP_ENGINES.md §3/§4 — both engines are documented stubs with no MATLAB
     # licence / matlab-mcp-server or Wolfram Engine installed on this box.
     # is_available() is always False regardless of this flag; it only gates
