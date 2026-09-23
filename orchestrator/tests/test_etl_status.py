@@ -3,9 +3,7 @@ local Postgres — behind GET /etl/runs and GET /etl/quarantine (ROADMAP.md
 Milestone 5's admin ETL visibility screen).
 
 Needs excise_ro granted USAGE + SELECT on schema etl (db/roles.sql,
-OPERATOR_SETUP.md §Data bank) — these tests fail with a permission error
-until that pending grant is applied, the same gap db/kb_indexes.sql had
-before its own operator step ran.
+OPERATOR_SETUP.md §Data bank).
 """
 
 import re
@@ -62,6 +60,10 @@ async def seeded_runs() -> AsyncIterator[list[int]]:
         )
         yield ids
     finally:
+        # etl.quarantine.run_id has no ON DELETE CASCADE — a real ingestion run's audit
+        # trail should not vanish just because the run row is deleted — so the fixture's
+        # own quarantine row must go first or this violates the FK.
+        await conn.execute("DELETE FROM etl.quarantine WHERE run_id = ANY($1::bigint[])", ids)
         await conn.execute("DELETE FROM etl.ingestion_runs WHERE id = ANY($1::bigint[])", ids)
         await conn.close()
 

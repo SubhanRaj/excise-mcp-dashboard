@@ -487,6 +487,19 @@ as interrupted before the correction ever arrived. The guessed SQL now
 streams live and the correction follows right after it — a moment of a
 wrong-looking answer costs less than the connection itself.
 
+The fourth shape's own fallback had a gap of its own: it only fired when
+`last_tool_result` was already set, which is only true once a tool call has
+actually happened in the turn. A live chat question about the excise policy
+never called `search_knowledge` at all — the model tried to answer directly
+— and both the tool-aware attempt and the `tools=[]` retry came back
+degenerate. With no tool result to check against, the fallback's guard
+condition was always false, and the turn ended on a `DoneEvent` with not a
+single character ever streamed: an empty persisted message, no tool calls,
+no error anywhere, indistinguishable from the app simply hanging. The
+fallback now fires on any double-degenerate turn regardless of whether a
+tool was ever called, falling back to a plain retry prompt when there is no
+tool result to reference instead of the tool-failure message.
+
 Past the model's own tool-calling reliability, two gaps sat on the
 orchestrator's own side of the contract, both in `make_chart` specifically.
 `MakeChartArgs` used to also require `data_ref`, checked against

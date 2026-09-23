@@ -37,9 +37,9 @@ piece, the customization panel, is also built. **Milestone 5's checklist is
 now fully checked off** — money formatting, chart PNG/SVG/PDF export, the
 query ledger view, and the admin ETL visibility screen are all built,
 closing out the four items this file previously listed as not built. The
-ETL screen needs one pending grant (`excise_ro` read on schema `etl`,
-`OPERATOR_SETUP.md` §Data bank) applied to this box's already-provisioned
-database before it shows real data; every other item is live. **Milestone 6
+ETL screen's one pending grant (`excise_ro` read on schema `etl`,
+`OPERATOR_SETUP.md` §Data bank) has run — confirmed live, the screen shows
+real ingestion runs — so every item is live. **Milestone 6
 — perimeter, hardening, end-to-end — is next.**
 
 Every `sudo` / install / external-console step is collected, copy-pasteable,
@@ -461,12 +461,10 @@ the detail and the reasoning behind each decision below.
       "Knowledge base" (upload `.md`, browse the ingested corpus via the new
       orchestrator `GET /kb/documents` — paginated, no ranking, alongside the
       existing ranked `/kb/search` — withdraw an upload — built); a read-only
-      view of `etl.ingestion_runs` / `etl.quarantine` is built
-      (`/admin/etl`, privilege `etl.view`, a new `GET /etl/runs` and
-      `GET /etl/quarantine`) but not yet live — it needs `excise_ro` granted
-      read on schema `etl`, which `db/roles.sql` now includes but this box's
-      already-provisioned database hasn't received yet
-      (`OPERATOR_SETUP.md` §Data bank has the pending grant)
+      view of `etl.ingestion_runs` / `etl.quarantine` is built and live
+      (`/admin/etl`, privilege `etl.view`, `GET /etl/runs` and
+      `GET /etl/quarantine`) — `excise_ro`'s grant on schema `etl`
+      (`OPERATOR_SETUP.md` §Data bank) has been applied to this box
 - [x] System health (Admin -> System health, privilege `system.monitor`,
       not part of the original Phase 4 admin set): orchestrator reachability,
       queue depth, server vitals, recent error counts, and AI usage by model
@@ -544,9 +542,8 @@ the detail and the reasoning behind each decision below.
       (`tests/Feature/ChartExportTest.php`, against a mocked orchestrator).
       `etl_status.py`'s `list_ingestion_runs()` / `list_quarantine()` are
       tested the same way `kb/retrieve.py`'s `list_documents()` already is —
-      against the real local Postgres — and currently fail with a permission
-      error until the pending `etl` schema grant above lands
-      (`orchestrator/tests/test_etl_status.py`)
+      against the real local Postgres, now that the `etl` schema grant has
+      landed (`orchestrator/tests/test_etl_status.py`)
 - [x] query ledger: an Analyst sees only their own queries, an Admin sees
       every query, search filters by prompt, an unauthenticated request
       redirects to `/login` (`tests/Feature/QueryLedgerTest.php`)

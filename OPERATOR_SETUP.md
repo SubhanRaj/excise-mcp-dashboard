@@ -201,15 +201,15 @@ PGPASSWORD='CHANGE_ME_ro' psql -h 127.0.0.1 -U excise_ro -d excise_bank -c \
 PGPASSWORD='CHANGE_ME_ro' psql -h 127.0.0.1 -U excise_ro -d excise_bank -c \
   "select * from public.revenues;"                    # ERROR: permission denied for table revenues
 PGPASSWORD='CHANGE_ME_ro' psql -h 127.0.0.1 -U excise_ro -d excise_bank -c \
-  "select * from etl.ingestion_runs;"
-                          # works once §Data bank grant below runs; ERROR: permission
-                          # denied for schema etl until it does
+  "select * from etl.ingestion_runs;"                  # works
 ```
 
-**Pending — grant `excise_ro` read on `etl.*`** (Milestone 5's admin ETL
-visibility screen; `db/roles.sql` now includes this, but the box was already
+**Grant `excise_ro` read on `etl.*`** (Milestone 5's admin ETL visibility
+screen; `db/roles.sql` now includes this, but the box was already
 provisioned from an earlier run of it, and re-running the whole file would
-fail on `CREATE ROLE excise_ro` already existing — apply just the new grant):
+fail on `CREATE ROLE excise_ro` already existing — apply just the new grant).
+Applied and confirmed live — `excise_ro` reads `etl.*` and `/admin/etl`
+shows real ingestion runs instead of its fallback banner:
 
 ```bash
 sudo -u postgres psql -d excise_bank -c \

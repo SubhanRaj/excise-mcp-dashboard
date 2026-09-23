@@ -840,6 +840,26 @@ in scope); the twelve already-synced other-state documents went through the
 sync's existing withdrawal path, the same one an unpublished or deleted
 upstream document already used, rather than a direct delete.
 
+The pending `excise_ro` grant on schema `etl` (above, Milestone 5's admin
+ETL screen) has run — confirmed live, `excise_ro` now reads `etl.*` and the
+`/admin/etl` screen shows real ingestion runs instead of its fallback
+banner.
+
+A live report of a chat question about the excise policy going silent
+traced to a fifth shape of the tool-calling degenerate-reply gap
+(`MCP_ENGINES.md` §Tools), past what the fourth shape's own fallback
+already covered. That fallback only fired once `last_tool_result` was set —
+true only after a tool call has actually happened in the turn — but this
+question never called `search_knowledge` at all: the model tried answering
+directly, and both the tool-aware attempt and the `tools=[]` retry came
+back degenerate with no tool ever dispatched. The guard condition was
+always false in that case, so the turn ended on a `DoneEvent` with not one
+character streamed — an empty persisted message, zero tool calls, no error
+anywhere, indistinguishable from the app hanging. `chat/loop.py`'s fallback
+now fires on any double-degenerate turn regardless of whether a tool was
+ever called, falling back to a plain retry prompt when there is no tool
+result to reference.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures
