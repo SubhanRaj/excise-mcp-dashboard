@@ -444,6 +444,19 @@ directly, and say plainly that a shop's own category is never `FL2`/`CL2` —
 those two are `kind = 'wholesale'` and only ever belong to
 `dispatches.wholesale_license_type`.
 
+A live Chat answer read out shop categories by bare code only (`CL5C`,
+`FL5DB`, `FL4A`, ...) with no plain-language name alongside any of them — a
+reader who doesn't already know the code list gets nothing from it. The chat
+model only ever sees `run_sql_query`'s own row preview, never the schema
+card, so asking it to name a code from memory would just be a guessed name —
+the fix belongs in the query, not the prompt. `llm/prompts.py`'s
+`FEW_SHOT_SQL_EXAMPLES` now has a worked example joining
+`analytics.license_categories` in by code to select its `name` alongside a
+`retail_license_category` grouping, and the `dispatches` `VIEW_NOTES` entry
+says to do this whenever the answer will show shop categories to a reader.
+`CHAT_SYSTEM_PROMPT` tells the model to use the name column the result
+already carries, never to invent one for a code the result didn't name.
+
 ### BI access (future — Power BI and similar, not built)
 
 `analytics.*` and `kb.*` are the entire surface any read-only consumer ever

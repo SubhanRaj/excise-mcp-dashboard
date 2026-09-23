@@ -77,6 +77,21 @@ FEW_SHOT_SQL_EXAMPLES: list[dict[str, str]] = [
         "AND EXTRACT(MONTH FROM transport_pass_issued_at) = 8 "
         "AND EXTRACT(YEAR FROM transport_pass_issued_at) = 2026 LIMIT 100;",
     },
+    {
+        # A bare code (CL5C, FL4A, FL5DB, ...) means nothing to a reader who hasn't
+        # memorized analytics.license_categories — join it in by name whenever a
+        # question groups or filters by a shop's license category, so the row itself
+        # carries the plain-language type instead of asking the summarizing step to
+        # recall or guess it.
+        "question": "What was the dispatched volume by shop category in Lucknow in August 2026?",
+        "sql": "SELECT d.retail_license_category, lc.name AS category_name, "
+        "SUM(d.dispatched_bulk_litres) AS total_bl FROM analytics.dispatches d "
+        "JOIN analytics.license_categories lc ON lc.code = d.retail_license_category "
+        "WHERE d.district = 'Lucknow' "
+        "AND EXTRACT(MONTH FROM d.transport_pass_issued_at) = 8 "
+        "AND EXTRACT(YEAR FROM d.transport_pass_issued_at) = 2026 "
+        "GROUP BY d.retail_license_category, lc.name ORDER BY total_bl DESC LIMIT 100;",
+    },
 ]
 
 

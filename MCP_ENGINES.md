@@ -500,6 +500,14 @@ fallback now fires on any double-degenerate turn regardless of whether a
 tool was ever called, falling back to a plain retry prompt when there is no
 tool result to reference instead of the tool-failure message.
 
+A sixth shape surfaced the same underlying weakness from the opposite
+direction: a real `run_sql_query` call succeeded, but the follow-up answer
+wrote "here is a chart showing..." with no `make_chart` call ever made — the
+model narrated a chart into existence instead of producing one, leaving the
+user looking at prose that refers to nothing on the page.
+`CHAT_SYSTEM_PROMPT` now says directly not to describe or refer to a chart
+unless `make_chart` was actually called in that same turn.
+
 Past the model's own tool-calling reliability, two gaps sat on the
 orchestrator's own side of the contract, both in `make_chart` specifically.
 `MakeChartArgs` used to also require `data_ref`, checked against

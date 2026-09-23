@@ -76,7 +76,10 @@ VIEW_NOTES = {
         "DISTINCT shop_id, since one shop has many passes. duty_fee_inr is the amount and "
         "dispatched_bulk_litres/dispatched_cases/dispatched_bottles are the volume for a "
         "'sales in amount and volume' question scoped to a month or a shop category — this "
-        "is the only view with that combination at that granularity."
+        "is the only view with that combination at that granularity. When the answer "
+        "will show shop categories to a reader, JOIN analytics.license_categories ON "
+        "code = retail_license_category and SELECT its name too — a bare code like "
+        "FL4A means nothing on its own."
     ),
     "dispatch_strength_lines": (
         "per-strength breakdown of a country-liquor dispatch; one or more rows per "
