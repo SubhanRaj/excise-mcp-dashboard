@@ -350,14 +350,30 @@ Apache's `max_execution_time` or Cloudflare's idle-connection handling to
 end the request before a `done` or `error` line ever gets sent. `run_chat`
 runs `dispatch()` as a background task so the loop can keep yielding a
 `ping` every 15s while the call is still in flight.
-`OrchestratorClient::chatStream()`'s own Guzzle timeout is uncapped to
-match, with a 45s `read_timeout` on the same client as the actual
-dead-connection check. Reaching the browser needs one more piece: Apache's
-own `output_buffering` php.ini setting holds a flushed line in PHP's buffer
-until enough bytes accumulate, which silently defeats the heartbeat on the
-one hop (`web/` → Cloudflare → browser) it exists to protect.
-`deploy/apache-vhost.conf` sets `output_buffering 0` for this vhost so the
-pings actually leave the box (`OPERATOR_SETUP.md` §Apache PHP execution
+
+Getting a `ping` line to actually leave the box needed two separate fixes
+past the orchestrator's own side, both found by timing real event arrival
+end to end — "streams token by token" turned out to describe only the
+orchestrator's own output, not every hop the events cross after that.
+`web/`'s original relay used Laravel's `Http`
+facade with Guzzle's `stream => true` — every handler Guzzle has (curl, its
+PHP stream-wrapper fallback, with or without Laravel's own wrapping)
+buffered the *entire* orchestrator response and released it only once the
+connection closed, confirmed directly: a plain `curl` CLI call to the same
+endpoint streamed normally, no PHP variant of the same request did.
+`app/Services/CurlOrchestratorStream.php` replaces it with PHP's own curl
+extension driven directly — `CURLOPT_WRITEFUNCTION`, polled through
+`curl_multi_exec`, is the one mechanism that actually delivers each chunk
+as it lands on the socket, the same thing the curl binary itself uses.
+`OrchestratorClient::chatStream()` and `runQuery()` both go through it now
+(`OrchestratorStream`, an interface only because `Http::fake()` cannot
+intercept a raw curl call — a test binds `Tests\Support\FakeOrchestratorStream`
+in its place). Past that: Apache's own `output_buffering` php.ini setting
+holds a flushed line in PHP's buffer until enough bytes accumulate, which
+would have defeated the heartbeat on the one hop (`web/` → Cloudflare →
+browser) it exists to protect even with genuinely streamed input.
+`deploy/apache-vhost.conf` sets `output_buffering 0` for this vhost so nothing
+sits waiting for a buffer to fill (`OPERATOR_SETUP.md` §Apache PHP execution
 timeout).
 
 ### Tools (`chat/tools.py`)

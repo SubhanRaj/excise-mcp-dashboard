@@ -3,6 +3,8 @@
 namespace App\Providers;
 
 use App\Models\ActivityLog;
+use App\Services\CurlOrchestratorStream;
+use App\Services\OrchestratorStream;
 use Illuminate\Auth\Events\Login;
 use Illuminate\Auth\Events\Logout;
 use Illuminate\Cache\RateLimiting\Limit;
@@ -23,7 +25,7 @@ class AppServiceProvider extends ServiceProvider
 {
     public function register(): void
     {
-        //
+        $this->app->bind(OrchestratorStream::class, CurlOrchestratorStream::class);
     }
 
     public function boot(): void

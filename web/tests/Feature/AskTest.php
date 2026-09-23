@@ -8,10 +8,11 @@ use App\Models\ChartArtifact;
 use App\Models\Query;
 use App\Models\User;
 use App\Services\OrchestratorClient;
+use App\Services\OrchestratorStream;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Bus;
-use Illuminate\Support\Facades\Http;
 use Livewire\Livewire;
+use Tests\Support\FakeOrchestratorStream;
 use Tests\TestCase;
 
 class AskTest extends TestCase
@@ -87,28 +88,23 @@ class AskTest extends TestCase
         $user = User::factory()->create();
         $query = Query::create(['user_id' => $user->id, 'prompt' => 'test question', 'status' => 'pending']);
 
-        Http::fake([
-            '*/query' => Http::response(
-                $this->ndjson([
-                    ['stage' => ['name' => 'plan_sql', 'status' => 'ok']],
-                    ['stage' => ['name' => 'run_sql', 'status' => 'ok']],
-                    ['result' => [
-                        'request_id' => 'req-1',
-                        'sql' => 'SELECT 1',
-                        'row_count' => 1,
-                        'rows_preview' => [['count' => 1]],
-                        'chart' => ['plotly_json' => json_encode(['data' => [], 'layout' => []])],
-                        'summary' => 'There is 1 row.',
-                        'engine' => 'python',
-                        'model' => 'qwen2.5-coder',
-                        'timings_ms' => ['run_sql' => 12],
-                        'prompt_tokens' => 150,
-                        'completion_tokens' => 40,
-                    ]],
-                ]),
-                200,
-            ),
-        ]);
+        $this->app->instance(OrchestratorStream::class, new FakeOrchestratorStream([
+            ['stage' => ['name' => 'plan_sql', 'status' => 'ok']],
+            ['stage' => ['name' => 'run_sql', 'status' => 'ok']],
+            ['result' => [
+                'request_id' => 'req-1',
+                'sql' => 'SELECT 1',
+                'row_count' => 1,
+                'rows_preview' => [['count' => 1]],
+                'chart' => ['plotly_json' => json_encode(['data' => [], 'layout' => []])],
+                'summary' => 'There is 1 row.',
+                'engine' => 'python',
+                'model' => 'qwen2.5-coder',
+                'timings_ms' => ['run_sql' => 12],
+                'prompt_tokens' => 150,
+                'completion_tokens' => 40,
+            ]],
+        ]));
 
         (new RunExciseQuery($query->id))->handle(app(OrchestratorClient::class));
 
@@ -151,15 +147,10 @@ class AskTest extends TestCase
         $user = User::factory()->create();
         $query = Query::create(['user_id' => $user->id, 'prompt' => 'bad question', 'status' => 'pending']);
 
-        Http::fake([
-            '*/query' => Http::response(
-                $this->ndjson([
-                    ['stage' => ['name' => 'plan_sql', 'status' => 'running']],
-                    ['error' => 'the model produced invalid SQL', 'request_id' => 'req-2', 'stage' => 'guard_sql'],
-                ]),
-                200,
-            ),
-        ]);
+        $this->app->instance(OrchestratorStream::class, new FakeOrchestratorStream([
+            ['stage' => ['name' => 'plan_sql', 'status' => 'running']],
+            ['error' => 'the model produced invalid SQL', 'request_id' => 'req-2', 'stage' => 'guard_sql'],
+        ]));
 
         (new RunExciseQuery($query->id))->handle(app(OrchestratorClient::class));
 
@@ -227,13 +218,5 @@ class AskTest extends TestCase
 
         $this->assertDatabaseMissing('queries', ['id' => $query->id]);
         $this->assertDatabaseMissing('chart_artifacts', ['owner_id' => $query->id]);
-    }
-
-    /**
-     * @param  list<array<string, mixed>>  $events
-     */
-    private function ndjson(array $events): string
-    {
-        return implode("\n", array_map(fn (array $e) => json_encode($e), $events))."\n";
     }
 }

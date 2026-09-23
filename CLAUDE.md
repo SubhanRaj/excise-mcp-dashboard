@@ -673,6 +673,35 @@ PHP execution timeout), applied live with `sudo bash deploy/root-setup.sh` —
 the vhost and `/health` both confirmed the setting is live; the next
 compound question through the real tunnel URL is the actual test of it.
 
+That next question dropped the same way, on a fresh conversation — the
+`output_buffering` fix was real but not the actual blocker. Timing raw event
+arrival directly (a standalone script hitting the orchestrator with the
+exact code `OrchestratorClient::chatStream()` ran) showed every single
+event of a two-minute turn, pings included, landing at the same timestamp:
+the whole response arrived in one burst when the connection closed, never
+progressively. Guzzle's `stream => true` — the option the original
+implementation relied on for this, in every handler it has (curl, its PHP
+stream-wrapper fallback, with or without Laravel's own `Http` facade
+wrapping it) — buffered the entire orchestrator response before releasing
+any of it. A plain `curl` CLI call to the same endpoint streamed normally;
+no PHP variant of the identical request did.
+`app/Services/CurlOrchestratorStream.php` now drives PHP's own curl
+extension directly instead — `CURLOPT_WRITEFUNCTION`, polled through
+`curl_multi_exec`, delivers each chunk as it lands on the socket, the same
+mechanism the curl binary itself uses. `OrchestratorClient::chatStream()`
+and `runQuery()` (the same buffering bug sat in `/query`'s relay too, just
+less visible — `RunExciseQuery` is a queued job with a 300s total-duration
+cap, not a live browser connection with a heartbeat to defeat) both go
+through it now, behind a small `OrchestratorStream` interface — the only
+reason for the interface at all is that `Http::fake()` cannot intercept a
+raw curl call, so a test binds a fake implementation in its place instead
+(`MCP_ENGINES.md` §Streamed events). Verified against the real app end to
+end, not just in isolation: a scripted request carrying a genuine
+authenticated session, posted straight at `ChatController::send()` through
+the live Apache vhost, showed a `tool_call` at 21.7s and pings at 36.7s and
+51.7s — exactly the 15s cadence the design calls for, for the first time
+confirmed the whole way from `run_chat` to the browser's own connection.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures

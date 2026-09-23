@@ -8,9 +8,10 @@ use App\Models\Conversation;
 use App\Models\Message;
 use App\Models\MessageToolCall;
 use App\Models\User;
+use App\Services\OrchestratorStream;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\Http;
 use Livewire\Livewire;
+use Tests\Support\FakeOrchestratorStream;
 use Tests\TestCase;
 
 class ChatTest extends TestCase
@@ -50,19 +51,14 @@ class ChatTest extends TestCase
         $user = User::factory()->create();
         $conversation = Conversation::create(['user_id' => $user->id]);
 
-        Http::fake([
-            '*/chat' => Http::response(
-                $this->ndjson([
-                    ['token' => 'Here '],
-                    ['token' => 'is the trend.'],
-                    ['tool_call' => ['name' => 'make_chart', 'arguments' => ['spec' => 'x']]],
-                    ['tool_result' => ['name' => 'make_chart', 'ok' => true, 'summary' => 'Chart rendered.']],
-                    ['chart' => ['plotly_json' => json_encode(['data' => [], 'layout' => []])]],
-                    ['done' => ['tool_calls_count' => 1, 'prompt_tokens' => 200, 'completion_tokens' => 50]],
-                ]),
-                200,
-            ),
-        ]);
+        $this->app->instance(OrchestratorStream::class, new FakeOrchestratorStream([
+            ['token' => 'Here '],
+            ['token' => 'is the trend.'],
+            ['tool_call' => ['name' => 'make_chart', 'arguments' => ['spec' => 'x']]],
+            ['tool_result' => ['name' => 'make_chart', 'ok' => true, 'summary' => 'Chart rendered.']],
+            ['chart' => ['plotly_json' => json_encode(['data' => [], 'layout' => []])]],
+            ['done' => ['tool_calls_count' => 1, 'prompt_tokens' => 200, 'completion_tokens' => 50]],
+        ]));
 
         $response = $this->actingAs($user)->post(route('chat.send', $conversation), [
             'message' => 'Chart the Lucknow revenue trend.',
@@ -98,12 +94,11 @@ class ChatTest extends TestCase
         $user = User::factory()->create();
         $conversation = Conversation::create(['user_id' => $user->id]);
 
-        Http::fake([
-            '*/chat' => Http::response($this->ndjson([
-                ['token' => 'Here it is.'],
-                ['done' => ['tool_calls_count' => 0, 'prompt_tokens' => 10, 'completion_tokens' => 5]],
-            ]), 200),
+        $fake = new FakeOrchestratorStream([
+            ['token' => 'Here it is.'],
+            ['done' => ['tool_calls_count' => 0, 'prompt_tokens' => 10, 'completion_tokens' => 5]],
         ]);
+        $this->app->instance(OrchestratorStream::class, $fake);
 
         $this->actingAs($user)->post(route('chat.send', $conversation), [
             'message' => 'How many CL5C shops in Lucknow in August 2026?',
@@ -115,9 +110,10 @@ class ChatTest extends TestCase
             'content' => 'How many CL5C shops in Lucknow in August 2026?',
         ]);
 
-        Http::assertSent(function ($request) {
-            return str_contains($request['message'] ?? '', 'Please include a chart to visualize the answer.');
-        });
+        $this->assertStringContainsString(
+            'Please include a chart to visualize the answer.',
+            $fake->capturedPayload['message'] ?? '',
+        );
     }
 
     public function test_an_unknown_model_key_is_refused(): void
@@ -193,13 +189,5 @@ class ChatTest extends TestCase
         $this->assertDatabaseMissing('conversations', ['id' => $conversation->id]);
         $this->assertDatabaseMissing('messages', ['id' => $message->id]);
         $this->assertDatabaseMissing('chart_artifacts', ['owner_id' => $toolCall->id]);
-    }
-
-    /**
-     * @param  list<array<string, mixed>>  $events
-     */
-    private function ndjson(array $events): string
-    {
-        return implode("\n", array_map(fn (array $e) => json_encode($e), $events))."\n";
     }
 }

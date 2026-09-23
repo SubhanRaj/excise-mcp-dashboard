@@ -12,6 +12,8 @@ use Illuminate\Support\Facades\Http;
  */
 class OrchestratorClient
 {
+    public function __construct(private OrchestratorStream $stream) {}
+
     /**
      * @return array{documents: array<int, array<string, mixed>>, total: int}
      *
@@ -54,47 +56,29 @@ class OrchestratorClient
      * Consumes POST /query's streamed ndjson lines ({"stage": ...}, {"error": ...},
      * {"result": ...}), calling $onStage as each stage event arrives and returning the
      * final result. `RunExciseQuery` is the only caller (ARCHITECTURE.md — the job, not
-     * the web worker, blocks on this).
+     * the web worker, blocks on this). No ping events here — /query has no heartbeat,
+     * so this is a total-duration cap, not an idle one (see `CurlOrchestratorStream`).
      *
      * @param  array<string, mixed>  $payload
      * @param  callable(array<string, mixed>): void  $onStage
      * @return array<string, mixed>
      *
-     * @throws ConnectionException|RequestException|OrchestratorQueryException
+     * @throws \RuntimeException|OrchestratorQueryException
      */
     public function runQuery(array $payload, callable $onStage): array
     {
-        $response = Http::baseUrl(config('services.orchestrator.base_url'))
-            ->withToken(config('services.orchestrator.token'))
-            ->withOptions(['stream' => true])
-            ->timeout(300)
-            ->post('/query', $payload)
-            ->throw();
-
-        $body = $response->toPsrResponse()->getBody();
-        $buffer = '';
         $result = null;
 
-        while (! $body->eof()) {
-            $buffer .= $body->read(8192);
-            while (($newlineAt = strpos($buffer, "\n")) !== false) {
-                $line = trim(substr($buffer, 0, $newlineAt));
-                $buffer = substr($buffer, $newlineAt + 1);
-                if ($line === '') {
-                    continue;
-                }
-
-                // Order matters: an {"error": ...} event also carries a flat "stage"
-                // string (main.py's _stream_query), unlike a {"stage": {...}} event's
-                // nested Stage object — check "error" first or it's mistaken for one.
-                $event = json_decode($line, true, 512, JSON_THROW_ON_ERROR);
-                if (isset($event['error'])) {
-                    throw new OrchestratorQueryException($event['error'], $event['stage'] ?? null);
-                } elseif (isset($event['stage'])) {
-                    $onStage($event['stage']);
-                } elseif (isset($event['result'])) {
-                    $result = $event['result'];
-                }
+        foreach ($this->stream->stream('/query', $payload, fn (float $idle, float $total) => $total > 300.0) as $event) {
+            // Order matters: an {"error": ...} event also carries a flat "stage" string
+            // (main.py's _stream_query), unlike a {"stage": {...}} event's nested Stage
+            // object — check "error" first or it's mistaken for one.
+            if (isset($event['error'])) {
+                throw new OrchestratorQueryException($event['error'], $event['stage'] ?? null);
+            } elseif (isset($event['stage'])) {
+                $onStage($event['stage']);
+            } elseif (isset($event['result'])) {
+                $result = $event['result'];
             }
         }
 
@@ -108,46 +92,25 @@ class OrchestratorClient
     /**
      * Yields POST /chat's ndjson lines one decoded event at a time ({"token": ...},
      * {"tool_call": ...}, {"tool_result": ...}, {"chart": ...}, {"ping": true},
-     * {"done": ...}, {"error": ...}). ChatSendController is the only caller — it pipes
-     * each event to the browser unmodified and persists it, so this stays a plain
+     * {"done": ...}, {"error": ...}). ChatController::send() is the only caller — it
+     * pipes each event to the browser unmodified and persists it, so this stays a plain
      * decoder with no buffering-to-a-final-result the way runQuery() has.
      *
      * A compound question chains several full LLM round trips in one turn (a
      * run_sql_query call per metric, then a chart), so this has no fixed total-duration
      * cap — `run_chat` (orchestrator/app/chat/loop.py) sends a {"ping": true} line every
-     * 15s a tool call is still running, and `read_timeout` below catches a genuinely
-     * dead connection instead. Apache's own `max_execution_time` is a separate
-     * backstop, scoped to this app's vhost (OPERATOR_SETUP.md §Apache PHP execution
-     * timeout).
+     * 15s a tool call is still running, and 45s with no ping at all is what actually
+     * means a dead connection. Apache's own `max_execution_time` is a separate backstop,
+     * scoped to this app's vhost (OPERATOR_SETUP.md §Apache PHP execution timeout).
      *
      * @param  array<string, mixed>  $payload
      * @return \Generator<int, array<string, mixed>>
      *
-     * @throws ConnectionException|RequestException
+     * @throws \RuntimeException
      */
     public function chatStream(array $payload): \Generator
     {
-        $response = Http::baseUrl(config('services.orchestrator.base_url'))
-            ->withToken(config('services.orchestrator.token'))
-            ->withOptions(['stream' => true, 'read_timeout' => 45])
-            ->timeout(0)
-            ->post('/chat', $payload)
-            ->throw();
-
-        $body = $response->toPsrResponse()->getBody();
-        $buffer = '';
-
-        while (! $body->eof()) {
-            $buffer .= $body->read(8192);
-            while (($newlineAt = strpos($buffer, "\n")) !== false) {
-                $line = trim(substr($buffer, 0, $newlineAt));
-                $buffer = substr($buffer, $newlineAt + 1);
-                if ($line === '') {
-                    continue;
-                }
-                yield json_decode($line, true, 512, JSON_THROW_ON_ERROR);
-            }
-        }
+        yield from $this->stream->stream('/chat', $payload, fn (float $idle, float $total) => $idle > 45.0);
     }
 
     /**
