@@ -136,22 +136,28 @@ Sources: [Qwen2.5-LLM blog](https://qwenlm.github.io/blog/qwen2.5-llm/),
   3.1 support Ollama tool-calling, which the chat loop needs.
 - Keep both pulled; the orchestrator selects per task by default (SQL/plot ->
   Qwen, chat/narration -> Llama). Neither is DeepSeek-derived.
-- **Model registry + UI picker.** The allowed models are a config registry
-  (`key`, `label`, `role`, Ollama tag), the same pattern as
+- **Model registry, one chat model today.** The allowed models are a config
+  registry (`key`, `label`, `role`, Ollama tag), the same pattern as
   `~/Sites/pdf-markdown-pipeline`'s `config/ocr.php` and its "Run OCR" dropdown.
-  The chat composer shows a picker over the registry entries tagged
-  `role: chat` that `/health` also confirms are pulled — the coder model is
-  never offered there, only the one-shot form's advanced override can reach
-  it directly; the choice rides on the `/chat` call as `model` and is
-  validated server-side against the registry. The one-shot analytical form
-  keeps an advanced `model` override alongside `engine`. Default follows the
-  task; both the coder and chat model stay resident
-  (`OLLAMA_MAX_LOADED_MODELS=2`, §Runtime settings), so switching between
-  them mid-session costs nothing today. Adding a second `role: chat` model
-  to the picker would need a third resident slot — that switch would cost a
-  reload again, and the UI should say so once that model exists. Adding
-  Gemma to the picker is one registry line plus
-  `ollama pull gemma2:9b-instruct-q4_K_M` (~5.8 GB).
+  `web/config/models.php` carries one `role: sql` entry (the coder model,
+  reachable only through the one-shot form's advanced override, never the
+  chat picker) and one `role: chat` entry (Llama 3.1) — the chat composer's
+  own picker only renders when more than one `role: chat` entry exists, so
+  today it stays hidden and every chat turn runs on the one configured
+  default. A second `role: chat` entry was tried live (Qwen 2.5 3B/1.5B,
+  ~2026-09-23) and reverted the same day: `web/`'s `<select>` sends the
+  registry's short key (`"llama3.1"`), but the orchestrator's `_select_model`
+  validates the full Ollama tag (`"llama3.1:8b-instruct-q4_K_M"`) against
+  `OLLAMA_ALLOWED_MODELS` — nothing translates one to the other, so picking
+  any option, including re-picking the default, failed the call outright.
+  Past that bug, a second resident chat model needs a third
+  `OLLAMA_MAX_LOADED_MODELS` slot to keep a mid-session switch free the way
+  the coder/chat pair already is (§RAM budget) — an accepted RAM cost the
+  box's already-tight 2-model budget makes worth deciding deliberately, not
+  shipping as groundwork ahead of an actual second chat model being wanted.
+  A future second `role: chat` entry (Gemma, a smaller Qwen) needs the key/tag
+  fix and the `MAX_LOADED_MODELS` bump done together, not the registry line
+  alone.
 - **Embedding model (only if `KB_EMBEDDINGS_ENABLED`)**:
   `nomic-embed-text` (768-dim, ~275 MB) or `bge-m3` (1024-dim, ~600 MB,
   better on mixed English/Hindi). Adds its footprint on top of whichever LLM
@@ -165,10 +171,10 @@ Sources: [Qwen2.5-LLM blog](https://qwenlm.github.io/blog/qwen2.5-llm/),
   reload cost acceptable.
 - `OLLAMA_NUM_PARALLEL=1` — one decode at a time; the box cannot run two 7B
   decodes plus a plot process plus Postgres at once.
-- `OLLAMA_MAX_LOADED_MODELS=2` (4 once the chat picker's 3B/1.5B options
-  below are actually enabled — `OLLAMA_ALLOWED_MODELS` needs the two extra
-  tags added and a systemd bump to match first, both pending operator steps)
-  — `qwen2.5-coder:7b` and `llama3.1:8b` stay resident (§RAM budget below).
+- `OLLAMA_MAX_LOADED_MODELS=2` — `qwen2.5-coder:7b` and `llama3.1:8b` stay
+  resident (§RAM budget below); a third `role: chat` model in the picker
+  needs this bumped again, alongside `OLLAMA_ALLOWED_MODELS` and the
+  short-key/Ollama-tag fix above.
   Live chat turns needing a tool call were swapping between the two on every
   call at `MAX_LOADED_MODELS=1`, and a full turn took 1–3 minutes as a
   result.

@@ -860,6 +860,41 @@ now fires on any double-degenerate turn regardless of whether a tool was
 ever called, falling back to a plain retry prompt when there is no tool
 result to reference.
 
+Two more live reports followed on the same conversation. First, a sixth
+shape of the tool-calling gap: a real `run_sql_query` call succeeded but the
+follow-up answer wrote "here is a chart showing..." with no `make_chart`
+call ever made. `CHAT_SYSTEM_PROMPT` now forbids referring to a chart unless
+`make_chart` was actually called that turn. The same answer also read out
+shop categories by bare code only (`CL5C`, `FL4A`, ...) — unreadable without
+already knowing `analytics.license_categories` by heart. The chat model
+never sees the schema card, so asking it to name a code from memory would
+risk a guess; fixed in the SQL planner instead, with a worked few-shot
+example joining `analytics.license_categories` in by code so the
+plain-language name rides along in the result the model reads
+(`MCP_ENGINES.md` §Tools, `DATA_PIPELINE.md` §Row visibility for the AI
+path). Second, a `make_chart` call sent `spec` as the literal text "chart
+specification code" — a description of a script, not one — which the
+sandbox ran as-is and failed on with a `SyntaxError`. The tool description
+had never shown a worked example, only prose describing the contract; it
+now ends with one concrete `spec` and says directly that the value must be
+real, runnable Python, never a description or placeholder.
+
+A live question about the chat model picker surfaced that a second `role:
+chat` registry entry (Qwen 2.5 3B/1.5B, added earlier the same day as
+groundwork for a faster chat option) had shipped ahead of the work that
+would make picking it actually safe — speculative work this file's own
+negative constraints already rule out. Past the RAM cost of a third
+`OLLAMA_MAX_LOADED_MODELS` slot never having been accepted, it turned out
+outright broken: `web/`'s picker sends the registry's short key
+(`"llama3.1"`), the orchestrator validates the full Ollama tag
+(`"llama3.1:8b-instruct-q4_K_M"`) against `OLLAMA_ALLOWED_MODELS`, and
+nothing translates one to the other — picking any option, including
+re-picking the default, failed the call outright. `web/config/models.php`
+is back to the one `role: chat` entry it had before, which also hides the
+picker again (`Chat::render()` only shows it past one option), and
+`EVALUATION.md` §2 now names both gaps as what a real second chat model
+needs done together, not a registry line added alone.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures
