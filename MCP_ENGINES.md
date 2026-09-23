@@ -356,6 +356,18 @@ message}`). Laravel pipes these lines to the browser unmodified and persists
 `messages` + `message_tool_calls` as they arrive — a `ping` line carries
 nothing to persist, so it passes straight through.
 
+A turn that ends with no `token` events at all and no tool call — every
+tool-calling degenerate case above is meant to fall back to some text before
+that happens, but a client disconnect mid-stream or an as-yet-undiscovered
+new shape of the same gap can still reach it — leaves `ChatController::send`'s
+`$assistantText` empty; its `finally` block persists that message regardless,
+since a turn that failed is still a turn the transcript needs a row for.
+`chat.blade.php`'s persisted-message rendering had no fallback for that case:
+no tool calls to show, no content to show, so the bubble rendered with
+nothing inside it at all — no error, no indicator, indistinguishable at a
+glance from the page being broken. It now shows "No response was generated
+for this message." instead of an empty bubble.
+
 A tool call that runs long — a compound SQL plan, a slow render — would
 otherwise leave the wire silent for its whole duration, long enough for
 Apache's `max_execution_time` or Cloudflare's idle-connection handling to
@@ -537,6 +549,28 @@ The tool description had never shown a worked example, only prose describing
 the contract; it now ends with one concrete `spec` (a `px.bar` call plus the
 required `fig.write_json(...)`) and says directly that `spec` must be real,
 runnable Python, never a description or placeholder.
+
+Two more live `make_chart` failures followed on the same worked example. The
+model plotted `x="shop_category"`, a column that doesn't exist — the actual
+run_sql_query result carried `retail_license_category`/`category_name`/
+`total_bl`, named in that tool's own result summary right in front of it —
+and Plotly's own `ValueError` killed the render. `CHAT_SYSTEM_PROMPT` now
+tells the model directly to plot columns using the exact names
+`run_sql_query`'s result gave them, never a guessed or renamed one. The
+failed call also surfaced a narrower case of the sixth shape above: the
+model's answer still wrote "here is a chart showing..." after `make_chart`
+had actually been called, but failed — the existing guard only checked that
+`make_chart` was called, not that it succeeded. `CHAT_SYSTEM_PROMPT` now says
+a failed call is not a chart, and to either correct the script and call it
+again or leave the chart out of the answer, never claim one that doesn't
+exist. Separately, that `ValueError`'s own traceback carried this box's real
+filesystem layout — every stack frame inside `orchestrator/.venv`'s
+site-packages, since `bwrap` binds that venv at its own host path rather than
+a sandboxed alias — and a failed `make_chart` call's `summary` reaches a chat
+user verbatim as a failed tool result. `run_in_sandbox` now strips that host
+venv path out of the message it raises (the full traceback still reaches the
+log line, which stays operator-only); the `/scratch/...` path a script's own
+frames use was never host-identifying and is left as-is.
 
 The loop:
 

@@ -110,6 +110,8 @@
                             @endforeach
                             @if($m->content)
                             <div class="chat-markdown text-sm text-slate-700 dark:text-slate-200" x-init="$el.innerHTML = renderMarkdown(@js($m->content))"></div>
+                            @elseif($m->toolCalls->isEmpty())
+                            <p class="text-sm text-slate-400 italic">No response was generated for this message.</p>
                             @endif
                         </div>
                         @if($m->content)

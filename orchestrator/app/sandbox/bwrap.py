@@ -275,7 +275,15 @@ async def run_in_sandbox(
         logger.warning(
             "sandbox violation", unit=unit_name, returncode=proc.returncode, stdout=stdout_tail
         )
-        raise SandboxViolationError(f"exit {proc.returncode}: {stdout_tail}")
+        # A traceback frame inside site-packages carries the real host path bwrap bound
+        # in (venv_root/real_python_home, both this box's actual filesystem layout, not
+        # a sandboxed alias) — the full log line above keeps it, but the exception message
+        # below reaches a chat user verbatim as a failed tool result, so it gets the host
+        # path stripped first.
+        user_facing = stdout_tail.replace(str(Path(sys.prefix).resolve()), "<venv>").replace(
+            str(Path(sys.executable).resolve().parents[1]), "<venv>"
+        )
+        raise SandboxViolationError(f"exit {proc.returncode}: {user_facing}")
 
     return run_dir, stdout_tail
 

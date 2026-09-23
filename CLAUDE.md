@@ -895,6 +895,37 @@ picker again (`Chat::render()` only shows it past one option), and
 `EVALUATION.md` §2 now names both gaps as what a real second chat model
 needs done together, not a registry line added alone.
 
+A live `make_chart` failure past the placeholder-text bug surfaced two more
+gaps on the same call. The model plotted `x="shop_category"`, a column that
+does not exist — the real result carried `retail_license_category`/
+`category_name`/`total_bl`, named in that tool's own result summary right in
+front of it — and Plotly's `ValueError` killed the render; `CHAT_SYSTEM_PROMPT`
+now tells the model to plot columns using the exact names `run_sql_query`
+gave them, never a guessed one. The model's answer still claimed a chart
+existed afterward — a narrower case of the earlier narrated-chart shape, this
+time past an actual `make_chart` call that failed rather than one never made
+— so the prompt's guard now checks that the call succeeded, not just that it
+happened. The failed call's own traceback also turned out to carry this
+box's real filesystem layout in every stack frame under
+`orchestrator/.venv`'s site-packages — `bwrap` binds that venv at its own
+host path, and a failed tool call's message reaches a chat user verbatim.
+`run_in_sandbox` (`sandbox/bwrap.py`) now strips that host path out of the
+exception message a user can see; the full traceback stays in the log line,
+operator-only (`MCP_ENGINES.md` §Tools).
+
+A related report — a persisted assistant message rendering as a bubble with
+nothing in it at all, no text and no tool card — traced to
+`ChatController::send`'s own `finally` block: it persists the assistant
+message with whatever `$assistantText` it accumulated regardless of whether
+a turn produced any, since a turn that failed still needs a row in the
+transcript. Every degenerate-turn case `chat/loop.py` guards against is
+meant to fall back to some text before this happens, but a client disconnect
+mid-stream reaches it the same way, and `chat.blade.php`'s persisted-message
+rendering had no fallback of its own for an empty message with no tool
+calls — nothing rendered, indistinguishable from the page being broken. It
+now shows "No response was generated for this message." instead
+(`MCP_ENGINES.md` §Streamed events).
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures
