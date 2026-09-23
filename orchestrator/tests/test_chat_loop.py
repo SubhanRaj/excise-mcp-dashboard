@@ -138,6 +138,26 @@ async def test_a_narrated_sql_guess_with_no_tool_call_retries_once() -> None:
     assert not any(isinstance(e, ToolCallEvent) for e in events)
 
 
+async def test_a_degenerate_reply_with_no_tool_call_ever_falls_back_to_a_retry_prompt() -> None:
+    # Confirmed live: a fresh conversation's first turn (a knowledge question the
+    # model tried to answer directly, never calling search_knowledge) came back
+    # degenerate on both the tool-aware attempt and the tools=[] retry. Before this
+    # fallback, _tool_failure_fallback only fired when last_tool_result was already
+    # set — with no tool ever dispatched, that condition was always false, so the
+    # turn ended on a DoneEvent with not a single character ever streamed.
+    ollama = _FakeOllama(
+        [
+            [_FakeChunk(content="{"), _FakeChunk(content="}")],
+            [_FakeChunk(content="{"), _FakeChunk(content="}")],
+        ]
+    )
+    events = await _events(ollama)
+    tokens = "".join(e.delta for e in events if isinstance(e, TokenEvent))
+    assert tokens != ""
+    assert not any(isinstance(e, ToolCallEvent) for e in events)
+    assert isinstance(events[-1], DoneEvent)
+
+
 async def test_a_turn_with_one_tool_call_dispatches_and_continues(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

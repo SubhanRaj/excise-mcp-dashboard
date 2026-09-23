@@ -237,15 +237,21 @@ async def run_chat(
                     if not _is_degenerate(held):
                         yield TokenEvent(delta=held)
                         held = ""
-            if _is_degenerate(assistant_text) and last_tool_result is not None:
+            if _is_degenerate(assistant_text):
                 # Both attempts came back degenerate — either genuinely empty (an 8B
-                # model can fail to produce any follow-up text at all after a tool
-                # result) or still narrating a fake call. The per-chunk holdback above
-                # kept every degenerate attempt off the wire, so nothing has been
-                # shown to the user yet; this is the turn's first and only answer, a
-                # plain statement of the failure with the tool's own error kept
-                # available underneath it for whoever wants to check.
-                assistant_text = _tool_failure_fallback(last_tool_result)
+                # model can fail to produce any follow-up text at all, with or without
+                # a prior tool call) or still narrating a fake call. The per-chunk
+                # holdback above kept every degenerate attempt off the wire, so
+                # nothing has been shown to the user yet; this is the turn's first and
+                # only answer. With a tool result to reference, state its failure in
+                # plain terms; with none (the model never called a tool at all, e.g. a
+                # knowledge question it tried to answer directly), a plain retry
+                # prompt is the only honest fallback — there's no tool error to show.
+                assistant_text = (
+                    _tool_failure_fallback(last_tool_result)
+                    if last_tool_result is not None
+                    else "I wasn't able to answer that — try rephrasing the question."
+                )
                 yield TokenEvent(delta=assistant_text)
         messages.append({"role": "assistant", "content": assistant_text})
 
