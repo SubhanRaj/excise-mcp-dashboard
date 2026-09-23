@@ -654,6 +654,25 @@ reach the interpolated query after it. Notes reach the model only on the orchest
 next start; `OPERATOR_SETUP.md`'s existing restart-after-a-code-change guidance covers this
 the same way it covers `VIEW_NOTES` itself.
 
+A live retest of the earlier compound-question fix — heartbeat pings, an
+uncapped Guzzle timeout, a generous `max_execution_time` — still dropped
+mid-turn through the real Cloudflare Tunnel, on the same comparison-plus-
+sales question that fix was written for. The Apache access log showed only a
+couple KB delivered on a turn that ran over two minutes server-side; the
+browser never saw the stream start at all. The shared php.ini's
+`output_buffering = 4096` was the reason: `ChatController::send()`'s
+`ob_flush()`/`flush()` calls only empty PHP's own buffer into that one, so a
+15s heartbeat ping sits there instead of reaching the socket until 4KB
+accumulates, and Cloudflare reads the resulting silence as a dead connection
+regardless of how generous `max_execution_time` is. `output_buffering` is
+`PHP_INI_PERDIR` — `ini_set()` in application code cannot turn it off, only
+a php.ini, `.htaccess`, or vhost directive can — so `deploy/apache-vhost.conf`
+now sets `php_admin_value output_buffering 0` alongside
+`max_execution_time`, same scope, same reason (`OPERATOR_SETUP.md` §Apache
+PHP execution timeout), applied live with `sudo bash deploy/root-setup.sh` —
+the vhost and `/health` both confirmed the setting is live; the next
+compound question through the real tunnel URL is the actual test of it.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures

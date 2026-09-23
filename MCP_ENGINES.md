@@ -338,9 +338,27 @@ One JSON object per line (`application/x-ndjson`, the same wire format
 has the reasoning): `token` (assistant text delta), `tool_call` (`{name,
 arguments}` as the model emits it), `tool_result` (`{name, ok, summary}` —
 never the full row set), `chart` (`{plotly_json?, files}` when `make_chart`
-ran), `done` (`{message_id, tool_calls_count}`), `error` (`{stage,
+ran), `ping` (`{ping: true}`, sent every 15s a tool call is still in
+flight), `done` (`{message_id, tool_calls_count}`), `error` (`{stage,
 message}`). Laravel pipes these lines to the browser unmodified and persists
-`messages` + `message_tool_calls` as they arrive.
+`messages` + `message_tool_calls` as they arrive — a `ping` line carries
+nothing to persist, so it passes straight through.
+
+A tool call that runs long — a compound SQL plan, a slow render — would
+otherwise leave the wire silent for its whole duration, long enough for
+Apache's `max_execution_time` or Cloudflare's idle-connection handling to
+end the request before a `done` or `error` line ever gets sent. `run_chat`
+runs `dispatch()` as a background task so the loop can keep yielding a
+`ping` every 15s while the call is still in flight.
+`OrchestratorClient::chatStream()`'s own Guzzle timeout is uncapped to
+match, with a 45s `read_timeout` on the same client as the actual
+dead-connection check. Reaching the browser needs one more piece: Apache's
+own `output_buffering` php.ini setting holds a flushed line in PHP's buffer
+until enough bytes accumulate, which silently defeats the heartbeat on the
+one hop (`web/` → Cloudflare → browser) it exists to protect.
+`deploy/apache-vhost.conf` sets `output_buffering 0` for this vhost so the
+pings actually leave the box (`OPERATOR_SETUP.md` §Apache PHP execution
+timeout).
 
 ### Tools (`chat/tools.py`)
 
@@ -485,6 +503,10 @@ sequenceDiagram
         alt the turn made a tool call
             O-->>L: ndjson line: {"tool_call": ...}
             O->>T: dispatch — same guard + read-only role + sandbox
+            loop every 15s T is still running
+                O-->>L: ndjson line: {"ping": true}
+                L-->>B: (keeps the connection alive; nothing shown)
+            end
             T-->>O: result (preview only, never the full row set)
             O-->>L: ndjson line: {"tool_result": ...} (+ {"chart": ...} if make_chart)
             O->>M: append the tool result and continue

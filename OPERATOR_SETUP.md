@@ -643,6 +643,7 @@ sudo tee /etc/apache2/sites-available/excise-mcp-dashboard.conf >/dev/null <<'EO
     DocumentRoot /home/subhan/Sites/excise-mcp-dashboard/web/public
 
     php_admin_value max_execution_time 1800
+    php_admin_value output_buffering 0
 
     <Directory /home/subhan/Sites/excise-mcp-dashboard/web/public>
         Options -Indexes +FollowSymLinks
@@ -714,7 +715,21 @@ stay generous. This app runs on Apache's `mod_php` (no FPM pool);
 `deploy/apache-vhost.conf` sets it with `php_admin_value`, scoped to this
 app's own `<VirtualHost>`. The shared `/etc/php/8.5/apache2/php.ini` also
 serves four sibling apps on this same Apache instance, so an edit there
-would move their ceiling too:
+would move their ceiling too.
+
+A live compound-question test still dropped through the Cloudflare Tunnel
+after this fix, well before the orchestrator finished — the access log
+showed only a couple KB delivered on a turn that ran over two minutes
+server-side. The shared php.ini's `output_buffering = 4096` was the reason:
+`ChatController::send()`'s `ob_flush()`/`flush()` calls empty PHP's own
+buffer into that one, so nothing crosses the socket until it fills, and a
+15s heartbeat ping sits there instead of reaching the wire. Cloudflare reads
+the resulting silence as a dead connection and cuts it, regardless of how
+generous `max_execution_time` is. `output_buffering` is `PHP_INI_PERDIR` —
+`ini_set()` in application code cannot turn it off, only a php.ini,
+`.htaccess`, or vhost directive can — so `deploy/apache-vhost.conf` now sets
+`php_admin_value output_buffering 0` alongside `max_execution_time`, same
+scope and same reason:
 
 ```bash
 sudo bash ~/Sites/excise-mcp-dashboard/deploy/root-setup.sh
@@ -726,10 +741,15 @@ idempotent script §Apache vhost above already covers.)
 Verify:
 
 ```bash
-grep max_execution_time /etc/apache2/sites-available/excise-mcp-dashboard.conf
+grep -E 'max_execution_time|output_buffering' /etc/apache2/sites-available/excise-mcp-dashboard.conf
 # php_admin_value max_execution_time 1800
+# php_admin_value output_buffering 0
 curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8084/health  # 200
 ```
+
+Then re-run the compound question through the real tunnel URL, not
+`127.0.0.1` directly — the loopback hop never went through Cloudflare, so it
+never showed this failure either.
 
 ---
 
