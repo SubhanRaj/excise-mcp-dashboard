@@ -997,3 +997,164 @@ PPTX is deferred — it needs a new library; the PDF and the print view cover
 `file_path` under `web/storage/app/report-exports/<report-ulid>/`,
 `generated_at`, `etl_epoch`. Regenerated on demand or when a block's
 underlying run changes.
+
+## NITI workbook import (2026-09-24)
+
+The eight NITI workbooks under `~/mentor_portal_db/UP Excise Data
+Collection/Final Data for Submission/` are loaded into `excise_bank` through
+four new adapter modules, registered as eight `etl.source_registry` rows
+(`niti_revenue`, `niti_sales_volume`, `niti_operations`, `niti_shops`,
+`niti_brands`, `niti_brand_prices`, `niti_policy_rules`, `niti_duty_rates`;
+`schedule = 'manual'`, matching this doc's own Schedules table). Districts
+(sheet 1) is cross-check only, per the task that drove this work — no
+`districts` row is inserted or altered from it.
+
+- **`etl/etl/sources/niti_facts.py`** — Revenue, Sales Volume, and Operations
+  share one district × financial-year grain with no license-category
+  breakdown, so `revenues.license_category_id` and
+  `sales_volumes.license_category_id` are NULL on every row here (the
+  schema's own "all-category total" case). One sheet row fans out into
+  several metric rows, one per non-blank column; a blank cell is skipped,
+  never inserted as zero. `revenues.metric` / `sales_volumes.metric` /
+  `operations.metric` hold the source columns' own names (e.g.
+  `license_fee_auction_lottery`, `imfl_premium`, `illicit_liquor_seized_litres`)
+  rather than the shorter illustrative list in the schema comment, which
+  doesn't cover most of the real columns.
+- **`etl/etl/sources/niti_shops.py`** — sources from
+  `Stats Dashboard Shop Types (2026-09-16)/5_Shops_All_Districts.xlsx`
+  (CLAUDE.md's real-category reclassification), not the `Final Data for
+  Submission` copy of the same sheet: that copy carries only NITI's five
+  generic dropdown buckets, 78% of it "Other", none of which resolve onto a
+  seeded `license_categories` code. Seven of the real workbook's nine
+  categories map onto a seeded code (Country Liquor → CL, Foreign Liquor →
+  FL, Beer → BEER, Composite → FL5DB, Model Shop → MODEL, Country Liquor
+  with Beer → CL5CC, Premium Retail Vend → FL4C); "Bar" and "Wholesale Beer &
+  Wine" have no seeded code (FL6 / FL2B were never added to
+  `license_categories`) and load with `license_category_id = NULL`, same as
+  "Other" and "Retail" — the shop itself is still real data, just
+  uncategorized. `shop_years.mgq_bl` only fills when exactly one of the
+  source's three minimum-quantity columns is present and already in bulk
+  litres; the source's "lifted" quantities, penalty charged/recovered, and
+  the gave-up/continued pair beyond `is_operational` have no column in this
+  schema and are not loaded.
+- **`etl/etl/sources/niti_brands.py`** — Brands, then Brand Prices (the
+  second depends on the first's rows already being in `brands`). "Type of
+  drink" resolves IMFL → FL, Beer → BEER, Country liquor → CL; Wine and
+  Imported liquor have no matching `kind` in `license_categories` at all and
+  load with `license_category_id = NULL`. `brands` has no pack-size column,
+  so the source's 10,995 (brand, pack) rows collapse onto 2,541 distinct
+  (name, category) brand entities — pack-specific figures live in
+  `brand_prices` instead. `brand_prices.ex_distillery_inr` is filled from
+  "Price approved by the department," the figure actually in force;
+  "Price declared by the manufacturer" and "Excise duty charged" have no
+  column here and are not loaded.
+- **`etl/etl/sources/niti_policy.py`** — Policy Rules synthesizes one
+  `policy_entries` row per (state, financial year) with a `summary` listing
+  every non-blank attribute as "label: value," since `policy_entries` has no
+  column for "who does the wholesale" or "date CCTV became compulsory"
+  individually; `category` stays NULL because one row spans pricing,
+  licensing, and enforcement attributes at once. Every Duty Rates row is
+  quarantined outright: its Rate column holds a formula string referencing
+  EDP (ex-distillery price) — `7.2*EDP`, `200+0.425*EDP` — not the plain
+  number `duty_rates.rate` requires, and no destination for that formula
+  exists in this schema.
+- **`etl/etl/normalize.py`** — `_FY_PATTERNS` now also accepts a
+  4-digit-4-digit year (`2014-2015`, the Shops and Brand Prices sheets'
+  form) and a doubled or dotted separator (`2024.25`, `2017--18`, both real
+  values found in the Shops workbook). `NITI_DISTRICT_ALIASES` and
+  `seed_district_aliases()` hold the spelling/format variants the NITI
+  workbooks use that don't match `districts.name` (a parenthetical old name
+  like `Allahabad (Prayagraj)`, a missing space, a missing letter) — checked
+  against every one of the 75 district keys `~/mentor_portal_db/scripts/
+  run_all_shops_districts.py` already uses, not derived in isolation.
+
+### Row counts
+
+| Source | Rows seen | Upserted | Quarantined |
+|---|---|---|---|
+| niti_revenue | 3,455 | 3,455 | 0 |
+| niti_sales_volume | 3,812 | 3,812 | 0 |
+| niti_operations | 11,124 | 11,124 | 0 |
+| niti_shops | 242,766 | 242,574 | 192 |
+| niti_brands | 10,995 | 2,541 distinct brands | 0 |
+| niti_brand_prices | 8,693 | 5,008 | 3,684 |
+| niti_policy_rules | 61 | 60 | 1 |
+| niti_duty_rates | 73 | 0 | 73 |
+
+`shops` holds 80,676 rows (1,093 pre-existing from the Lucknow IESCMS
+dispatch import, the rest from this source) and `shop_years` holds 241,762.
+
+### Quarantined rows and why
+
+- **niti_shops (192)**: 187 are Bahraich's FY2018-19 sheet, where every row's
+  financial-year cell reads `20215-16` instead of `2015-16` — a known,
+  already-flagged district-side typo (`~/mentor_portal_db/FLAGGED.md`
+  "Bahraich"), not corrected here either, since correcting a 5-digit year to
+  a specific 4-digit one is a guess this project has already declined to
+  make. 5 rows have a blank "Type of shop" cell (`shop_type` is `NOT NULL`).
+  Separately, one informational (non-counted) quarantine row records that
+  53,316 "Other" / 38,694 "Retail" / 783 "Wholesale Beer & Wine" shop_years
+  rows loaded with `license_category_id = NULL` — see the module note above.
+- **niti_brand_prices (3,684)**: 3,361 rows are a `brand_name` this
+  workbook's own Brands sheet doesn't carry — CLAUDE.md's own
+  `7_Brand_Prices.xlsx` build notes already document keeping these rows "as
+  is where the brand isn't in the current Brands registry" (an older or
+  discontinued brand whose price history was kept without a matching Brands
+  entry), so this is the same known gap, not a matching bug. 193 rows are a
+  brand name with more than one `(name, license_category_id)` variant in
+  `brands` — which one a bare price row belongs to isn't stated in the
+  source, so neither is guessed at. 130 rows are the already-known unresolved
+  price conflicts (CLAUDE.md "the 55 conflicting-price-value rows," which
+  turn out to be 130 rows across 64 conflicting groups once counted by exact
+  natural key) — both sides of each conflicting group are quarantined, not
+  one picked over the other.
+- **niti_policy_rules (1)**: the sheet's own instructions/note row in column
+  A, which has no financial year to resolve — correctly recognized as not a
+  data row.
+- **niti_duty_rates (73, all of them)**: every row's Rate column is a
+  formula referencing EDP, not a plain number — this project decided to
+  quarantine all 73 rather than store a truncated coefficient that isn't the
+  real duty rate.
+
+### Shop-identity collision check (Lucknow)
+
+Zero collisions. `shops` already held 1,093 Lucknow rows from the live
+IESCMS dispatch import before this run (`shop_number` a 9-10 digit IESCMS
+reference, e.g. `252642565`); the Shops workbook's own Lucknow sheet uses
+shop/licence names and IDs in a different, non-overlapping form. The check
+itself excludes any
+Lucknow shop that already has a `shop_years` row from a prior `niti_shops`
+run (iescms_dispatch never writes `shop_years`, so any shop with one is this
+source's own, not a foreign collision) — without that exclusion, a second
+run of this same source would flag its own previous rows as colliding with
+themselves, which is what an early version of this check actually did
+before the exclusion was added.
+
+### The 14 flagged Shops districts
+
+Amroha, Auraiya, Azamgarh, Bhadohi, Bijnor, Chandauli, Farrukhabad, Jaunpur,
+Kasganj, Kaushambi, Mau, Prayagraj, Siddharthnagar, and Unnao's shop and
+shop_year rows are loaded like every other district's, with
+`shops.published_at` left NULL rather than set to the import time — 15,564
+shop rows across the 14 districts, reconciling exactly against
+`~/mentor_portal_db/FLAGGED.md`'s own per-district conflict-row counts.
+They stay unpublished until a district confirms which side of its
+per-district merge conflict is correct.
+
+### A test-isolation bug this import surfaced
+
+`tests/test_niti_facts.py`'s fixture rows originally defaulted to a real
+district (`Agra`), a real-looking financial year (`2014-15`), and a real
+metric name (`excise_duty`, and two tests overrode it to `imfl` /
+`retail_shops`). `revenues`, `sales_volumes`, and `operations` upsert on
+`(district_id, financial_year_id, metric[, license_category_id])`, which
+does not include `source_ref` — so a test row with this exact combination
+silently updated the genuine Agra FY2014-15 `excise_duty` and `imfl` rows in
+place, and the fixture's teardown (`DELETE ... WHERE source_ref LIKE
+'TEST-NITI-FACTS-%'`) then deleted them, since the update had overwritten
+their `source_ref` too. Fixed by giving every test row a `metric` no real
+source column will ever produce (`__test_metric_<suffix>__`), which the
+natural key can never collide on regardless of which district or financial
+year the test also uses. The two affected production values were restored
+by re-running `niti_revenue` and `niti_sales_volume` (idempotent; verified
+against the source workbook's own cells for Agra FY2014-15 afterward).

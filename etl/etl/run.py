@@ -13,7 +13,14 @@ import structlog
 from etl import db, loader, quarantine
 from etl.sources import csv as csv_source
 from etl.sources import excel as excel_source
-from etl.sources import iescms_dispatch, pdf_pipeline
+from etl.sources import (
+    iescms_dispatch,
+    niti_brands,
+    niti_facts,
+    niti_policy,
+    niti_shops,
+    pdf_pipeline,
+)
 from etl.sources.base import RawRow
 
 log = structlog.get_logger()
@@ -126,7 +133,18 @@ async def _run_source(
         period,
     )
 
-    if registry_row["source"] in ("pdf_pipeline", "iescms_dispatch"):
+    # niti_facts/niti_brands/niti_policy take "<path>#<kind>" in source_ref, the
+    # same way iescms_dispatch's fl/cl variant does; niti_shops has one sheet
+    # layout so its source_ref is a bare path.
+    _special_sources = (
+        "pdf_pipeline",
+        "iescms_dispatch",
+        "niti_shops",
+        "niti_facts",
+        "niti_brands",
+        "niti_policy",
+    )
+    if registry_row["source"] in _special_sources:
         error: str | None = None
         try:
             if registry_row["source"] == "pdf_pipeline":
@@ -136,7 +154,7 @@ async def _run_source(
                     pdf_counts.upserted,
                     pdf_counts.quarantined,
                 )
-            else:
+            elif registry_row["source"] == "iescms_dispatch":
                 # source_ref is "<workbook path>#fl" or "#cl" — the report layout
                 # rides in source_ref the same way the plain excel source's sheet name does.
                 path, _, report_kind = registry_row["source_ref"].rpartition("#")
@@ -145,6 +163,37 @@ async def _run_source(
                     iescms_counts.seen,
                     iescms_counts.upserted,
                     iescms_counts.quarantined,
+                )
+            elif registry_row["source"] == "niti_shops":
+                shop_counts = await niti_shops.sync(conn, run_id, registry_row["source_ref"])
+                seen, upserted, quarantined = (
+                    shop_counts.seen,
+                    shop_counts.upserted,
+                    shop_counts.quarantined,
+                )
+            elif registry_row["source"] == "niti_facts":
+                path, _, kind = registry_row["source_ref"].rpartition("#")
+                fact_counts = await niti_facts.sync(conn, run_id, path, kind)
+                seen, upserted, quarantined = (
+                    fact_counts.seen,
+                    fact_counts.upserted,
+                    fact_counts.quarantined,
+                )
+            elif registry_row["source"] == "niti_brands":
+                path, _, kind = registry_row["source_ref"].rpartition("#")
+                brand_counts = await niti_brands.sync(conn, run_id, path, kind)
+                seen, upserted, quarantined = (
+                    brand_counts.seen,
+                    brand_counts.upserted,
+                    brand_counts.quarantined,
+                )
+            else:
+                path, _, kind = registry_row["source_ref"].rpartition("#")
+                policy_counts = await niti_policy.sync(conn, run_id, path, kind)
+                seen, upserted, quarantined = (
+                    policy_counts.seen,
+                    policy_counts.upserted,
+                    policy_counts.quarantined,
                 )
         except Exception as exc:  # noqa: BLE001 — surfaced via the typed run row, not a crash
             seen = upserted = quarantined = 0

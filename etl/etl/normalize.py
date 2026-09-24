@@ -9,7 +9,11 @@ from decimal import Decimal, InvalidOperation
 import asyncpg
 
 _FY_PATTERNS = [
-    re.compile(r"^(?:FY)?\s*(\d{4})[-_]\d{2}$", re.IGNORECASE),  # '2014-15', 'FY2014-15', '2014_15'
+    # '2014-15', 'FY2014-15', '2014_15', '2024.25' (Shahjahanpur), '2017--18'
+    # (Jaunpur, a doubled separator) - one or more of -/_/. between the two years.
+    re.compile(r"^(?:FY)?\s*(\d{4})[-_.]+\d{2}$", re.IGNORECASE),
+    # '2014-2015' (Shops, Brand Prices)
+    re.compile(r"^(?:FY)?\s*(\d{4})[-_.]+\d{4}$", re.IGNORECASE),
     re.compile(r"^(\d{4})$"),  # '2014'
 ]
 
@@ -59,6 +63,43 @@ def normalize_volume_bl(quantity: str, unit: str) -> Decimal:
         return Decimal(quantity.strip()) * factor
     except InvalidOperation as exc:
         raise NormalizationError(f"unparseable volume value: {quantity!r}") from exc
+
+
+# Spelling/format variants the NITI workbooks use that don't match
+# `districts.name` exactly (parenthetical old names, space/no-space variants,
+# a bare short form) -> the canonical name already seeded in `districts`.
+# Seeded into `etl.district_aliases` once per run by `seed_district_aliases`
+# below; `resolve_district_id` then finds them the same way as any other
+# alias, no separate lookup path needed.
+NITI_DISTRICT_ALIASES: dict[str, str] = {
+    "Allahabad (Prayagraj)": "Prayagraj",
+    "Ayodhya (Faizabad)": "Ayodhya",
+    "Rae Bareli": "Raebareli",
+    "Sant Ravidas Nagar (Bhadohi)": "Bhadohi",
+    "Sant Ravidas Nagar Bhadohi": "Bhadohi",
+    "Siddharth Nagar": "Siddharthnagar",
+    "Bara Banki": "Barabanki",
+    "Bulandshahar": "Bulandshahr",
+    "Kheri": "Lakhimpur Kheri",  # the Shops workbook's Lakhimpur Kheri sheet uses this short form
+    "Mahrajganj": "Maharajganj",  # the Shops workbook's sheet name, missing the second "a"
+    "Shrawasti": "Shravasti",  # the Shops workbook's sheet name, "w" instead of "v"
+}
+
+
+async def seed_district_aliases(conn: asyncpg.Connection) -> None:
+    """Idempotent: inserts each NITI_DISTRICT_ALIASES entry once, resolving the
+    canonical name against `districts` at insert time. A no-op on a re-run.
+    """
+    for alias, canonical_name in NITI_DISTRICT_ALIASES.items():
+        await conn.execute(
+            """
+            INSERT INTO etl.district_aliases (alias, district_id)
+            SELECT $1, id FROM districts WHERE name = $2
+            ON CONFLICT (alias) DO NOTHING
+            """,
+            alias,
+            canonical_name,
+        )
 
 
 async def resolve_district_id(conn: asyncpg.Connection, name: str) -> int:
