@@ -987,6 +987,43 @@ country liquor, foreign liquor, beer, model shop) can mean more than one
 code, so filter on `kind`, never on a hand-picked list that can silently
 leave one out (`DATA_PIPELINE.md` §Row visibility for the AI path).
 
+That fix's own `kind = 'composite'` classification for `CL5CC` turned out
+wrong, caught by checking `~/Projects/up-excise-spatial-revenue-optimizer`'s
+roadmap — the canonical shop-type reference for this department's licensing,
+independently built and far more detailed on this specific point than
+anything in this repo. `CL5CC` is not its own shop type at all: it is a
+Country Liquor shop with a beer endorsement, modeled there as
+`shopType = COUNTRY_LIQUOR` with a `hasCl5cc` flag, never combined with
+foreign liquor. "Composite" means only a Foreign Liquor + Beer license —
+`FL5DB` is the sole `kind = 'composite'` code. `public.license_categories`
+had both wrong: `CL5CC.kind` was `'composite'` (corrected to
+`'country_liquor'`) and `FL5DB.name` read "Composite (Foreign + Country
+Liquor)" (corrected to "Composite (Foreign Liquor + Beer)") — fixed live
+against the running database and in `db/seed_reference.sql` for the next
+fresh provision, with `schema_card.py`'s `VIEW_NOTES` and the worked SQL
+example's own comment corrected to match. The fix from the paragraph above
+still holds: filtering on `kind` rather than a hardcoded code list already
+gave the "country liquor and composite shops" question the right answer
+either way, since `CL5C` and `CL5CC` both being `kind = 'country_liquor'`
+was never in question — only `CL5CC`'s own kind label was wrong.
+
+A new knowledge-base document, `UP Excise shop types and license codes`,
+carries the corrected classification for every shop type this project
+uses (Country Liquor, Composite, Model Shop, PRV, Bhang Shop, HBR) in
+plain language, sourced from the same roadmap, so a chat question asking
+what CL5CC or FL5DB means retrieves the correct answer instead of nothing
+— confirmed live via `search_knowledge`. Getting it in surfaced that the
+admin "upload a `.md` file" screen (`KnowledgeBaseIndex::upload()`) has
+never had an ETL consumer: `etl/etl/sources/` only syncs
+`pdf-markdown-pipeline`'s own corpus, nothing anywhere reads a pending
+`kb_uploads` row despite the upload screen's own flash message promising
+ingestion "on the next sync." This document was ingested by hand instead,
+calling `etl/etl/chunk.py`'s `chunk_markdown()` directly the way the
+pdf-pipeline sync does, tagged `origin = 'admin_upload'` rather than
+`'pdf_pipeline'`. Wiring `kb_uploads` into a real sync path — chunk each
+pending row's stored file the same way, mark it ingested, handle a
+withdrawal — is unbuilt, `ROADMAP.md`'s backlog.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures

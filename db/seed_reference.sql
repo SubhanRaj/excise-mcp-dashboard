@@ -155,11 +155,16 @@ INSERT INTO license_categories (code, name, kind) VALUES
   ('MODEL', 'Model Shop', 'model_shop'),
   ('FL2', 'Foreign Liquor Wholesale', 'wholesale'),
   ('CL2', 'Country Liquor Wholesale', 'wholesale'),
-  ('FL5DB', 'Composite (Foreign + Country Liquor)', 'composite'),
+  ('FL5DB', 'Composite (Foreign Liquor + Beer)', 'composite'),
   ('FL4A', 'Model Shop', 'model_shop'),
   ('FL4C', 'Premium Retail Vend', 'premium_retail_vend'),
   ('CL5C', 'Country Liquor', 'country_liquor'),
-  ('CL5CC', 'Country Liquor with Beer', 'composite')
+  -- Not a separate shop type: a Country Liquor shop with a beer endorsement,
+  -- kind='country_liquor' like CL5C, not 'composite' — "composite" means a
+  -- combined Foreign Liquor + Beer license (FL5DB above), a different shop
+  -- entirely (~/Projects/up-excise-spatial-revenue-optimizer/roadmap.md,
+  -- Appendix B and its COMPOSITE_SHOP / COUNTRY_LIQUOR with CL5CC sections).
+  ('CL5CC', 'Country Liquor with Beer', 'country_liquor')
 ON CONFLICT (code) DO NOTHING;
 
 -- Reconciliation: the counts the ROADMAP Milestone 1 "Done when" calls for.

@@ -73,15 +73,17 @@ FEW_SHOT_SQL_EXAMPLES: list[dict[str, str]] = [
         # that part, just COUNT(DISTINCT shop_id) since one shop has many dispatch rows.
         #
         # A second bug lived in this same example for a while: a general category name
-        # like "composite" is not one code. license_categories.kind is 'composite' for
-        # both CL5CC (Country Liquor with Beer) and FL5DB (Composite: Foreign + Country
-        # Liquor) — hardcoding just retail_license_category IN ('CL5C', 'CL5CC') here
-        # (this example's own earlier version) undercounted a live "country liquor and
-        # composite shops" question by 417 shops, every one of them FL5DB, because the
-        # model copies this worked example's pattern directly rather than reasoning
-        # about which codes a kind covers. Filtering on license_categories.kind instead
-        # of a memorized code list is correct regardless of how many codes that kind
-        # has today or gains later.
+        # like "composite" is not one code, and this example's own earlier version
+        # (retail_license_category IN ('CL5C', 'CL5CC')) hardcoded the wrong pair —
+        # undercounting a live version of this question by 417 shops, every one of
+        # them FL5DB. CL5CC is kind='country_liquor' (a Country Liquor shop with a beer
+        # endorsement, not a separate shop type — confirmed against
+        # ~/Projects/up-excise-spatial-revenue-optimizer's own shop-type glossary);
+        # FL5DB (Foreign Liquor + Beer) is the only kind='composite' code. The model
+        # copies this worked example's pattern directly rather than reasoning about
+        # which codes a kind covers, so filtering on license_categories.kind — correct
+        # regardless of how many codes a kind has today or gains later — belongs in
+        # the example itself, not just in VIEW_NOTES' prose.
         "question": ("How many country liquor and composite shops are in Lucknow in August 2026?"),
         "sql": "SELECT COUNT(DISTINCT d.shop_id) AS shop_count FROM analytics.dispatches d "
         "JOIN analytics.license_categories lc ON lc.code = d.retail_license_category "

@@ -471,6 +471,26 @@ rather than a specific code (composite, country liquor, foreign liquor,
 beer, model shop) means every code of that kind, found by filtering on
 `kind`, never by a memorized code list that can silently leave one out.
 
+That fix's own premise about `CL5CC` was wrong: checked against
+`~/Projects/up-excise-spatial-revenue-optimizer`'s roadmap, the canonical
+shop-type reference for this department, `CL5CC` is not `kind = 'composite'`
+at all — it is a Country Liquor shop with a beer endorsement, never combined
+with foreign liquor, and "composite" means only a Foreign Liquor + Beer
+license (`FL5DB` is the sole `kind = 'composite'` code).
+`public.license_categories` is corrected — `CL5CC.kind` is now
+`'country_liquor'`, `FL5DB.name` now reads "Composite (Foreign Liquor +
+Beer)" — live and in `db/seed_reference.sql`. The question above still gets
+the same right answer either way, since it asked for country liquor and
+composite *together*: `CL5C` and `CL5CC` are both `kind = 'country_liquor'`
+regardless of this fix, and `FL5DB` alone was always the missing
+`kind = 'composite'` code. A new knowledge-base document, "UP Excise shop
+types and license codes," carries the corrected classification for every
+shop type — Country Liquor, Composite, Model Shop, PRV, Bhang Shop, HBR —
+in plain language, sourced from the same roadmap (`ROADMAP.md`'s backlog
+has the `kb_uploads` ETL-sync gap this surfaced: the admin upload screen has
+no sync consumer yet, so this one document was ingested by calling
+`etl/etl/chunk.py` directly).
+
 ### BI access (future — Power BI and similar, not built)
 
 `analytics.*` and `kb.*` are the entire surface any read-only consumer ever

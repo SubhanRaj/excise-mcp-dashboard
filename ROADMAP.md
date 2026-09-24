@@ -733,3 +733,13 @@ PDF / XLSX / ZIP with the data vintage on it.
   live IESCMS import carries it — the wholesale-to-retail dispatch reports
   this app ingests are liquor-only. Needs a source of shop-level Bhang data
   before there's anything to ingest; not started
+- `kb_uploads` ETL sync — the admin "upload a `.md` file" screen
+  (`KnowledgeBaseIndex::upload()`) creates a `kb_uploads` row and tells the
+  uploader it "will be ingested on the next sync," but `etl/etl/sources/`
+  only ever synced `pdf-markdown-pipeline`'s own corpus; nothing reads
+  `kb_uploads` at all. A first document was ingested by hand
+  (`CLAUDE.md`'s shop-type glossary entry) calling `etl/etl/chunk.py`
+  directly rather than through a real sync. Needs a source module mirroring
+  `pdf_pipeline.py`'s shape: chunk a pending row's stored file, mark it
+  ingested, and handle a withdrawal the same way `pdf_pipeline.py` marks an
+  upstream removal
