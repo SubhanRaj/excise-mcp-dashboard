@@ -362,3 +362,39 @@ async def test_exceeding_the_tool_call_cap_raises_the_typed_error(
 
     with pytest.raises(ChatToolLoopExceededError):
         await _events(ollama)
+
+
+async def test_a_slow_generation_emits_heartbeats_before_its_first_chunk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Confirmed live: a compound question's follow-up turn (deciding whether to call
+    # make_chart after run_sql_query came back) can sit with no streamed content at all
+    # while the model composes a tool call, long enough to cross the PHP relay's 45s idle
+    # cap -- only a running tool call had a heartbeat before this, not a turn's own
+    # generation.
+    monkeypatch.setattr(chat_loop, "_HEARTBEAT_INTERVAL_S", 0.01)
+    call = ToolCall(name="run_sql_query", arguments={"question": "x"})
+
+    class _SlowOllama:
+        def __init__(self) -> None:
+            self._calls = 0
+
+        async def chat_stream(
+            self, *, model: str, messages: object, tools: object, usage: object = None
+        ) -> AsyncIterator[object]:
+            self._calls += 1
+            await asyncio.sleep(0.05)
+            if self._calls == 1:
+                yield _FakeChunk(content="", tool_calls=[call])
+            else:
+                yield _FakeChunk(content="Done.")
+
+    async def fake_dispatch(call: ToolCall, **kwargs: object) -> ToolResult:
+        return ToolResult(ok=True, summary="ok")
+
+    monkeypatch.setattr(chat_loop, "dispatch", fake_dispatch)
+
+    events = await _events(_SlowOllama())  # type: ignore[arg-type]
+    heartbeat_index = next(i for i, e in enumerate(events) if isinstance(e, HeartbeatEvent))
+    call_index = next(i for i, e in enumerate(events) if isinstance(e, ToolCallEvent))
+    assert heartbeat_index < call_index

@@ -1024,6 +1024,33 @@ pdf-pipeline sync does, tagged `origin = 'admin_upload'` rather than
 pending row's stored file the same way, mark it ingested, handle a
 withdrawal — is unbuilt, `ROADMAP.md`'s backlog.
 
+Pre-demo retesting of the exact question set planned for the demo surfaced
+two more live failures, both traced through `journalctl --user -u
+excise-orchestrator`'s structured logs rather than guessed at. First, the
+sixth tool-calling shape's fix (`MCP_ENGINES.md` §Tools) — a
+`CHAT_SYSTEM_PROMPT` line forbidding a chart claim with no `make_chart`
+call — turned out to be a request the model could still ignore: a retest
+answered "Here is a chart showing the dispatched volume by shop category in
+Lucknow for August 2026" with the log confirming only one tool call that
+turn (`run_sql_query`, no `make_chart`). `chat/loop.py` now enforces this in
+code, the same way `_needs_retry` already enforces the fenced-sql-guess
+guard rather than trusting the prompt alone: `_claims_unmade_chart` checks a
+completed turn's text against a fixed set of chart-claim phrases and retries
+once, unless a `make_chart` call actually succeeded that turn. Second, a
+compound question ("compare dispatched volume by shop category") dropped
+mid-turn with "The connection was interrupted" after roughly 90 seconds.
+The existing 15s heartbeat (`MCP_ENGINES.md` §Streamed events) only ever
+covered a running tool call, not the model's own turn generation — the
+follow-up turn deciding whether to call `make_chart` after `run_sql_query`
+returned streamed through a plain iterator with nothing to fill the wire if
+it sat quiet, long enough to cross the PHP relay's 45s idle cap
+(`CurlOrchestratorStream`). `_generate_with_heartbeats` now wraps
+`ollama.chat_stream()` the same way `_dispatch_with_heartbeats` already
+wraps a tool call. Both fixes are `orchestrator/`-only and need the standing
+`systemctl --user restart excise-orchestrator` step (this file's own hard
+constraint on `systemctl` — Claude documents the command, an operator runs
+it) before a retest of the same demo question set will show either fix live.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures

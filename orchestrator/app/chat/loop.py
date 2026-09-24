@@ -11,7 +11,7 @@ import asyncpg
 from app.chat.prompts import CHAT_SYSTEM_PROMPT, CHAT_TOOL_SCHEMAS
 from app.chat.tools import dispatch
 from app.config import settings
-from app.llm.client import OllamaClient, TokenUsage
+from app.llm.client import ChatChunk, OllamaClient, TokenUsage
 from app.pipeline import _select_model
 from app.schemas import (
     ChartArtifact,
@@ -125,6 +125,33 @@ def _needs_retry(text: str) -> bool:
     return "```sql" in text.strip().lower()
 
 
+_CHART_CLAIM_PHRASES = (
+    "here is a chart",
+    "here's a chart",
+    "chart showing",
+    "chart below",
+    "chart above",
+    "graph showing",
+    "visualization showing",
+    "chart illustrat",
+)
+
+
+def _claims_unmade_chart(text: str, chart_made: bool) -> bool:
+    """CHAT_SYSTEM_PROMPT already forbids claiming a chart exists unless
+    make_chart was called and succeeded this turn -- confirmed live that this
+    is a prompt instruction the model can still ignore outright, writing
+    "Here is a chart showing..." with no make_chart call anywhere in the
+    turn. Checked only once the full text is in, the same as _needs_retry's
+    fenced-sql-block check, since these phrases read like ordinary prose
+    until complete.
+    """
+    if chart_made:
+        return False
+    lowered = text.lower()
+    return any(phrase in lowered for phrase in _CHART_CLAIM_PHRASES)
+
+
 def _tool_failure_fallback(result: ToolResult) -> str:
     """The final answer when neither the tool-aware attempt nor the tools=[] retry
     produced usable prose — both held back per chunk by `_is_degenerate`, so this
@@ -182,6 +209,42 @@ async def _dispatch_with_heartbeats(
             task.cancel()
 
 
+async def _generate_with_heartbeats(
+    chunks: AsyncIterator[ChatChunk],
+) -> AsyncIterator[HeartbeatEvent | ChatChunk]:
+    """Same keep-alive shape as `_dispatch_with_heartbeats`, for the model's own
+    turn generation rather than a tool call. Confirmed live: a compound question's
+    follow-up turn (deciding whether to call make_chart after run_sql_query came
+    back) can sit with no streamed content at all while the model composes a tool
+    call, long enough to cross the PHP relay's 45s idle cap with nothing sent --
+    only a running tool call had a heartbeat before this, not a turn's own
+    generation.
+    """
+    queue: asyncio.Queue[ChatChunk | None] = asyncio.Queue()
+
+    async def _pump() -> None:
+        try:
+            async for chunk in chunks:
+                await queue.put(chunk)
+        finally:
+            await queue.put(None)
+
+    task = asyncio.create_task(_pump())
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=_HEARTBEAT_INTERVAL_S)
+            except TimeoutError:
+                yield HeartbeatEvent()
+                continue
+            if item is None:
+                return
+            yield item
+    finally:
+        if not task.done():
+            task.cancel()
+
+
 def _build_messages(message: str, history: list[ChatTurn]) -> list[dict[str, object]]:
     messages: list[dict[str, object]] = [{"role": "system", "content": CHAT_SYSTEM_PROMPT}]
     messages.extend({"role": t.role, "content": t.content} for t in history)
@@ -200,15 +263,19 @@ async def run_chat(
     messages = _build_messages(request.message, request.history)
     tool_calls_made = 0
     last_tool_result: ToolResult | None = None
+    chart_made_this_turn = False
     usage = TokenUsage()
 
     for _ in range(settings.chat_max_tool_calls + 1):
         assistant_text = ""
         held = ""
         pending_calls: list[ToolCall] = []
-        async for chunk in ollama.chat_stream(
-            model=model, messages=messages, tools=CHAT_TOOL_SCHEMAS, usage=usage
+        async for chunk in _generate_with_heartbeats(
+            ollama.chat_stream(model=model, messages=messages, tools=CHAT_TOOL_SCHEMAS, usage=usage)
         ):
+            if isinstance(chunk, HeartbeatEvent):
+                yield chunk
+                continue
             if chunk.content:
                 assistant_text += chunk.content
                 held += chunk.content
@@ -217,7 +284,10 @@ async def run_chat(
                     held = ""
             pending_calls.extend(chunk.tool_calls)
 
-        if not pending_calls and _needs_retry(assistant_text):
+        if not pending_calls and (
+            _needs_retry(assistant_text)
+            or _claims_unmade_chart(assistant_text, chart_made_this_turn)
+        ):
             # The turn didn't need a tool and the model's tool-aware reply came
             # back degenerate — retry once as a plain chat call, same
             # retry-once shape guard_sql/render already use for a bad first
@@ -228,16 +298,21 @@ async def run_chat(
             # has, instead of streaming it unconditionally.
             assistant_text = ""
             held = ""
-            async for chunk in ollama.chat_stream(
-                model=model, messages=messages, tools=[], usage=usage
+            async for chunk in _generate_with_heartbeats(
+                ollama.chat_stream(model=model, messages=messages, tools=[], usage=usage)
             ):
+                if isinstance(chunk, HeartbeatEvent):
+                    yield chunk
+                    continue
                 if chunk.content:
                     assistant_text += chunk.content
                     held += chunk.content
                     if not _is_degenerate(held):
                         yield TokenEvent(delta=held)
                         held = ""
-            if _is_degenerate(assistant_text):
+            if _is_degenerate(assistant_text) or _claims_unmade_chart(
+                assistant_text, chart_made_this_turn
+            ):
                 # Both attempts came back degenerate — either genuinely empty (an 8B
                 # model can fail to produce any follow-up text at all, with or without
                 # a prior tool call) or still narrating a fake call. The per-chunk
@@ -295,6 +370,8 @@ async def run_chat(
                 result = ToolResult(ok=False, summary=e.message)
             assert result is not None
             last_tool_result = result
+            if call.name == "make_chart" and result.ok:
+                chart_made_this_turn = True
             tool_calls_made += 1
             yield ToolResultEvent(name=call.name, ok=result.ok, summary=result.summary)
             if result.chart is not None:

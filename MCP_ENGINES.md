@@ -572,6 +572,22 @@ venv path out of the message it raises (the full traceback still reaches the
 log line, which stays operator-only); the `/scratch/...` path a script's own
 frames use was never host-identifying and is left as-is.
 
+The sixth shape's own prompt-only guard didn't hold on its own either: a
+live turn wrote "Here is a chart showing the dispatched volume by shop
+category..." with no `make_chart` call anywhere in the turn, confirmed
+against the orchestrator's own structured log for that request
+(`tool_calls_count: 1`, matching only the `run_sql_query` call). A prompt
+instruction is a request, not a guarantee — the same reasoning that already
+put a retry behind `_needs_retry`'s fenced-sql check rather than trusting
+`CHAT_SYSTEM_PROMPT` alone. `_claims_unmade_chart(text, chart_made)` now runs
+at both retry-decision points in `run_chat`, in the same place `_needs_retry`
+already runs — once after the tool-aware attempt, once after the `tools=[]`
+retry — checking the completed turn's text for a fixed set of chart-claim
+phrases ("here is a chart", "chart showing," and similar) unless a
+`make_chart` call actually succeeded that turn. A `chart_made_this_turn` flag
+is the one thing that clears the check, set only when a dispatched
+`make_chart` call returns `ok=True`.
+
 The loop:
 
 ```
@@ -601,6 +617,10 @@ sequenceDiagram
     L->>O: POST /chat — bearer, capped history, model key
     O->>O: reject the model key if it is not in the registry
     loop up to CHAT_MAX_TOOL_CALLS
+        loop every 15s M produces no output
+            O-->>L: ndjson line: {"ping": true}
+            L-->>B: (keeps the connection alive; nothing shown)
+        end
         O->>M: stream a model turn
         M-->>O: token deltas
         O-->>L: ndjson line: {"token": ...}
@@ -622,6 +642,19 @@ sequenceDiagram
     Note over O: cap exceeded -> ndjson line: {"error": {stage: tool_loop}}
     L->>L: persist messages + message_tool_calls
 ```
+
+Until this, that 15s heartbeat only ever covered a running tool call — the
+model's own turn generation streamed through a plain iterator with nothing to
+fill the wire if it went quiet before its first token or tool call. A
+compound question ("compare X and Y by category") surfaced the gap live:
+after `run_sql_query` returned, the follow-up turn — deciding whether to call
+`make_chart` — sat silent long enough to cross the PHP relay's 45s idle cap
+(`OrchestratorClient::chatStream()`, `CurlOrchestratorStream`), and the
+connection dropped with nothing streamed. `_generate_with_heartbeats` wraps
+`ollama.chat_stream()` the same way `_dispatch_with_heartbeats` already wraps
+`dispatch()` — a background task pumps chunks into a queue, and the loop
+yields a `HeartbeatEvent` on any 15s stretch with nothing new — at both the
+tool-aware attempt and the `tools=[]` retry.
 
 A client disconnect cancels the in-flight Ollama stream and any running tool.
 
