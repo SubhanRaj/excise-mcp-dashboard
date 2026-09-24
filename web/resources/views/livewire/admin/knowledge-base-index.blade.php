@@ -96,7 +96,7 @@
                                 <span class="text-slate-800 dark:text-slate-100">{{ $doc['title'] }}</span>
                                 @endif
                             </td>
-                            <td class="px-4 py-3 text-slate-600 dark:text-slate-300">{{ $doc['doc_type'] ?? '—' }}</td>
+                            <td class="px-4 py-3 text-slate-600 dark:text-slate-300">{{ $this->docTypeLabel($doc['doc_type'] ?? null) }}</td>
                             <td class="px-4 py-3">
                                 @if(!empty($doc['withdrawn_at']))
                                 <span class="badge bg-slate-100 text-slate-500 dark:bg-slate-700 dark:text-slate-400">Withdrawn</span>
@@ -111,6 +111,11 @@
                     </tbody>
                 </table>
             </div>
+            {{-- A search result set isn't paginated — it's already the FTS-ranked top matches,
+                 not the full browsable corpus, so the pager only applies to the plain browse list. --}}
+            @if(! $corpusResults && $corpusPaginator)
+            <div class="mt-4">{{ $corpusPaginator->links() }}</div>
+            @endif
         @endif
     </section>
 </div>

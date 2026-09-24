@@ -6,6 +6,8 @@ use App\Livewire\Concerns\ConfirmsWithSweetAlert;
 use App\Models\KbUpload;
 use App\Services\OrchestratorClient;
 use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Pagination\Paginator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
@@ -18,6 +20,22 @@ use Livewire\WithPagination;
 class KnowledgeBaseIndex extends Component
 {
     use ConfirmsWithSweetAlert, WithFileUploads, WithPagination;
+
+    // The same doc_type values pdf-markdown-pipeline's own Document::DOCUMENT_TYPES
+    // labels (~/Sites/pdf-markdown-pipeline/app/Models/Document.php) — this corpus is
+    // synced from there, so a code here is always one of that fixed set.
+    private const DOC_TYPE_LABELS = [
+        'go' => 'Government Order',
+        'policy' => 'Policy',
+        'notice' => 'Notice',
+        'court_order' => 'Court Order',
+        'service_code' => 'Service Code',
+        'rule' => 'Rule',
+        'rule_amendment' => 'Amendment to Rule',
+        'other' => 'Other',
+    ];
+
+    private const CORPUS_PER_PAGE = 20;
 
     #[Validate('nullable|file|extensions:md|max:2048')]
     public $file = null;
@@ -100,14 +118,32 @@ class KnowledgeBaseIndex extends Component
         }
     }
 
+    public function docTypeLabel(?string $type): string
+    {
+        if (! $type) {
+            return '—';
+        }
+
+        return self::DOC_TYPE_LABELS[$type] ?? Str::headline($type);
+    }
+
     public function render()
     {
         $uploads = KbUpload::with('uploader')->latest()->paginate(10);
 
         $corpus = null;
+        $corpusPaginator = null;
         if (! $this->corpusUnavailable) {
             try {
-                $corpus = app(OrchestratorClient::class)->kbDocuments();
+                $page = Paginator::resolveCurrentPage('corpus_page');
+                $corpus = app(OrchestratorClient::class)->kbDocuments($page, self::CORPUS_PER_PAGE);
+                $corpusPaginator = new LengthAwarePaginator(
+                    $corpus['documents'] ?? [],
+                    $corpus['total'] ?? 0,
+                    self::CORPUS_PER_PAGE,
+                    $page,
+                    ['pageName' => 'corpus_page']
+                );
             } catch (ConnectionException|\Throwable $e) {
                 Log::error('KnowledgeBaseIndex::render kbDocuments failed', ['error' => $e->getMessage()]);
                 $this->corpusUnavailable = true;
@@ -117,6 +153,7 @@ class KnowledgeBaseIndex extends Component
         return view('livewire.admin.knowledge-base-index', [
             'uploads' => $uploads,
             'corpus' => $corpus,
+            'corpusPaginator' => $corpusPaginator,
         ])->layout('components.layout', ['pageTitle' => 'Knowledge base', 'title' => 'Knowledge base']);
     }
 }

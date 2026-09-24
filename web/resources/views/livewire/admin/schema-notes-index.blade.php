@@ -15,9 +15,14 @@
     @foreach($tables as $table)
     <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-5" wire:key="table-{{ $table['name'] }}">
         <div class="flex items-center justify-between mb-3">
-            <h3 class="font-mono text-sm font-semibold text-slate-800 dark:text-slate-100">analytics.{{ $table['name'] }}</h3>
-            <button type="button" wire:click="toggleSample('{{ $table['name'] }}')" class="text-govviolet-600 hover:underline text-xs">
-                {{ $expandedTable === $table['name'] ? 'Hide sample rows' : 'Show sample rows' }}
+            <div>
+                <h3 class="font-mono text-sm font-semibold text-slate-800 dark:text-slate-100">analytics.{{ $table['name'] }}</h3>
+                @if($table['note'] ?? null)
+                <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{{ $table['note'] }}</p>
+                @endif
+            </div>
+            <button type="button" wire:click="toggleSample('{{ $table['name'] }}')" class="text-govviolet-600 hover:underline text-xs flex-shrink-0 ml-3">
+                {{ $expandedTable === $table['name'] ? 'Hide columns & sample data' : count($table['columns']).' columns — show columns & sample data' }}
             </button>
         </div>
 
@@ -54,6 +59,7 @@
                 <textarea wire:model="notes.{{ $table['name'] }}.__table__" rows="2" class="field-input" placeholder="{{ $table['note'] ?? 'e.g. one row per wholesale-to-retail transport pass...' }}"></textarea>
             </div>
 
+            @if($expandedTable === $table['name'])
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 @foreach($table['columns'] as $column)
                 <div>
@@ -62,6 +68,7 @@
                 </div>
                 @endforeach
             </div>
+            @endif
 
             <button type="submit" class="bg-govviolet-600 hover:bg-govviolet-700 text-white text-sm font-semibold py-2 px-4 rounded-lg transition-colors">
                 Save notes

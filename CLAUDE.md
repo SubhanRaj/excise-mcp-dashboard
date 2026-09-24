@@ -926,6 +926,30 @@ calls — nothing rendered, indistinguishable from the page being broken. It
 now shows "No response was generated for this message." instead
 (`MCP_ENGINES.md` §Streamed events).
 
+The admin Knowledge base screen's "Ingested corpus" table had two more gaps.
+`KnowledgeBaseIndex::render()` called `OrchestratorClient::kbDocuments()`
+with no arguments, always the first 20 documents with no way to reach the
+rest even though both the orchestrator's `GET /kb/documents` and the client
+method already took `page`/`per_page` — only the caller never passed them.
+It now builds a `LengthAwarePaginator` from that response's own `total`,
+keyed on a `corpus_page` page name distinct from the uploads table's own
+pager on the same screen, rendered with the same `->links()` Tailwind view
+the uploads table already uses. A document's `doc_type` also rendered as
+the raw code (`rule_amendment`) rather than a reader's label — this corpus
+syncs from `pdf-markdown-pipeline`, whose own `Document::DOCUMENT_TYPES`
+already carries the human label for each of the fixed set of codes it can
+send; `KnowledgeBaseIndex::docTypeLabel()` now carries the same map.
+
+The admin Data dictionary screen had a related complaint: every table's
+full column list rendered open on every page load, so a table like
+`dispatches` (27 columns) made the whole screen long before an admin had
+asked to look at any of it. The screen already had a per-table
+`$expandedTable` toggle, but it only gated the sample-rows panel — the
+column list and its note-editing inputs sat outside it, always visible.
+Both now open together behind the same toggle, defaulting closed; the
+table-level note field stays visible unconditionally, since a one-line
+summary is what makes browsing the collapsed list still useful.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures
