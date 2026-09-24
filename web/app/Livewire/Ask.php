@@ -11,6 +11,7 @@ use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Str;
 use Livewire\Component;
 
 class Ask extends Component
@@ -142,7 +143,9 @@ class Ask extends Component
 
         $recentQueries = Query::where('user_id', Auth::id())->latest()->limit(20)->get(['id', 'prompt', 'status', 'created_at']);
 
+        $title = $activeQuery ? Str::limit(trim($activeQuery->prompt), 60) : 'Ask';
+
         return view('livewire.ask', ['activeQuery' => $activeQuery, 'recentQueries' => $recentQueries])
-            ->layout('components.layout', ['pageTitle' => 'Ask', 'title' => 'Ask']);
+            ->layout('components.layout', ['pageTitle' => $title, 'title' => $title]);
     }
 }

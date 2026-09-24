@@ -1106,6 +1106,13 @@ the exact quarantine reasons, and the Lucknow shop-identity collision check
 (zero collisions) are in `DATA_PIPELINE.md`'s "NITI workbook import"
 section.
 
+Ask's own page header always read "Ask," on the question's own page as much
+as on the empty composer — `Ask::render()` hardcoded the title regardless of
+`$activeQuery`. Chat already sets its header from the active conversation's
+own title; Ask now does the same from the active query's own `prompt`,
+truncated to 60 characters the same way `Chat::send()` already truncates its
+own title. A plain PHP file change — live on the next request, no restart.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures
