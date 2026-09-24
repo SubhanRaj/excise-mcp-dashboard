@@ -321,6 +321,15 @@ write outside `/scratch`, spawn more than 16 procs, run longer than 15 s, use
 more than ~1 GB, `import` a package not in the pinned venv, escalate
 privilege, or see the orchestrator's environment.
 
+A failed script's captured stdout reaches the chat user verbatim, as the
+failed tool call's own result — a Python traceback from a site-packages
+frame carries this box's real path (`bwrap` binds the venv in at its own
+host path, not a sandboxed alias), which a live `make_chart` failure showed
+the department's directory layout to whoever was chatting. `run_in_sandbox`
+strips that host venv path out of the message it raises before it reaches
+the tool result; the unmodified traceback stays in the structlog line,
+operator-only (`MCP_ENGINES.md` §Tools).
+
 ### Static image export — outside the sandbox, on purpose
 
 `fig.write_image()` (Plotly's own static export, via `kaleido`) drives a
