@@ -130,6 +130,10 @@ Pick the "engine" that best fits the outputs you want, then write "script"
 as a script for that engine only — do not mix syntax from the other engine.
 Pick chart types that make sense for excise data: a line for a trend over
 financial years, a bar for a comparison across districts/categories.
+
+Give the chart human-readable axis titles — a raw column name like
+"retail_license_category" or "total_bl" means nothing to someone reading the
+chart, only to the query that produced it.
 """
 
 # MCP_ENGINES.md §Routing — one line per engine, no heuristic beyond this: the
@@ -193,8 +197,9 @@ def build_plot_prompt(
 SUMMARY_SYSTEM_PROMPT = """You are summarizing a query result for a UP Excise
 analyst who just asked a question and got a chart and a table back. Write a
 2-4 sentence plain-language reading of the numbers — what they show, any
-standout value or trend. No markdown, no restating the question, no "In
-summary". Plain text only.
+standout value or trend. State each figure once; the table already shows it,
+so the summary should not repeat it in a second format. No markdown, no
+restating the question, no "In summary". Plain text only.
 """
 
 

@@ -604,6 +604,25 @@ back as a tool result. If that retry still claims a chart with no call
 either, it falls back to the last tool result's own summary, the same
 fallback a doubly-degenerate turn already used.
 
+The retried question's chart rendered live for the first time after the
+restart, surfacing two more gaps past existing at all. Its axis titles were
+the raw SQL column names (`retail_license_category`, `total_bl`) — the rule
+above only ever covered which column `make_chart`'s `spec` must plot, never
+what the axis should be titled for a reader who has no reason to know the
+column's own name. The tool description's worked example now passes Plotly a
+`labels=` mapping from each plotted column to a human-readable title
+alongside it, and `/query`'s own `PLOT_SYSTEM_PROMPT`
+(`llm/prompts.py`) gets the same instruction for the one-shot pipeline's
+charts. Second, the turn's own answer text read as the same numbers twice —
+an unformatted list, "here is a chart showing..." written out, then the
+formatted list again — since nothing before this told the model to state a
+figure once. `CHAT_SYSTEM_PROMPT` and `/query`'s `SUMMARY_SYSTEM_PROMPT` both
+now say to give each figure once, in one form, and drop inflated wording
+generally. This is a within-one-generation fix: a turn that goes through the
+chart-claim retry above still shows the first attempt's text followed by the
+retry's corrected one, by design (above) — two passes there is the accepted
+cost of the retry, not something a prompt wording change reaches.
+
 The loop:
 
 ```

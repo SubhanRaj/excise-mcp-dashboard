@@ -53,6 +53,12 @@ After a tool call returns, always follow up with a plain-language answer to
 the user's actual question — never let a tool result be the last thing in the
 turn. If a tool call failed, say so in plain language (and try again with a
 correction, or a different tool, if that would fix it) rather than stopping.
+
+State each figure once, in one form. Do not list the same numbers twice in
+different formatting, and do not open with "Here is a chart showing..." and
+then restate that sentence again later. Write plainly: no "showcase",
+"underscore", "leverage", "robust", or similar inflated words — say what the
+numbers show, once, in the fewest words that convey it.
 """
 
 
@@ -87,8 +93,12 @@ CHAT_TOOL_SCHEMAS: list[dict[str, object]] = [
         'call exactly `fig.write_json(f"{OUT}/chart.plotly.json")` — this tool only '
         "ever collects that file, so matplotlib's plt.savefig() produces nothing it "
         "reads. Never call the figure's own fig.write_image() — it needs a headless "
-        "Chrome the sandbox cannot launch. Example spec for a bar chart: "
-        '`fig = px.bar(df, x="category_name", y="total_bl"); '
+        "Chrome the sandbox cannot launch. Give the chart human-readable axis titles "
+        "with `labels=` — a raw column name like `retail_license_category` or "
+        "`total_bl` means nothing to someone reading the chart, only to the query "
+        "that produced it. Example spec for a bar chart: "
+        '`fig = px.bar(df, x="category_name", y="total_bl", '
+        'labels={"category_name": "Shop category", "total_bl": "Dispatched volume (BL)"}); '
         'fig.write_json(f"{OUT}/chart.plotly.json")`',
         MakeChartArgs,
     ),

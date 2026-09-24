@@ -956,9 +956,10 @@ traced to real data, not a bug: `db/seed_reference.sql` only ever populated
 `zones` — of `analytics`'s 13 tables, only those plus `shops` and the
 IESCMS-imported `dispatches`/`dispatch_strength_lines` carry any rows today.
 `brands`, `brand_prices`, `duty_rates`, `operations`, `policy_entries`,
-`revenues`, `sales_volumes`, and `shop_years` are real fact tables with no
-source data ever imported into them yet — sampling one correctly shows "No
-rows." A related live Chat report — a sample question left showing "No
+`revenues`, `sales_volumes`, and `shop_years` were real fact tables with no
+source data imported into them at the time — sampling one correctly showed
+"No rows." The NITI workbook import below fills all of them except
+`duty_rates`. A related live Chat report — a sample question left showing "No
 response was generated for this message" — traced the same way: the
 orchestrator's own log had no "chat turn complete", "chat turn failed", or
 unhandled-error line for that request at all, and the very next request
@@ -1063,6 +1064,47 @@ added line telling the model what it did wrong and to call `make_chart` now
 if a chart would help — the same feedback-and-retry shape a failed
 `run_sql_query` call already gets, rather than a retry that was structurally
 unable to fix what it was retrying for (`MCP_ENGINES.md` §Tools).
+
+After the restart, the same compound question rendered its chart live for
+the first time — confirmed against the real UI, bar chart and PNG/SVG/PDF
+export links included. That live render surfaced two more gaps past the
+chart itself existing. First, its axis titles read as the raw SQL column
+names (`retail_license_category`, `total_bl`) rather than anything a reader
+recognizes. `make_chart`'s tool description and `/query`'s own
+`PLOT_SYSTEM_PROMPT` now both ask for a Plotly `labels=` mapping to a
+human-readable title per axis, alongside the existing rule to plot the exact
+column names `run_sql_query` gave — the data reference and the display label
+are two different things, and only the first one had a rule before this.
+Second, the answer text itself read as two passes over the same numbers: an
+unformatted list, then "Here is a chart showing..." repeated within the same
+reply, then the formatted list again. `CHAT_SYSTEM_PROMPT` and `/query`'s
+`SUMMARY_SYSTEM_PROMPT` now both say to state each figure once, in one form,
+and drop the inflated wording `/general-english` already flags project-wide
+— this closes the repetition a single generation writes on its own. It does
+not touch the separate, already-documented case where a chart-claim retry
+fires: that retry's own corrected text still lands after the first attempt's
+already-streamed one, by design (above) — a demo question that needs no
+retry now reads as one clean answer; one that does still shows both passes.
+
+The eight NITI workbooks under `~/mentor_portal_db` are loaded into
+`excise_bank`, run against the live database: 3,455 revenue rows, 3,812
+sales-volume rows, 11,124 operations rows, 80,676 shops / 241,762
+shop-years (192 quarantined, mostly a known Bahraich financial-year typo),
+2,541 brands, 5,008 of 8,693 brand-price rows (3,684 quarantined — an
+unmatched brand name, an ambiguous one, or a genuine price conflict, in
+that order of frequency), and 60 policy entries. `duty_rates` stays at
+zero: its source column holds a formula referencing EDP (ex-distillery
+price, e.g. `200+0.425*EDP`), not a plain number, and no destination for a
+formula exists in this schema — a decision still open, not a bug. Two shop
+categories the real-category Shops workbook carries, "Bar" and "Wholesale
+Beer & Wine," have no seeded `license_categories` code (`FL6`/`FL2B` were
+never added) and load with `license_category_id = NULL`. The 14 districts
+`FLAGGED.md` already named for a per-district merge conflict load the same
+way every other district does, just left unpublished
+(`shops.published_at IS NULL`) pending district confirmation. Full detail,
+the exact quarantine reasons, and the Lucknow shop-identity collision check
+(zero collisions) are in `DATA_PIPELINE.md`'s "NITI workbook import"
+section.
 
 ## What this project is
 

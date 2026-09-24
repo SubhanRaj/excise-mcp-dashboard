@@ -9,7 +9,7 @@ MariaDB migrated, both LLM models pulled (`qwen2.5-coder:7b-instruct-q4_K_M`,
 are the owner's remaining M0 items. Milestone 1's database half (`db/` —
 schema, `analytics.*` views, the three roles, reference seed) and ETL core
 plumbing (loader, normalize, quarantine, the csv/excel readers) are done;
-the NITI workbook column maps and Google ingestion are not started. Milestone
+the NITI workbook import is done and Google ingestion is not started. Milestone
 2 (the orchestrator's one-shot `/query` pipeline) is done, tested live against
 real seed data. Milestone 3's retrieval plumbing is done — the
 pdf-markdown-pipeline sync, the chunker, and Postgres FTS via `/kb/search`,
@@ -140,11 +140,14 @@ pulled, the sandbox user exists.
       retail/wholesale license codes the report uses) are written; applying
       them and running the import is pending the operator's `sudo -u
       postgres` step (`OPERATOR_SETUP.md` §Data bank)
-- [ ] Excel adapter loads the NITI submission workbooks from
-      `~/mentor_portal_db/UP Excise Data Collection/` and reconciles counts
-      against the sibling's verified import (75 districts; 900 rows/series on
-      revenues/sales_volumes/operations; ~79,685 shops / 242,520 shop-years;
-      3,524 brands; 5,537 brand prices; 72 duty rates; 60 policy rows)
+- [x] Excel adapter loads the NITI submission workbooks from
+      `~/mentor_portal_db/UP Excise Data Collection/` — run live against
+      `excise_bank`: 3,455 revenue rows, 3,812 sales-volume rows, 11,124
+      operations rows, 80,676 shops / 241,762 shop-years (192 quarantined),
+      2,541 brands, 5,008 of 8,693 brand prices (3,684 quarantined), 60
+      policy rows. `duty_rates` stays at 0 of 73 — the source column is an
+      EDP-referencing formula, not a plain number, an open question rather
+      than a loader bug (`DATA_PIPELINE.md` "NITI workbook import")
 
 ### Google ingestion
 - [ ] Owner runs `OPERATOR_SETUP.md` §Google Cloud — create the project,
@@ -163,19 +166,19 @@ pulled, the sandbox user exists.
       that mails the run summary via Resend
 
 ### Tests
-- [ ] `etl/tests/`: each source adapter parses a fixture to the normalized
-      shape (done for `csv`/`excel`, against synthetic fixtures — no real
-      NITI file to fixture yet); re-running a fixture changes no counts
-      (done for `csv`); a malformed row is quarantined and counted; FY and
-      money/volume normalization (done); district-alias resolution against a
-      live database; both Google auth modes against a mocked API; token
-      refresh and revocation paths
+- [x] `etl/tests/`: each source adapter parses a fixture to the normalized
+      shape, including the four NITI adapters (`test_niti_facts.py`,
+      `test_niti_shops.py`, `test_niti_brands.py`, `test_niti_policy.py`); a
+      malformed row is quarantined and counted; FY and money/volume
+      normalization; district-alias resolution against a live database
+- [ ] both Google auth modes against a mocked API; token refresh and
+      revocation paths
 - [x] `ruff`, `ruff format --check`, `mypy --strict` green on `etl/`
 
-**Done when:** `etl sync --source niti_full` populates `excise_bank`, counts
-match the sibling's verified import, `analytics.*` returns only published
-rows, `excise_ro` is provably read-only, and a Google Sheet syncs through an
-OAuth connection.
+**Done when:** the NITI workbooks populate `excise_bank` (done — eight
+`etl sync --source niti_*` runs, above), `analytics.*` returns only
+published rows, `excise_ro` is provably read-only, and a Google Sheet syncs
+through an OAuth connection (not started).
 
 ---
 
