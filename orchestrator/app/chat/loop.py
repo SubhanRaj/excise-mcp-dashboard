@@ -284,10 +284,9 @@ async def run_chat(
                     held = ""
             pending_calls.extend(chunk.tool_calls)
 
-        if not pending_calls and (
-            _needs_retry(assistant_text)
-            or _claims_unmade_chart(assistant_text, chart_made_this_turn)
-        ):
+        needs_plain_retry = _needs_retry(assistant_text)
+        claims_chart = _claims_unmade_chart(assistant_text, chart_made_this_turn)
+        if not pending_calls and (needs_plain_retry or claims_chart):
             # The turn didn't need a tool and the model's tool-aware reply came
             # back degenerate — retry once as a plain chat call, same
             # retry-once shape guard_sql/render already use for a bad first
@@ -296,10 +295,34 @@ async def run_chat(
             # again after a failed call, even with no tools attached this time — so
             # the retry gets the same per-chunk holdback the first attempt already
             # has, instead of streaming it unconditionally.
+            #
+            # A chart claim with no make_chart call is a different shape: the fix
+            # is an actual make_chart call, which a tools=[] retry can never
+            # produce — confirmed live, that retry just repeated the same false
+            # claim since it had no tool to fall back on. This retry keeps tools
+            # attached and gets one line saying what it did wrong, the same
+            # feedback-and-retry shape a failed run_sql_query call already gets.
+            retry_tools = [] if needs_plain_retry else CHAT_TOOL_SCHEMAS
+            retry_messages = messages
+            if claims_chart and not needs_plain_retry:
+                retry_messages = [
+                    *messages,
+                    {
+                        "role": "user",
+                        "content": (
+                            "Your last reply referred to a chart but never called "
+                            "make_chart. Call make_chart now, using the last "
+                            "run_sql_query result's own column names, if a chart "
+                            "would help — otherwise answer without mentioning one."
+                        ),
+                    },
+                ]
             assistant_text = ""
             held = ""
             async for chunk in _generate_with_heartbeats(
-                ollama.chat_stream(model=model, messages=messages, tools=[], usage=usage)
+                ollama.chat_stream(
+                    model=model, messages=retry_messages, tools=retry_tools, usage=usage
+                )
             ):
                 if isinstance(chunk, HeartbeatEvent):
                     yield chunk
@@ -310,8 +333,10 @@ async def run_chat(
                     if not _is_degenerate(held):
                         yield TokenEvent(delta=held)
                         held = ""
-            if _is_degenerate(assistant_text) or _claims_unmade_chart(
-                assistant_text, chart_made_this_turn
+                pending_calls.extend(chunk.tool_calls)
+            if not pending_calls and (
+                _is_degenerate(assistant_text)
+                or _claims_unmade_chart(assistant_text, chart_made_this_turn)
             ):
                 # Both attempts came back degenerate — either genuinely empty (an 8B
                 # model can fail to produce any follow-up text at all, with or without

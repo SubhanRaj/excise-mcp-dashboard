@@ -398,3 +398,56 @@ async def test_a_slow_generation_emits_heartbeats_before_its_first_chunk(
     heartbeat_index = next(i for i, e in enumerate(events) if isinstance(e, HeartbeatEvent))
     call_index = next(i for i, e in enumerate(events) if isinstance(e, ToolCallEvent))
     assert heartbeat_index < call_index
+
+
+async def test_a_chart_claim_retry_keeps_tools_and_can_call_make_chart(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Confirmed live: retrying a chart claim with tools=[] (the same retry a bare "{}"
+    # or a guessed-SQL reply gets) can never fix it, since the one thing that would fix
+    # it -- an actual make_chart call -- needs tools attached. The retry that follows a
+    # chart claim keeps CHAT_TOOL_SCHEMAS and gets a one-line nudge instead.
+    chart_call = ToolCall(name="make_chart", arguments={"spec": "x"})
+    ollama = _FakeOllama(
+        [
+            [_FakeChunk(content="Here is a chart showing the volumes.")],
+            [_FakeChunk(content="", tool_calls=[chart_call])],
+            [_FakeChunk(content="Chart rendered above.")],
+        ]
+    )
+
+    async def fake_dispatch(call: ToolCall, **kwargs: object) -> ToolResult:
+        return ToolResult(ok=True, summary="chart made", chart=ChartArtifact(plotly_json="{}"))
+
+    monkeypatch.setattr(chat_loop, "dispatch", fake_dispatch)
+
+    events = await _events(ollama)
+    assert any(isinstance(e, ChartEvent) for e in events)
+    assert any(isinstance(e, ToolCallEvent) and e.name == "make_chart" for e in events)
+
+
+async def test_a_chart_claim_retry_that_still_claims_falls_back_to_the_tool_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # If the retry (tools attached, nudged) still doesn't call make_chart, this falls
+    # back the same way a doubly-degenerate reply already does -- the last real tool
+    # result's own summary, rather than ending the turn on the repeated false claim.
+    sql_call = ToolCall(name="run_sql_query", arguments={"question": "x"})
+    ollama = _FakeOllama(
+        [
+            [_FakeChunk(content="", tool_calls=[sql_call])],
+            [_FakeChunk(content="Here is a chart showing the volumes.")],
+            [_FakeChunk(content="Here is a chart showing the volumes.")],
+        ]
+    )
+
+    async def fake_dispatch(call: ToolCall, **kwargs: object) -> ToolResult:
+        return ToolResult(ok=True, summary="5 row(s), columns: category, total_bl")
+
+    monkeypatch.setattr(chat_loop, "dispatch", fake_dispatch)
+
+    events = await _events(ollama)
+    tokens = "".join(e.delta for e in events if isinstance(e, TokenEvent))
+    assert tokens.endswith("5 row(s), columns: category, total_bl")
+    assert not any(isinstance(e, ChartEvent) for e in events)
+    assert isinstance(events[-1], DoneEvent)

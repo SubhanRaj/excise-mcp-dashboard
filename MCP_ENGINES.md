@@ -579,14 +579,30 @@ against the orchestrator's own structured log for that request
 (`tool_calls_count: 1`, matching only the `run_sql_query` call). A prompt
 instruction is a request, not a guarantee — the same reasoning that already
 put a retry behind `_needs_retry`'s fenced-sql check rather than trusting
-`CHAT_SYSTEM_PROMPT` alone. `_claims_unmade_chart(text, chart_made)` now runs
-at both retry-decision points in `run_chat`, in the same place `_needs_retry`
-already runs — once after the tool-aware attempt, once after the `tools=[]`
-retry — checking the completed turn's text for a fixed set of chart-claim
-phrases ("here is a chart", "chart showing," and similar) unless a
-`make_chart` call actually succeeded that turn. A `chart_made_this_turn` flag
-is the one thing that clears the check, set only when a dispatched
-`make_chart` call returns `ok=True`.
+`CHAT_SYSTEM_PROMPT` alone. `_claims_unmade_chart(text, chart_made)` runs at
+both retry-decision points in `run_chat`, in the same place `_needs_retry`
+already runs — once after the tool-aware attempt, once after the retry —
+checking the completed turn's text for a fixed set of chart-claim phrases
+("here is a chart", "chart showing," and similar) unless a `make_chart` call
+actually succeeded that turn. A `chart_made_this_turn` flag is the one thing
+that clears the check, set only when a dispatched `make_chart` call returns
+`ok=True`.
+
+A first version of the retry reused `_needs_retry`'s own `tools=[]` shape —
+wrong for this case, caught on the very next live retest: the retry just
+repeated the identical chart claim, since a retry with no tools attached can
+never call `make_chart`, the one thing that would actually fix it. Unlike a
+degenerate or guessed-SQL reply, where forcing plain prose is the correct
+recovery, a chart claim's fix is a real tool call. The retry that follows a
+chart claim (and not also a degenerate/guessed-SQL reply — that combination
+keeps the `tools=[]` retry, on the reasoning that shape is the more severe
+failure) keeps `CHAT_TOOL_SCHEMAS` attached and adds one line to the retry's
+own message list — "Your last reply referred to a chart but never called
+make_chart. Call make_chart now ... or answer without mentioning one." — the
+same feedback-and-retry shape a failed `run_sql_query` call already gets fed
+back as a tool result. If that retry still claims a chart with no call
+either, it falls back to the last tool result's own summary, the same
+fallback a doubly-degenerate turn already used.
 
 The loop:
 

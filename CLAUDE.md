@@ -1051,6 +1051,19 @@ wraps a tool call. Both fixes are `orchestrator/`-only and need the standing
 constraint on `systemctl` — Claude documents the command, an operator runs
 it) before a retest of the same demo question set will show either fix live.
 
+That chart-claim retry had its own bug, caught on the very next retest after
+a restart: it reused `_needs_retry`'s `tools=[]` shape, so the retry could
+never call `make_chart` — the one thing that would actually produce a
+chart — and just repeated the identical false claim, this time landing on
+top of the first attempt's already-streamed text plus the doubly-degenerate
+fallback's raw tool-result summary, all three concatenated with no
+separator. The retry that follows a chart claim (and not also a degenerate
+or guessed-SQL reply) now keeps `CHAT_TOOL_SCHEMAS` attached and gets one
+added line telling the model what it did wrong and to call `make_chart` now
+if a chart would help — the same feedback-and-retry shape a failed
+`run_sql_query` call already gets, rather than a retry that was structurally
+unable to fix what it was retrying for (`MCP_ENGINES.md` §Tools).
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures
