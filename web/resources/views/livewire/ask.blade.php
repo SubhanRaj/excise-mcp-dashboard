@@ -141,6 +141,15 @@
 
     {{-- Canvas --}}
     <div class="flex-1 min-w-0 space-y-4">
+        @if($activeQuery)
+        <div class="flex items-start justify-between gap-3" x-data="{ copied: false }">
+            <p class="text-sm text-slate-500 dark:text-slate-400 whitespace-pre-wrap">{{ $activeQuery->prompt }}</p>
+            <button x-on:click="navigator.clipboard.writeText(@js($activeQuery->prompt)); copied = true; setTimeout(() => copied = false, 1500)"
+                    class="flex-shrink-0 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300" title="Copy question">
+                <i class="ti text-sm" :class="copied ? 'ti-check' : 'ti-copy'"></i>
+            </button>
+        </div>
+        @endif
         @if(!$activeQuery)
         <div class="stat-card justify-center text-center flex-col py-16">
             <div class="stat-icon bg-govviolet-100 dark:bg-govviolet-900/40 text-govviolet-600 mx-auto">

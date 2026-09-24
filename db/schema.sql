@@ -219,6 +219,51 @@ CREATE TABLE IF NOT EXISTS dispatch_strength_lines (     -- country-liquor per-s
 );
 
 -- ---------------------------------------------------------------------------
+-- SRO (up-excise-spatial-revenue-optimizer, sro.exciseup.in) shop-level revenue
+-- snapshot, DATA_PIPELINE.md §SRO shop revenue snapshot. That app's own
+-- district-elected data-entry collection: statewide shop coverage with
+-- latitude/longitude, thana-level location, and each shop's own annual
+-- revenue breakdown, keyed per financial year so a later year's snapshot adds
+-- rows rather than overwriting this one's history. shop_type and has_cl5cc use
+-- SRO's own vocabulary (COMPOSITE_SHOP, BHANG_SHOP, ...), not this schema's
+-- license_categories codes — the two aren't a reliable one-to-one match, kept
+-- as their own text/boolean rather than forced through that FK.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS sro_shops (
+    id                     BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    district_id            BIGINT NOT NULL REFERENCES districts(id),
+    financial_year_id      BIGINT NOT NULL REFERENCES financial_years(id),
+    source_shop_id         TEXT NOT NULL,       -- SRO's own shop_id, unique within a district only
+    shop_name              TEXT NOT NULL,
+    shop_type              TEXT NOT NULL,       -- SRO's own vocabulary, see note above
+    has_cl5cc              BOOLEAN NOT NULL DEFAULT false,
+    circle_sector_name     TEXT NOT NULL,
+    thana_name             TEXT NOT NULL,
+    latitude               NUMERIC(9,6),
+    longitude              NUMERIC(9,6),
+    license_fee_lf         NUMERIC(18,2) NOT NULL DEFAULT 0,
+    basic_license_fee_blf  NUMERIC(18,2) NOT NULL DEFAULT 0,
+    mgr_amount             NUMERIC(18,2) NOT NULL DEFAULT 0,
+    composite_lf_fl        NUMERIC(18,2) NOT NULL DEFAULT 0,
+    composite_lf_beer      NUMERIC(18,2) NOT NULL DEFAULT 0,
+    composite_mgr_fl       NUMERIC(18,2) NOT NULL DEFAULT 0,
+    composite_mgr_beer     NUMERIC(18,2) NOT NULL DEFAULT 0,
+    mgq_quantity           NUMERIC(18,3) NOT NULL DEFAULT 0,
+    consideration_fee      NUMERIC(18,2) NOT NULL DEFAULT 0,
+    special_beer_lf        NUMERIC(18,2) NOT NULL DEFAULT 0,
+    special_beer_mgr       NUMERIC(18,2) NOT NULL DEFAULT 0,
+    total_revenue          NUMERIC(18,2) NOT NULL DEFAULT 0,
+    uploaded_by_deo        TEXT,
+    source_ref             TEXT,
+    published_at           TIMESTAMPTZ NULL,
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    deleted_at             TIMESTAMPTZ NULL,
+    UNIQUE (district_id, source_shop_id, financial_year_id)
+);
+
+-- ---------------------------------------------------------------------------
 -- Reference tables
 -- ---------------------------------------------------------------------------
 
@@ -396,6 +441,8 @@ CREATE INDEX IF NOT EXISTS operations_published_idx   ON operations (published_a
 CREATE INDEX IF NOT EXISTS shops_district_idx    ON shops (district_id) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS shop_years_fy_type_idx ON shop_years (financial_year_id, shop_type);
 CREATE INDEX IF NOT EXISTS brand_prices_fy_idx   ON brand_prices (financial_year_id);
+
+CREATE INDEX IF NOT EXISTS sro_shops_district_fy_idx ON sro_shops (district_id, financial_year_id);
 
 -- ---------------------------------------------------------------------------
 -- updated_at triggers — one BEFORE UPDATE trigger per public table that has an

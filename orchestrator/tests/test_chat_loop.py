@@ -138,6 +138,30 @@ async def test_a_narrated_sql_guess_with_no_tool_call_retries_once() -> None:
     assert not any(isinstance(e, ToolCallEvent) for e in events)
 
 
+async def test_a_raw_tool_call_json_fragment_mid_reply_retries_once() -> None:
+    # Confirmed live: a reply answered normally, then trailed off into a raw
+    # `{"name": "` — a tool-call JSON object narrated as text partway through an
+    # otherwise real answer, not the whole reply degenerating the way the bare
+    # "{}" and narrated-call cases in _is_degenerate already catch. Streams live
+    # the same way the fenced-sql-guess case does, for the same reason (holding
+    # a whole generation back risks the connection dropping as interrupted).
+    ollama = _FakeOllama(
+        [
+            [
+                _FakeChunk(content="I can try searching for relevant text:\n\n"),
+                _FakeChunk(content='{"name": "'),
+            ],
+            [_FakeChunk(content="I couldn't find anything on that.")],
+        ]
+    )
+    events = await _events(ollama)
+    tokens = "".join(e.delta for e in events if isinstance(e, TokenEvent))
+    assert tokens == (
+        'I can try searching for relevant text:\n\n{"name": "I couldn\'t find anything on that.'
+    )
+    assert not any(isinstance(e, ToolCallEvent) for e in events)
+
+
 async def test_a_degenerate_reply_with_no_tool_call_ever_falls_back_to_a_retry_prompt() -> None:
     # Confirmed live: a fresh conversation's first turn (a knowledge question the
     # model tried to answer directly, never calling search_knowledge) came back

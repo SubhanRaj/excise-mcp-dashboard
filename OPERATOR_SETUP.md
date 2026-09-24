@@ -336,6 +336,61 @@ purpose, or swept up in an `etl sync --all`) is harmless either way: the
 loader upserts on `indent_number`, so a second pass over the same file
 changes no row counts.
 
+**Apply the `sro_shops` table** (`etl/sources/sro_shops.py`, `DATA_PIPELINE.md`
+§SRO shop revenue snapshot). Applied and confirmed live — 28,405 shops
+across all 75 districts, ₹554.6 billion statewide for FY2025-26:
+
+```bash
+cd ~/Sites/excise-mcp-dashboard/db
+sudo -u postgres psql -d excise_bank -f schema.sql
+sudo -u postgres psql -d excise_bank -f analytics_views.sql
+```
+
+**Register an SRO backup as a source, then sync it** (the snapshot's own
+financial year rides in `source_ref` after `#`, the same way an IESCMS
+report's `fl`/`cl` layout does above):
+
+```bash
+PGPASSWORD='CHANGE_ME_etl' psql -h 127.0.0.1 -U excise_etl -d excise_bank <<'SQL'
+INSERT INTO etl.source_registry (name, source, source_ref, target_table, schedule, enabled)
+VALUES ('sro_shops_fy2025_26', 'sro_shops',
+  '/home/subhan/Projects/up-excise-spatial-revenue-optimizer/backups/d1-prod-backup-2026-09-23.sql#FY2025-26',
+  'sro_shops', 'manual', true)
+ON CONFLICT (name) DO NOTHING;
+SQL
+
+cd ~/Sites/excise-mcp-dashboard/etl
+.venv/bin/python -m etl sync --source sro_shops_fy2025_26
+```
+
+The first live run quarantined 862 rows on two SRO district-name spellings
+this schema doesn't share — `Rae Bareli` / `Siddharth Nagar` against
+`Raebareli` / `Siddharthnagar`. Fixed the same way any district spelling
+mismatch here is, by adding the alias and re-running the sync (upserts on
+`(district_id, source_shop_id, financial_year_id)`, so a re-run costs
+nothing already-imported):
+
+```bash
+PGPASSWORD='CHANGE_ME_etl' psql -h 127.0.0.1 -U excise_etl -d excise_bank <<'SQL'
+INSERT INTO etl.district_aliases (alias, district_id) VALUES
+  ('Rae Bareli', (SELECT id FROM districts WHERE name = 'Raebareli')),
+  ('Siddharth Nagar', (SELECT id FROM districts WHERE name = 'Siddharthnagar'))
+ON CONFLICT (alias) DO NOTHING;
+SQL
+```
+
+A later year's SRO backup registers as its own `etl.source_registry` row
+(a new `name`, the new backup file's path, the new `#FYyyyy-yy`) rather than
+overwriting this one — `sro_shops` keeps every year's snapshot as its own
+set of rows, not just the latest.
+
+Verify:
+
+```bash
+PGPASSWORD='CHANGE_ME_ro' psql -h 127.0.0.1 -U excise_ro -d excise_bank -c \
+  "SELECT count(*), count(DISTINCT district), sum(total_revenue) FROM analytics.sro_shops;"
+```
+
 ---
 
 ## §ETL package (Milestone 1)

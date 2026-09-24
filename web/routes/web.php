@@ -6,6 +6,7 @@ use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\Auth\OnboardingController;
 use App\Http\Controllers\ChartExportController;
 use App\Http\Controllers\ChatController;
+use App\Http\Controllers\ChatExportController;
 use App\Http\Controllers\GoogleConnectionController;
 use App\Http\Controllers\UiPreferencesController;
 use App\Livewire\Admin\ActivityLogIndex;
@@ -77,6 +78,7 @@ Route::middleware('auth')->group(function () {
     Route::post('/chat/{conversation}/send', [ChatController::class, 'send'])
         ->middleware('throttle:chat')
         ->name('chat.send');
+    Route::get('/chat/{conversation}/export', [ChatExportController::class, 'export'])->name('chat.export');
 
     // Every past /query — Analyst sees own, Admin sees all (QueryLedger::render()).
     Route::get('/ledger', QueryLedger::class)->name('ledger');

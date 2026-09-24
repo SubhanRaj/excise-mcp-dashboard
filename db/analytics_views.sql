@@ -170,6 +170,23 @@ JOIN financial_years fy    ON fy.id = dr.financial_year_id
 JOIN license_categories lc ON lc.id = dr.license_category_id
 WHERE dr.published_at IS NOT NULL;
 
+CREATE OR REPLACE VIEW analytics.sro_shops AS
+SELECT ss.id, ss.district_id, ss.financial_year_id, ss.source_shop_id, ss.shop_name,
+       ss.shop_type, ss.has_cl5cc, ss.circle_sector_name, ss.thana_name,
+       ss.latitude, ss.longitude,
+       ss.license_fee_lf, ss.basic_license_fee_blf, ss.mgr_amount,
+       ss.composite_lf_fl, ss.composite_lf_beer, ss.composite_mgr_fl, ss.composite_mgr_beer,
+       ss.mgq_quantity, ss.consideration_fee, ss.special_beer_lf, ss.special_beer_mgr,
+       ss.total_revenue, ss.uploaded_by_deo, ss.source_ref,
+       ss.published_at, ss.created_at, ss.updated_at,
+       d.name AS district, d.slug AS district_slug,
+       fy.label AS financial_year, fy.start_year
+FROM sro_shops ss
+JOIN districts d        ON d.id = ss.district_id
+                        AND d.deleted_at IS NULL AND d.published_at IS NOT NULL
+JOIN financial_years fy ON fy.id = ss.financial_year_id
+WHERE ss.deleted_at IS NULL AND ss.published_at IS NOT NULL;
+
 CREATE OR REPLACE VIEW analytics.policy_entries AS
 SELECT pe.id, pe.financial_year_id, pe.effective_from, pe.effective_to,
        pe.title, pe.category, pe.summary, pe.source_ref,

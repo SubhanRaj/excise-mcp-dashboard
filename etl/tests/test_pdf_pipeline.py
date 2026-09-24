@@ -20,6 +20,12 @@ from etl.sources.pdf_pipeline import (
 
 BASE_URL = "https://docsrepo.exciseup.in"
 TEST_ORIGIN_REFS = ["999001", "999002"]
+# sync_documents()'s withdrawal step marks every row of one origin not in the current
+# call's rows as withdrawn — against the real database this suite runs on, so a test
+# origin distinct from the real "pdf_pipeline" the live sync uses is load-bearing, not
+# cosmetic: every test in this file used to run its withdrawal against the real corpus
+# by sharing that origin, and wiped 322 real documents live the day this was found.
+TEST_ORIGIN = "pdf_pipeline_test"
 
 
 def _row(doc_id: int = 999001, **overrides: object) -> SourceDocRow:
@@ -126,8 +132,8 @@ async def pg_conn() -> AsyncIterator[asyncpg.Connection]:
         yield conn
     finally:
         await conn.execute(
-            "DELETE FROM kb.documents "
-            "WHERE origin = 'pdf_pipeline' AND origin_ref = ANY($1::text[])",
+            "DELETE FROM kb.documents WHERE origin = $1 AND origin_ref = ANY($2::text[])",
+            TEST_ORIGIN,
             TEST_ORIGIN_REFS,
         )
         await conn.close()
@@ -135,8 +141,8 @@ async def pg_conn() -> AsyncIterator[asyncpg.Connection]:
 
 async def _new_run(conn: asyncpg.Connection) -> int:
     run_id = await conn.fetchval(
-        "INSERT INTO etl.ingestion_runs (source, source_ref) VALUES ('pdf_pipeline', 'test') "
-        "RETURNING id"
+        "INSERT INTO etl.ingestion_runs (source, source_ref) VALUES ($1, 'test') RETURNING id",
+        TEST_ORIGIN,
     )
     assert run_id is not None
     return int(run_id)
@@ -149,13 +155,14 @@ async def test_sync_creates_document_and_chunks(
     run_id = await _new_run(pg_conn)
 
     counts = await sync_documents(
-        pg_conn, run_id, [_row()], markdown_root=tmp_path, base_url=BASE_URL
+        pg_conn, run_id, [_row()], markdown_root=tmp_path, base_url=BASE_URL, origin=TEST_ORIGIN
     )
 
     assert (counts.seen, counts.upserted, counts.quarantined) == (1, 1, 0)
     doc = await pg_conn.fetchrow(
         "SELECT title, source_url, doc_type FROM kb.documents "
-        "WHERE origin = 'pdf_pipeline' AND origin_ref = '999001'"
+        "WHERE origin = $1 AND origin_ref = '999001'",
+        TEST_ORIGIN,
     )
     assert doc is not None
     assert doc["title"] == "Test Policy"
@@ -174,11 +181,17 @@ async def test_sync_populates_effective_from_from_metadata_year(
     run_id = await _new_run(pg_conn)
 
     await sync_documents(
-        pg_conn, run_id, [_row(effective_year=2022)], markdown_root=tmp_path, base_url=BASE_URL
+        pg_conn,
+        run_id,
+        [_row(effective_year=2022)],
+        markdown_root=tmp_path,
+        base_url=BASE_URL,
+        origin=TEST_ORIGIN,
     )
 
     doc = await pg_conn.fetchrow(
-        "SELECT effective_from FROM kb.documents WHERE origin_ref = '999001'"
+        "SELECT effective_from FROM kb.documents WHERE origin = $1 AND origin_ref = '999001'",
+        TEST_ORIGIN,
     )
     assert doc is not None
     assert doc["effective_from"].year == 2022
@@ -195,15 +208,26 @@ async def test_rerun_with_unchanged_content_still_backfills_effective_from(
     run_id = await _new_run(pg_conn)
 
     await sync_documents(
-        pg_conn, run_id, [_row(effective_year=None)], markdown_root=tmp_path, base_url=BASE_URL
+        pg_conn,
+        run_id,
+        [_row(effective_year=None)],
+        markdown_root=tmp_path,
+        base_url=BASE_URL,
+        origin=TEST_ORIGIN,
     )
     counts = await sync_documents(
-        pg_conn, run_id, [_row(effective_year=2024)], markdown_root=tmp_path, base_url=BASE_URL
+        pg_conn,
+        run_id,
+        [_row(effective_year=2024)],
+        markdown_root=tmp_path,
+        base_url=BASE_URL,
+        origin=TEST_ORIGIN,
     )
 
     assert counts.upserted == 1
     doc = await pg_conn.fetchrow(
-        "SELECT effective_from FROM kb.documents WHERE origin_ref = '999001'"
+        "SELECT effective_from FROM kb.documents WHERE origin = $1 AND origin_ref = '999001'",
+        TEST_ORIGIN,
     )
     assert doc is not None
     assert doc["effective_from"].year == 2024
@@ -215,13 +239,13 @@ async def test_rerun_unchanged_content_upserts_nothing(
     (tmp_path / "test-policy.md").write_text("# Test Policy\n\nBody.\n")
     run_id = await _new_run(pg_conn)
     first = await sync_documents(
-        pg_conn, run_id, [_row()], markdown_root=tmp_path, base_url=BASE_URL
+        pg_conn, run_id, [_row()], markdown_root=tmp_path, base_url=BASE_URL, origin=TEST_ORIGIN
     )
     assert first.upserted == 1
 
     run_id_2 = await _new_run(pg_conn)
     second = await sync_documents(
-        pg_conn, run_id_2, [_row()], markdown_root=tmp_path, base_url=BASE_URL
+        pg_conn, run_id_2, [_row()], markdown_root=tmp_path, base_url=BASE_URL, origin=TEST_ORIGIN
     )
     assert (second.seen, second.upserted) == (1, 0)
 
@@ -231,14 +255,19 @@ async def test_document_missing_from_next_fetch_is_withdrawn(
 ) -> None:
     (tmp_path / "test-policy.md").write_text("# Test Policy\n\nBody.\n")
     run_id = await _new_run(pg_conn)
-    await sync_documents(pg_conn, run_id, [_row()], markdown_root=tmp_path, base_url=BASE_URL)
+    await sync_documents(
+        pg_conn, run_id, [_row()], markdown_root=tmp_path, base_url=BASE_URL, origin=TEST_ORIGIN
+    )
 
     run_id_2 = await _new_run(pg_conn)
-    second = await sync_documents(pg_conn, run_id_2, [], markdown_root=tmp_path, base_url=BASE_URL)
+    second = await sync_documents(
+        pg_conn, run_id_2, [], markdown_root=tmp_path, base_url=BASE_URL, origin=TEST_ORIGIN
+    )
 
     assert second.withdrawn == 1
     withdrawn_at = await pg_conn.fetchval(
-        "SELECT withdrawn_at FROM kb.documents WHERE origin_ref = '999001'"
+        "SELECT withdrawn_at FROM kb.documents WHERE origin = $1 AND origin_ref = '999001'",
+        TEST_ORIGIN,
     )
     assert withdrawn_at is not None
 
@@ -248,7 +277,9 @@ async def test_missing_markdown_file_is_quarantined(
 ) -> None:
     run_id = await _new_run(pg_conn)
     row = _row(markdown_path="does-not-exist.md")
-    counts = await sync_documents(pg_conn, run_id, [row], markdown_root=tmp_path, base_url=BASE_URL)
+    counts = await sync_documents(
+        pg_conn, run_id, [row], markdown_root=tmp_path, base_url=BASE_URL, origin=TEST_ORIGIN
+    )
     assert (counts.quarantined, counts.upserted) == (1, 0)
 
 
@@ -256,5 +287,7 @@ async def test_no_url_context_is_quarantined(pg_conn: asyncpg.Connection, tmp_pa
     (tmp_path / "test-policy.md").write_text("# X\n")
     run_id = await _new_run(pg_conn)
     row = _row(section_slug=None)
-    counts = await sync_documents(pg_conn, run_id, [row], markdown_root=tmp_path, base_url=BASE_URL)
+    counts = await sync_documents(
+        pg_conn, run_id, [row], markdown_root=tmp_path, base_url=BASE_URL, origin=TEST_ORIGIN
+    )
     assert counts.quarantined == 1

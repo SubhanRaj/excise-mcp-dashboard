@@ -143,9 +143,13 @@ class Ask extends Component
 
         $recentQueries = Query::where('user_id', Auth::id())->latest()->limit(20)->get(['id', 'prompt', 'status', 'created_at']);
 
+        // The header's own h1 already line-clamps/truncates with CSS, so it can take the
+        // full question — only the browser tab title (too narrow to show much regardless)
+        // and the recent-questions rail stay truncated to a fixed length.
+        $pageTitle = $activeQuery ? trim($activeQuery->prompt) : 'Ask';
         $title = $activeQuery ? Str::limit(trim($activeQuery->prompt), 60) : 'Ask';
 
         return view('livewire.ask', ['activeQuery' => $activeQuery, 'recentQueries' => $recentQueries])
-            ->layout('components.layout', ['pageTitle' => $title, 'title' => $title]);
+            ->layout('components.layout', ['pageTitle' => $pageTitle, 'title' => $title]);
     }
 }

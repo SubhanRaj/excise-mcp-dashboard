@@ -20,6 +20,7 @@ from etl.sources import (
     niti_policy,
     niti_shops,
     pdf_pipeline,
+    sro_shops,
 )
 from etl.sources.base import RawRow
 
@@ -143,6 +144,7 @@ async def _run_source(
         "niti_facts",
         "niti_brands",
         "niti_policy",
+        "sro_shops",
     )
     if registry_row["source"] in _special_sources:
         error: str | None = None
@@ -186,6 +188,16 @@ async def _run_source(
                     brand_counts.seen,
                     brand_counts.upserted,
                     brand_counts.quarantined,
+                )
+            elif registry_row["source"] == "sro_shops":
+                # source_ref is "<D1 backup .sql path>#FYyyyy-yy" — the snapshot's own
+                # financial year, same "<path>#kind" shape niti_facts/brands/policy use.
+                path, _, fy_label = registry_row["source_ref"].rpartition("#")
+                sro_counts = await sro_shops.sync(conn, run_id, path, fy_label)
+                seen, upserted, quarantined = (
+                    sro_counts.seen,
+                    sro_counts.upserted,
+                    sro_counts.quarantined,
                 )
             else:
                 path, _, kind = registry_row["source_ref"].rpartition("#")

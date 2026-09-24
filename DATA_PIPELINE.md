@@ -246,6 +246,81 @@ analyst can query it. Registered as two `etl.source_registry` rows (source
 `iescms_dispatch`, one per report layout), same as any other source;
 `OPERATOR_SETUP.md` §Data bank has the exact commands.
 
+### SRO shop revenue snapshot
+
+A third, independent shop-level source: `up-excise-spatial-revenue-optimizer`
+(sro.exciseup.in, its own short name "SRO" — Spatial Revenue Optimizer), a
+separate departmental app whose own DEOs enter a per-shop revenue figure
+directly, statewide, every year. Found useful here while tracing why
+`revenues`'s district attribution goes wrong after 2018 (below): SRO's
+current-year table gave a real, correctly-attributed cross-check —
+`phase1_raw_collection`, 28,405 shops across all 75 districts for FY2025-26,
+each with a `total_revenue` figure, lat/long, and thana-level location
+(`district_name` > `circle_sector_name` > `thana_name`, one sector holding
+several thanas) — a level of location detail neither `shops` nor
+`dispatches` carries. Kept as its own table rather than merged into `shops`:
+SRO's `shop_type` (`COMPOSITE_SHOP`, `BHANG_SHOP`, ...) and `has_cl5cc` flag
+are that app's own vocabulary, not this schema's `license_categories` codes,
+and the two aren't a reliable one-to-one match to force through that FK.
+
+```sql
+CREATE TABLE sro_shops (
+    id                     BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    district_id            BIGINT NOT NULL REFERENCES districts(id),
+    financial_year_id      BIGINT NOT NULL REFERENCES financial_years(id),
+    source_shop_id         TEXT NOT NULL,       -- SRO's own shop_id, unique within a district only
+    shop_name              TEXT NOT NULL,
+    shop_type              TEXT NOT NULL,       -- SRO's own vocabulary, see note above
+    has_cl5cc              BOOLEAN NOT NULL DEFAULT false,
+    circle_sector_name     TEXT NOT NULL,
+    thana_name             TEXT NOT NULL,
+    latitude               NUMERIC(9,6),
+    longitude              NUMERIC(9,6),
+    license_fee_lf         NUMERIC(18,2) NOT NULL DEFAULT 0,
+    basic_license_fee_blf  NUMERIC(18,2) NOT NULL DEFAULT 0,
+    mgr_amount             NUMERIC(18,2) NOT NULL DEFAULT 0,
+    composite_lf_fl        NUMERIC(18,2) NOT NULL DEFAULT 0,
+    composite_lf_beer      NUMERIC(18,2) NOT NULL DEFAULT 0,
+    composite_mgr_fl       NUMERIC(18,2) NOT NULL DEFAULT 0,
+    composite_mgr_beer     NUMERIC(18,2) NOT NULL DEFAULT 0,
+    mgq_quantity           NUMERIC(18,3) NOT NULL DEFAULT 0,
+    consideration_fee      NUMERIC(18,2) NOT NULL DEFAULT 0,
+    special_beer_lf        NUMERIC(18,2) NOT NULL DEFAULT 0,
+    special_beer_mgr       NUMERIC(18,2) NOT NULL DEFAULT 0,
+    total_revenue          NUMERIC(18,2) NOT NULL DEFAULT 0,
+    uploaded_by_deo        TEXT,
+    published_at           TIMESTAMPTZ NULL,
+    source_ref             TEXT,
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    deleted_at             TIMESTAMPTZ NULL,
+    UNIQUE (district_id, source_shop_id, financial_year_id)
+);
+```
+
+SRO ships its own data as a periodic Cloudflare D1 backup — a plain SQL text
+dump against a SQLite schema
+(`~/Projects/up-excise-spatial-revenue-optimizer/backups/d1-prod-backup-
+YYYY-MM-DD.sql`), not a live connection this app can query. `etl/sources/
+sro_shops.py`'s `read_rows()` loads that dump into a throwaway in-memory
+SQLite database (stdlib `sqlite3`, no new dependency) and reads
+`phase1_raw_collection` back out with a normal `SELECT` — the same shape
+every other row source here is read in, just from a one-off text file
+instead of a live MariaDB/Postgres connection or an Excel workbook. The
+natural key is `(district_id, source_shop_id, financial_year_id)`, not just
+`(district_id, source_shop_id)` — SRO overwrites its own current-year table
+each year (`phase1_prior_year_snapshot` is where it archives the year
+before), but a re-sync here should add a new year's rows as history, not
+erase last year's, since the analyst asking "what did this shop earn last
+year" needs both years still queryable. `source_ref` in `etl.source_registry`
+carries `"<dump path>#FYyyyy-yy"`, the same `<path>#kind` shape
+`niti_facts`/`niti_brands`/`niti_policy` already use for a file-based source
+needing one more piece of context beyond its path. Registered as
+one `etl.source_registry` row per snapshot year, same as any other source;
+`OPERATOR_SETUP.md` §Data bank has the exact commands. Not yet imported —
+schema created, source written and tested, `etl sync --source sro_shops`
+not yet run against the real backup.
+
 ### Reference tables
 
 ```sql

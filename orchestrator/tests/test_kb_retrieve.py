@@ -94,3 +94,25 @@ async def test_retrieve_excludes_withdrawn_documents(seeded_document: int) -> No
 async def test_retrieve_no_match_returns_empty() -> None:
     chunks = await retrieve("xyzzy nonexistent gibberish query term", k=6)
     assert chunks == []
+
+
+async def test_retrieve_strips_stopwords_from_a_full_question(seeded_document: int) -> None:
+    # Confirmed live: a chat model's search_knowledge call often passes its full
+    # question verbatim, and websearch_to_tsquery('simple', ...) ANDs every one of
+    # its words with no stopword list — "What is zorquil bendrafta?" matched nothing
+    # before retrieve() stripped the filler words ("what", "is") first.
+    chunks = await retrieve("What is zorquil bendrafta?", k=6)
+    assert len(chunks) == 2
+
+
+async def test_retrieve_strips_excise_and_policy_as_question_framing(
+    seeded_document: int,
+) -> None:
+    # Confirmed live: "excise" and "policy" surviving the stopword strip as
+    # required AND terms was exactly why the real MGQ question matched nothing —
+    # neither word happened to appear in the same chunk as the actual search term
+    # anywhere in the corpus, even though the term alone matched plenty on its
+    # own. Both are in _STOPWORDS now; this fixture's own chunks don't contain
+    # either word, so a match here confirms they're no longer required.
+    chunks = await retrieve("What does excise policy say about zorquil bendrafta?", k=6)
+    assert len(chunks) == 2

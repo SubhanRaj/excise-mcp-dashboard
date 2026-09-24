@@ -17,6 +17,14 @@ INSERT, UPDATE, DELETE, DROP, ALTER, TRUNCATE, COPY, GRANT, CALL, SET, VACUUM,
 or ANALYZE. Reference only tables in the `analytics` schema, unqualified or as
 `analytics.<name>`. Always include a LIMIT. Money columns are already in
 rupees. Return only the JSON the schema asks for, no prose, no markdown fence.
+
+A question naming more than one category ("how many X and Y shops", "revenue
+and volume") wants each one broken out as its own row, and the total across
+them, not summed into a single row alone — a combined total hides which
+category is which, and a breakdown with no total leaves the reader to add
+the rows up themselves. Use `GROUP BY ROLLUP(...)` to get a correct total row
+alongside the per-category ones in the same query, rather than a second query
+or asking anyone downstream to sum the rows by hand.
 """
 
 FEW_SHOT_SQL_EXAMPLES: list[dict[str, str]] = [
@@ -84,12 +92,26 @@ FEW_SHOT_SQL_EXAMPLES: list[dict[str, str]] = [
         # which codes a kind covers, so filtering on license_categories.kind — correct
         # regardless of how many codes a kind has today or gains later — belongs in
         # the example itself, not just in VIEW_NOTES' prose.
+        #
+        # A third bug lived here past both of those: this example summed both named
+        # categories into one COUNT, so a live run answered "1006" with no breakdown
+        # and charted as a single bar — the question names two categories and the
+        # answer collapsed them into one anyway. Grouped by kind first (589 country
+        # liquor, 417 composite, confirmed live), which fixed the breakdown but then
+        # dropped the total the two rows used to give for free — a person asking "how
+        # many X and Y" still wants to know how many altogether, not just each part.
+        # ROLLUP adds that back as a real third row, its own COUNT(DISTINCT ...) over
+        # the combined group rather than the two subtotals added together, so it stays
+        # correct even if a shop's category ever varies across dispatch rows within the
+        # month (1006 either way, confirmed live: 417 + 589 with no overlap today).
         "question": ("How many country liquor and composite shops are in Lucknow in August 2026?"),
-        "sql": "SELECT COUNT(DISTINCT d.shop_id) AS shop_count FROM analytics.dispatches d "
+        "sql": "SELECT COALESCE(INITCAP(REPLACE(lc.kind, '_', ' ')), 'Total') AS category, "
+        "COUNT(DISTINCT d.shop_id) AS shop_count FROM analytics.dispatches d "
         "JOIN analytics.license_categories lc ON lc.code = d.retail_license_category "
         "WHERE d.district = 'Lucknow' AND lc.kind IN ('country_liquor', 'composite') "
         "AND EXTRACT(MONTH FROM d.transport_pass_issued_at) = 8 "
-        "AND EXTRACT(YEAR FROM d.transport_pass_issued_at) = 2026 LIMIT 100;",
+        "AND EXTRACT(YEAR FROM d.transport_pass_issued_at) = 2026 "
+        "GROUP BY ROLLUP(lc.kind) ORDER BY lc.kind NULLS LAST LIMIT 100;",
     },
     {
         # A bare code (CL5C, FL4A, FL5DB, ...) means nothing to a reader who hasn't
@@ -198,8 +220,21 @@ SUMMARY_SYSTEM_PROMPT = """You are summarizing a query result for a UP Excise
 analyst who just asked a question and got a chart and a table back. Write a
 2-4 sentence plain-language reading of the numbers — what they show, any
 standout value or trend. State each figure once; the table already shows it,
-so the summary should not repeat it in a second format. No markdown, no
-restating the question, no "In summary". Plain text only.
+so the summary should not repeat it in a second format. If the result breaks
+a total down into parts — a "Total" row alongside category rows, or several
+rows that together answer one combined question — state the total and each
+part, not the total alone or the parts alone.
+
+Every money figure in this data is Indian Rupees, never dollars — write ₹,
+never $. State a large amount in lakh or crore rather than a long digit
+string: "₹24,098.37 crore" reads plainly, "₹2,409,837,306,156" does not. One
+lakh is ₹1,00,000; one crore is ₹1,00,00,000.
+
+State what the numbers show, not commentary about the number itself — never
+"this figure represents a significant amount", "this is the only available
+data point", or "this suggests a substantial contribution". No markdown, no
+restating the question, no "In summary", no "showcase", "underscore",
+"leverage", "robust", or similar inflated words. Plain text only.
 """
 
 

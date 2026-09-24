@@ -283,7 +283,19 @@ async def run_in_sandbox(
         user_facing = stdout_tail.replace(str(Path(sys.prefix).resolve()), "<venv>").replace(
             str(Path(sys.executable).resolve().parents[1]), "<venv>"
         )
-        raise SandboxViolationError(f"exit {proc.returncode}: {user_facing}")
+        # A full Python traceback is dozens of internal pandas/plotly stack frames with
+        # no use to a chat model trying to self-correct — confirmed live, a make_chart
+        # script that guessed a wrong column name came back with the whole traceback as
+        # the tool result, when the one actionable line ("Value of 'x' is not the name
+        # of a column... Expected one of [...] but received: shop_category") was already
+        # its own last line. A Python exception's summary is always its final printed
+        # line, so that is what a chat user (and the model retrying) sees; the full
+        # traceback stays in the log line above, operator-only.
+        last_line = next(
+            (line for line in reversed(user_facing.strip().splitlines()) if line.strip()),
+            user_facing,
+        )
+        raise SandboxViolationError(f"exit {proc.returncode}: {last_line}")
 
     return run_dir, stdout_tail
 

@@ -572,6 +572,18 @@ venv path out of the message it raises (the full traceback still reaches the
 log line, which stays operator-only); the `/scratch/...` path a script's own
 frames use was never host-identifying and is left as-is.
 
+The exact same column-guessing failure happened again on a live compound
+question — `x="shop_category"` against a real result that carried
+`retail_license_category`/`category_name`/`total_bl`, the prompt rule above
+not holding every time. What it returned made self-correction harder than it
+needed to be: the entire pandas/plotly traceback, dozens of internal stack
+frames, when the one line the model needed
+(`Value of 'x' is not the name of a column... Expected one of [...] but
+received: shop_category`) was already its own last line. A Python
+exception's summary is always its final printed line, so `run_in_sandbox`
+now returns just that line as the tool result; the full traceback still
+reaches the log line next to it, unchanged.
+
 The sixth shape's own prompt-only guard didn't hold on its own either: a
 live turn wrote "Here is a chart showing the dispatched volume by shop
 category..." with no `make_chart` call anywhere in the turn, confirmed
@@ -692,6 +704,28 @@ yields a `HeartbeatEvent` on any 15s stretch with nothing new — at both the
 tool-aware attempt and the `tools=[]` retry.
 
 A client disconnect cancels the in-flight Ollama stream and any running tool.
+
+Another shape of the same tool-calling weakness turned up live: a reply
+answered normally, then trailed off mid-turn into a raw `{"name": "` — a
+tool-call JSON object narrated as text partway through an otherwise ordinary
+answer, not the whole reply degenerating the way the bare `"{}"` and
+narrated-call cases already catch. `_needs_retry` catches this shape too now,
+checked once the full text is in the same way the fenced-sql-guess check is,
+for the same reason: holding a whole generation back to check it risks the
+connection dropping as interrupted before a correction ever streams.
+
+Hand-testing with questions outside the department's own subject matter
+surfaced two gaps past tool-calling reliability. Asked a plain Python
+coding question, the model answered it directly, as a general-purpose
+assistant would — nothing in `CHAT_SYSTEM_PROMPT` scoped it to UP Excise
+subject matter, so it had no reason to decline. `CHAT_SYSTEM_PROMPT` now
+says directly that this assistant answers UP Excise questions only and
+should decline anything else in one sentence rather than answer it. Asked
+what model it runs on, it invented an answer — "based on the T5
+architecture" — a genuine hallucination, not a retrieval gap, since it was
+never told the true answer and guessed instead of declining.
+`CHAT_SYSTEM_PROMPT` now states the real fact (Llama 3.1, running locally)
+so there is nothing left to guess.
 
 ### Routing (knowledge / data / hybrid / general)
 

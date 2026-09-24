@@ -1113,6 +1113,223 @@ own title; Ask now does the same from the active query's own `prompt`,
 truncated to 60 characters the same way `Chat::send()` already truncates its
 own title. A plain PHP file change — live on the next request, no restart.
 
+A live report of the department's own prepared question — "how many country
+liquor and composite shops are in Lucknow in August 2026" — coming back as
+one flat number with no breakdown, and its chart as a single bar, traced to
+the exact worked example pinned for this question in `FEW_SHOT_SQL_EXAMPLES`
+(`llm/prompts.py`): it summed both named categories into one `COUNT`, so the
+model copied that shape and answered "1006" with nothing said about how many
+of each. Verified live against the real database: 589 country liquor shops
+and 417 composite, the same 1006 split two ways. Grouping by
+`license_categories.kind` fixed the breakdown but dropped the total a person
+asking "how many X and Y" still wants — the example now uses
+`GROUP BY ROLLUP(lc.kind)` instead, which adds a "Total" row computed as its
+own `COUNT(DISTINCT ...)` over the combined group rather than the two
+subtotals added together, so it stays correct even if a shop's category
+varies across dispatch rows within the month (1006 either way, confirmed
+live). `SQL_SYSTEM_PROMPT` gained the general rule to match — a question
+naming more than one category wants each one broken out and a total across
+them, via `ROLLUP`, not a hand-summed single row — and both
+`SUMMARY_SYSTEM_PROMPT` and `CHAT_SYSTEM_PROMPT` now say to state the total
+and each part when a result breaks one down, not the total alone.
+
+A live report on a compound Chat question ("compare dispatched volume by
+shop category") surfaced two more gaps in the same turn. First, the answer
+text itself still read as three passes over the same five rows — a bullet
+list, then a paragraph naming the same five categories again, then a third
+pass giving each one's share of the total — despite `CHAT_SYSTEM_PROMPT`
+already saying to state each figure once; the rule existed but didn't rule
+out a second narrated pass specifically, so `CHAT_SYSTEM_PROMPT` now says
+directly that a bullet list followed by a paragraph re-naming the same
+categories is the same numbers said twice, and a percentage or comparison
+belongs in the same pass as the figure it describes. Second, the message
+itself rendered chart-first, then the SQL query's own card, then the answer
+text last — the order tool-call events actually arrive in, not the order a
+reader wants them in, and it read as the chart appearing before the text
+that introduces it rather than after. `chat.blade.php` now renders the
+answer text first, the chart card next, and the SQL/search tool cards after
+that inside a closed `<details>` ("Show query") — a persisted message only,
+since a turn still streaming needs its tool cards visible as progress
+feedback (the 15s-ping heartbeat above has nothing else to show while a
+tool call is still running), so the live in-flight view keeps them
+uncollapsed, text moved above them the same way.
+
+A live Chat report that a question about MGQ found nothing in the knowledge
+base traced to two separate bugs, not the KB's storage design — `kb.chunks`
+already held the real corpus in Postgres (106,865 chunks, 335 documents)
+exactly as designed. First, `kb.chunks.fts` is indexed with the `'simple'`
+text search config, which has no stopword list — a chat model's
+`search_knowledge` query is often its full question verbatim, and
+`websearch_to_tsquery` ANDs every one of its words, "what"/"does"/"say"/
+"about" included, so a chunk had to contain all of them next to the real
+term to match at all. `kb/retrieve.py` now strips a small stopword list from
+the query before it reaches Postgres — dropping configs to `'english'`
+instead would need a full reindex of the generated `fts` column, this
+doesn't. Second, and far more serious: `etl/tests/test_pdf_pipeline.py` runs
+`sync_documents()` against the real database with no isolation, and that
+function's withdrawal step marks every row of one `origin` not in the
+current call's rows as withdrawn — scoped only by the hardcoded
+`"pdf_pipeline"` origin the real corpus also uses. Every test in that file
+that called `sync_documents()` with its own 1-2-row fixture list was
+withdrawing every real document of that origin on every run. That ran for
+real on 2026-09-24 at 13:35:59, withdrawing 322 of 334 real documents — the
+actual cause of the MGQ report, confirmed by matching `withdrawn_at`
+timestamps against `etl.ingestion_runs`. `sync_documents()` now takes an
+`origin` parameter (default unchanged, real production behavior untouched);
+the test file runs entirely under `origin="pdf_pipeline_test"`, which can
+never collide with real rows again — verified by running the full fixed
+suite twice against the real database and confirming the real `pdf_pipeline`
+row count didn't move either time. Re-running the real sync
+(`python -m etl sync --source pdf_pipeline`) restores every document still
+published upstream, since the upsert is content-hash-checked and idempotent
+— a pending operator step, not yet run.
+
+A report that a chat answer wrote a rupee figure with a `$` sign traced to
+the summarizing prompts never having been told the data's own currency —
+`SUMMARY_SYSTEM_PROMPT` and `CHAT_SYSTEM_PROMPT` now both say every money
+figure here is Indian Rupees, never dollars, and to state a large amount in
+lakh or crore rather than a long digit string, with the exact inflated
+phrasing seen live ("this figure represents a significant amount", "this
+suggests a substantial contribution") named directly as what not to write.
+Cleave.js, raised as a possible fix, doesn't apply here — it masks a live
+input field, and this is generated prose with nothing to mask; the house
+convention for money display, `App\Support\Money`, is PHP and only wired
+into `<x-money>`, not into LLM output, so a prompt rule is the equivalent
+fix on this side, same pattern as every other prompt-only fix in this file.
+
+The same report's underlying number was also wrong, and turned out to be a
+real data bug, not a display one: Lucknow's `excise_duty` in
+`analytics.revenues` jumps from ₹551.5 million (FY2018-19) to ₹125.3
+*billion* (FY2019-20) with every later year staying in the tens of billions
+— confirmed live. The reason: before 2018 each district's own treasury
+received its own excise receipts; after 2018 a central treasury at Lucknow
+began receiving the whole state's receipts, Lucknow's own included, so the
+post-2018 NITI import's per-district attribution is only reliable through
+FY2017-18 — every "Lucknow" row after that is largely the state total
+booked under one treasury's location, not Lucknow district's own economic
+activity. Cross-checked against a real, current, correctly-attributed
+source: `~/Projects/up-excise-spatial-revenue-optimizer`'s own latest D1
+backup (`backups/d1-prod-backup-2026-09-23.sql`, "SRO" — sro.exciseup.in —
+is that project's own short name) carries `phase1_raw_collection`, 28,405
+shops across all 75 districts with a real FY2025-26 `total_revenue` per
+shop. Its statewide total is ₹554.6 billion (₹55,463 crore, the right order
+of magnitude for UP's real annual excise revenue) with Lucknow at ₹28.6
+billion — a plausible top district, not an outlier — while the broken
+`analytics.revenues` FY2025-26 Lucknow figure (₹507.8 billion) sits close to
+SRO's entire *state* total instead, exactly what treasury consolidation
+under one location would produce. Not yet fixed: `VIEW_NOTES` needs a
+warning against trusting `analytics.revenues`'s post-2018 district
+attribution, and the SRO backup is a real candidate source for both a
+corrected revenue figure and the statewide shop dataset `analytics.shops`
+is still missing outside the IESCMS-imported districts — neither is
+imported yet, pending a decision on shape (below).
+
+Ask's canvas now shows the asked question above its result with its own
+copy button, the same affordance the summary and SQL panels already had —
+`Ask::render()`'s page title also stops truncating to 60 characters now
+that it's the visible `<h1>` (which already line-clamps/truncates via CSS on
+its own): only the browser tab title and the recent-questions rail, both
+genuinely space-constrained, still get the truncated version.
+
+The pending pieces from the sessions above are done. `db/schema.sql` and
+`db/analytics_views.sql` ran live (`sudo -u postgres psql -d excise_bank -f
+...`, both files); `sro_shops` and `analytics.sro_shops` exist and are
+granted the same way every other table here is. The real import ran twice —
+the first attempt failed outright on `numeric field overflow`, five of
+28,405 rows carrying a coordinate with its decimal point dropped during
+SRO's own data entry (a longitude like `77747738.0` instead of
+`77.747738`); `read_rows()` now drops a coordinate outside real lat/long
+bounds instead of letting it fail the row's insert, since the shop's own
+name and revenue are still good data worth keeping. The second attempt
+quarantined 862 rows on two district-name spelling variants SRO uses —
+`Rae Bareli` / `Siddharth Nagar` against this schema's `Raebareli` /
+`Siddharthnagar` — added to `etl.district_aliases`, the same mechanism
+every other spelling mismatch here already goes through. The third attempt
+was clean: 28,405 seen, 28,405 upserted, 0 quarantined, confirmed live
+against `analytics.sro_shops` — 75 districts, ₹554.6 billion statewide,
+₹28.6 billion for Lucknow, matching the raw dump exactly.
+
+`python -m etl sync --source pdf_pipeline_docs` restored the 322 documents
+the earlier test-isolation bug had withdrawn — confirmed live (322 live, 12
+still correctly withdrawn, the deliberate other-state exclusion from
+before) and by re-running the real MGQ question through `kb/retrieve.py`
+directly, which now returns real CL Retail Rules amendments instead of
+nothing. That real run surfaced one more gap in the stopword fix above:
+"What does the excise policy say about MGQ?" stripped down to "excise
+policy MGQ", which still matched zero real documents — "policy" happened
+not to co-occur with "mgq" in the same chunk anywhere in the corpus (`fts`
+is built from `heading_path` + `content` only, never `title`, so requiring
+"policy" was never actually matching a document by name either, just an
+incidental word). Tried an OR fallback when the AND query finds nothing
+first — it fixed this case, but a live rerun of `test_retrieve_no_match_
+returns_empty` immediately showed the real cost: a genuinely nonsense
+query ("xyzzy nonexistent gibberish query term") started returning real
+unrelated chunks on a single incidental word match, breaking the "no real
+match returns no context, not a guess" guarantee this corpus already
+relies on elsewhere. Reverted. `"excise"` and `"policy"` are in
+`_STOPWORDS` instead — every document in this corpus is already about
+excise policy in the broad sense, so in a "what does excise policy say
+about X" question both words are the question's own frame, not the search
+intent, the same reasoning that put "what"/"does"/"say" there already.
+
+Hand-testing Chat with off-topic questions surfaced three more gaps.
+Asked "how to create a linked list in Python," the model answered as a
+general-purpose coding assistant — nothing in `CHAT_SYSTEM_PROMPT` scoped it
+to the department's own subject matter, so it had no reason not to.
+`CHAT_SYSTEM_PROMPT` now says directly that this assistant answers UP
+Excise questions only and should decline anything else in one sentence
+rather than answer it. Asked what model it runs on, it invented an answer —
+"based on the T5 architecture" — a real hallucination, not a retrieval gap,
+since it was never given the true answer and guessed rather than declining.
+`CHAT_SYSTEM_PROMPT` now states the real fact (Llama 3.1, running locally)
+so there's nothing left to guess. Third, a reply trailed off mid-turn into
+a raw `{"name": "` — a tool-call JSON object narrated as text partway
+through an otherwise ordinary answer, not the whole reply degenerating the
+way the bare `"{}"` and narrated-call cases already caught. `_needs_retry`
+(`chat/loop.py`) now catches this shape too, checked once the full text is
+in the same way the fenced-sql-guess case already is, for the same reason:
+holding a whole generation back to check it risks the connection dropping
+as interrupted before a correction ever streams.
+
+A live report that sending a new message in an existing conversation made
+the previous answer "collapse and disappear" traced to a gap that has
+apparently always been there: the `@foreach($activeConversation->messages
+as $m)` loop in `chat.blade.php` never carried a `wire:key`, unlike every
+other keyed loop in this app (the conversation rail, `query-ledger.blade.php`'s
+rows). `syncAfterStream()` exists solely to force a fresh `render()` once a
+turn's stream finishes, so the DOM morph on every single message send is
+exactly the moment Livewire has to match each already-rendered message `<div>`
+to its right slot with no identity to go on — the conditions for exactly this
+symptom. Both message branches now key on `message-{{ $m->id }}`, the same
+pattern the rest of the app already uses.
+
+Chat gained a whole-conversation export, its first real use of
+`barryvdh/laravel-dompdf` (already a Composer dependency, never called from
+anywhere before this). `GET /chat/{conversation}/export`
+(`ChatExportController`) renders every message, tool call summary, and
+chart in order into `resources/views/pdf/chat-transcript.blade.php` — a
+chart embeds as a base64 PNG via the same `OrchestratorClient::renderChart()`
+call `ChartExportController` already uses for a single chart, since dompdf
+renders static HTML, not the interactive Plotly figure the chart card shows
+on screen. The link sits in the conversation rail's own per-item menu,
+beside Delete.
+
+A live report of a `make_chart` failure showed the same column-name-guessing
+bug `CHAT_SYSTEM_PROMPT` already tells the model not to make (`MCP_ENGINES.md`
+§Tools) — plotting `x="shop_category"` when the real result carried
+`retail_license_category`/`category_name`/`total_bl`. The prompt rule alone
+didn't stop it happening again, and the failure it produced compounded the
+problem: `run_in_sandbox` (`sandbox/bwrap.py`) returned the sandboxed
+script's *entire* Python traceback — dozens of internal pandas/plotly stack
+frames — as the tool result, when the one line the model actually needed to
+self-correct (`Value of 'x' is not the name of a column... Expected one of
+[...] but received: shop_category`) was already sitting right there as the
+traceback's own last line. A Python exception's summary is always its final
+printed line, so that's what a failed sandboxed script now returns as its
+message — the full traceback stays in the log line next to it, operator-only,
+same as before. Confirmed against the real sandbox: a three-frame traceback
+now comes back as a single `ExceptionType: message` line.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures

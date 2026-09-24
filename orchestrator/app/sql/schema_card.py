@@ -40,7 +40,13 @@ VIEW_NOTES = {
         "'license_fee' | 'import_fee' | 'total'; amount_inr in rupees. There is no shop_id "
         "column here; a question scoped to a specific month or to individual shops needs "
         "analytics.dispatches instead (duty_fee_inr for amount, transport_pass_issued_at "
-        "for the date)."
+        "for the date). Its district attribution is only reliable through FY2017-18 — "
+        "confirmed live: Lucknow's excise_duty jumps from ₹551.5 million in FY2018-19 to "
+        "₹125.3 billion in FY2019-20 and stays there, because a central treasury at Lucknow "
+        "began receiving the whole state's receipts that year, not because Lucknow's own "
+        "economic activity grew 227x. Never answer a district-level revenue question for "
+        "FY2019-20 onward from this view without saying so; a statewide total for those "
+        "years is fine."
     ),
     "sales_volumes": (
         "dispatch/consumption volumes, aggregated by district + financial_year + "

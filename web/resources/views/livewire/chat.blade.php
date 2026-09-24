@@ -45,6 +45,10 @@
                     <div x-show="menuOpen" x-cloak x-on:click.outside="menuOpen = false"
                          x-bind:style="menuStyle"
                          class="fixed z-50 w-44 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-lg py-1 text-xs">
+                        <a href="{{ route('chat.export', $c) }}" x-on:click="menuOpen = false"
+                           class="block px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300">
+                            Export as PDF
+                        </a>
                         <button wire:click="deleteConversation('{{ $c->id }}')" x-on:click="menuOpen = false"
                                 class="w-full text-left px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-600 dark:text-slate-300">
                             Delete
@@ -95,7 +99,7 @@
             @else
                 @foreach($activeConversation->messages as $m)
                     @if($m->role === 'user')
-                    <div class="flex flex-col items-end" x-data="{ copied: false }">
+                    <div wire:key="message-{{ $m->id }}" class="flex flex-col items-end" x-data="{ copied: false }">
                         <div class="bg-govviolet-600 text-white rounded-2xl rounded-br-sm px-4 py-2 max-w-lg text-sm whitespace-pre-wrap">{{ $m->content }}</div>
                         <button x-on:click="navigator.clipboard.writeText(@js($m->content)); copied = true; setTimeout(() => copied = false, 1500)"
                                 class="mt-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300" title="Copy">
@@ -103,15 +107,29 @@
                         </button>
                     </div>
                     @else
-                    <div class="flex flex-col items-start" x-data="{ copied: false }">
+                    @php
+                        $chartCalls = $m->toolCalls->where('tool_name', 'make_chart');
+                        $detailCalls = $m->toolCalls->where('tool_name', '!=', 'make_chart');
+                    @endphp
+                    <div wire:key="message-{{ $m->id }}" class="flex flex-col items-start" x-data="{ copied: false }">
                         <div class="bg-slate-100 dark:bg-slate-900 rounded-2xl rounded-bl-sm px-4 py-2 max-w-lg space-y-3">
-                            @foreach($m->toolCalls as $tc)
-                                @include('livewire.partials.tool-call-card', ['toolCall' => $tc])
-                            @endforeach
                             @if($m->content)
                             <div class="chat-markdown text-sm text-slate-700 dark:text-slate-200" x-init="$el.innerHTML = renderMarkdown(@js($m->content))"></div>
                             @elseif($m->toolCalls->isEmpty())
                             <p class="text-sm text-slate-400 italic">No response was generated for this message.</p>
+                            @endif
+                            @foreach($chartCalls as $tc)
+                                @include('livewire.partials.tool-call-card', ['toolCall' => $tc])
+                            @endforeach
+                            @if($detailCalls->isNotEmpty())
+                            <details class="text-xs">
+                                <summary class="cursor-pointer text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 select-none">Show query</summary>
+                                <div class="mt-2 space-y-2">
+                                    @foreach($detailCalls as $tc)
+                                        @include('livewire.partials.tool-call-card', ['toolCall' => $tc])
+                                    @endforeach
+                                </div>
+                            </details>
                             @endif
                         </div>
                         @if($m->content)
@@ -137,6 +155,17 @@
                     </div>
                     <div class="flex justify-start">
                         <div class="bg-slate-100 dark:bg-slate-900 rounded-2xl rounded-bl-sm px-4 py-2 max-w-lg space-y-3">
+                            <div class="flex gap-1 py-1" x-show="streaming && ! liveAssistantText && ! liveToolCalls.length">
+                                <span class="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style="animation-delay:0ms"></span>
+                                <span class="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style="animation-delay:150ms"></span>
+                                <span class="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style="animation-delay:300ms"></span>
+                            </div>
+                            <div class="chat-markdown text-sm text-slate-700 dark:text-slate-200" x-init="$watch('liveAssistantText', () => $el.innerHTML = renderMarkdown(liveAssistantText))"></div>
+                            {{-- Tool cards stay visible (not collapsed) while a turn is still in
+                                 flight — this is the turn's only progress feedback on a multi-tool
+                                 question that can run past a minute, pings included. The persisted
+                                 view above collapses them once a turn is done and there is nothing
+                                 left to wait on. --}}
                             <template x-for="(tc, i) in liveToolCalls" :key="i">
                                 <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-2 text-xs">
                                     <p class="font-semibold text-slate-500 flex items-center gap-1.5">
@@ -149,12 +178,6 @@
                                     <div x-show="tc.chart" wire:ignore x-init="$watch('tc.chart', (v) => v && Plotly.newPlot($refs['livechart' + i], JSON.parse(v.plotly_json ?? '{}').data ?? [], JSON.parse(v.plotly_json ?? '{}').layout ?? [], {responsive: true}))" :x-ref="'livechart' + i" style="min-height:280px;"></div>
                                 </div>
                             </template>
-                            <div class="flex gap-1 py-1" x-show="streaming && ! liveAssistantText && ! liveToolCalls.length">
-                                <span class="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style="animation-delay:0ms"></span>
-                                <span class="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style="animation-delay:150ms"></span>
-                                <span class="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style="animation-delay:300ms"></span>
-                            </div>
-                            <div class="chat-markdown text-sm text-slate-700 dark:text-slate-200" x-init="$watch('liveAssistantText', () => $el.innerHTML = renderMarkdown(liveAssistantText))"></div>
                             <p class="text-xs text-red-600 dark:text-red-400" x-show="liveError" x-text="liveError"></p>
                         </div>
                     </div>

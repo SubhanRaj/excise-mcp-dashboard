@@ -69,6 +69,28 @@ async def test_write_outside_scratch_fails(data_path: Path) -> None:
         await run_in_sandbox(script=script, data_path=data_path)
 
 
+async def test_violation_message_is_the_tracebacks_last_line_only(data_path: Path) -> None:
+    # Confirmed live: a make_chart script that referenced a wrong column name came
+    # back with pandas/plotly's whole internal traceback as the tool result — dozens
+    # of stack frames with no use to a model trying to self-correct, when the one
+    # actionable line was already the traceback's own last one.
+    script = (
+        "def inner():\n"
+        "    raise ValueError('the real reason')\n"
+        "def outer():\n"
+        "    inner()\n"
+        "outer()\n"
+    )
+    with pytest.raises(SandboxViolationError) as excinfo:
+        await run_in_sandbox(script=script, data_path=data_path)
+
+    message = str(excinfo.value)
+    assert message.endswith("ValueError: the real reason")
+    assert "Traceback" not in message
+    assert "in inner" not in message
+    assert "in outer" not in message
+
+
 async def test_memory_cap(data_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "sandbox_memory_mb", 64)
     # b"1" * n forces real page commits (unlike bytearray(n), which CPython

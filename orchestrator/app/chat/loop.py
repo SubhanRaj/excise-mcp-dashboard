@@ -122,7 +122,16 @@ def _needs_retry(text: str) -> bool:
     """
     if _is_degenerate(text):
         return True
-    return "```sql" in text.strip().lower()
+    if "```sql" in text.strip().lower():
+        return True
+    # A raw tool-call JSON object narrated as text instead of a real tool_calls
+    # entry — confirmed live, mid-response: a reply answered normally, then
+    # trailed off into `{"name": "` before the connection ended. The same
+    # failure shape _is_degenerate's tool-name-prefix check already catches
+    # when the *whole* reply degenerates into a fake call; this catches it
+    # showing up partway through an otherwise real answer instead, which is
+    # why it waits for the full text the same way the fenced-sql check does.
+    return '{"name"' in text
 
 
 _CHART_CLAIM_PHRASES = (

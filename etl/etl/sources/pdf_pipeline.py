@@ -183,6 +183,11 @@ async def sync_documents(
     rows: list[SourceDocRow],
     markdown_root: Path,
     base_url: str,
+    # Withdrawal below is scoped by this origin alone, against whatever rows this one
+    # call happens to pass — real production data and a test's own fixture rows share
+    # a database, so a caller other than sync() must pass its own distinct origin here
+    # or its withdrawal UPDATE reaches every real row of the default origin too.
+    origin: str = ORIGIN,
 ) -> RunCounts:
     seen = upserted = quarantined = 0
     fetched_refs: list[str] = []
@@ -216,7 +221,7 @@ async def sync_documents(
         existing = await pg_conn.fetchrow(
             "SELECT content_sha256, effective_from, withdrawn_at FROM kb.documents "
             "WHERE origin = $1 AND origin_ref = $2",
-            ORIGIN,
+            origin,
             origin_ref,
         )
         if (
@@ -241,7 +246,7 @@ async def sync_documents(
                 ingested_at = now(), withdrawn_at = NULL
             RETURNING id
             """,
-            ORIGIN,
+            origin,
             origin_ref,
             row["title"],
             row["document_type"],
@@ -271,7 +276,7 @@ async def sync_documents(
         "UPDATE kb.documents SET withdrawn_at = now() "
         "WHERE origin = $1 AND withdrawn_at IS NULL AND NOT (origin_ref = ANY($2::text[])) "
         "RETURNING id",
-        ORIGIN,
+        origin,
         fetched_refs,
     )
 
