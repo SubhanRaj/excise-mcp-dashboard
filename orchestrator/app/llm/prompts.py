@@ -69,13 +69,25 @@ FEW_SHOT_SQL_EXAMPLES: list[dict[str, str]] = [
         # districts, and referenced transport_pass_issued_at on that join anyway —
         # a column that only exists on analytics.dispatches, which UndefinedColumnError
         # on. dispatches already carries district and retail_license_category as its
-        # own columns, so a shop-count-by-district-and-month question needs no join at
-        # all, just COUNT(DISTINCT shop_id) since one shop has many dispatch rows.
+        # own columns, so a shop-count-by-district-and-month question needs no join for
+        # that part, just COUNT(DISTINCT shop_id) since one shop has many dispatch rows.
+        #
+        # A second bug lived in this same example for a while: a general category name
+        # like "composite" is not one code. license_categories.kind is 'composite' for
+        # both CL5CC (Country Liquor with Beer) and FL5DB (Composite: Foreign + Country
+        # Liquor) — hardcoding just retail_license_category IN ('CL5C', 'CL5CC') here
+        # (this example's own earlier version) undercounted a live "country liquor and
+        # composite shops" question by 417 shops, every one of them FL5DB, because the
+        # model copies this worked example's pattern directly rather than reasoning
+        # about which codes a kind covers. Filtering on license_categories.kind instead
+        # of a memorized code list is correct regardless of how many codes that kind
+        # has today or gains later.
         "question": ("How many country liquor and composite shops are in Lucknow in August 2026?"),
-        "sql": "SELECT COUNT(DISTINCT shop_id) AS shop_count FROM analytics.dispatches "
-        "WHERE district = 'Lucknow' AND retail_license_category IN ('CL5C', 'CL5CC') "
-        "AND EXTRACT(MONTH FROM transport_pass_issued_at) = 8 "
-        "AND EXTRACT(YEAR FROM transport_pass_issued_at) = 2026 LIMIT 100;",
+        "sql": "SELECT COUNT(DISTINCT d.shop_id) AS shop_count FROM analytics.dispatches d "
+        "JOIN analytics.license_categories lc ON lc.code = d.retail_license_category "
+        "WHERE d.district = 'Lucknow' AND lc.kind IN ('country_liquor', 'composite') "
+        "AND EXTRACT(MONTH FROM d.transport_pass_issued_at) = 8 "
+        "AND EXTRACT(YEAR FROM d.transport_pass_issued_at) = 2026 LIMIT 100;",
     },
     {
         # A bare code (CL5C, FL4A, FL5DB, ...) means nothing to a reader who hasn't

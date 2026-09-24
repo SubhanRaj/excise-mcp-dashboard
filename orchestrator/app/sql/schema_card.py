@@ -22,7 +22,12 @@ VIEW_NOTES = {
         "category. A shop's own category (analytics.shops.license_category, "
         "analytics.dispatches.retail_license_category) is always one of the other kinds; "
         "analytics.dispatches.wholesale_license_type is the one column that legitimately "
-        "holds FL2/CL2, for the wholesaler on that pass, not the retail shop receiving it."
+        "holds FL2/CL2, for the wholesaler on that pass, not the retail shop receiving it. "
+        "More than one code can share a kind — 'composite' alone is both CL5CC and FL5DB. "
+        "A question naming a general category ('composite', 'country liquor', 'foreign "
+        "liquor', 'beer', 'model shop') rather than a specific code means every code of "
+        "that kind: JOIN this view and filter on kind, never on a hand-picked code list — "
+        "a memorized list silently drops whichever code you forgot it had."
     ),
     "revenues": (
         "duty/fee collections, aggregated by district + financial_year + license_category — "

@@ -950,6 +950,43 @@ Both now open together behind the same toggle, defaulting closed; the
 table-level note field stays visible unconditionally, since a one-line
 summary is what makes browsing the collapsed list still useful.
 
+A live report of the Data dictionary's sample-rows panel showing nothing
+traced to real data, not a bug: `db/seed_reference.sql` only ever populated
+`districts`, `divisions`, `financial_years`, `license_categories`, and
+`zones` — of `analytics`'s 13 tables, only those plus `shops` and the
+IESCMS-imported `dispatches`/`dispatch_strength_lines` carry any rows today.
+`brands`, `brand_prices`, `duty_rates`, `operations`, `policy_entries`,
+`revenues`, `sales_volumes`, and `shop_years` are real fact tables with no
+source data ever imported into them yet — sampling one correctly shows "No
+rows." A related live Chat report — a sample question left showing "No
+response was generated for this message" — traced the same way: the
+orchestrator's own log had no "chat turn complete", "chat turn failed", or
+unhandled-error line for that request at all, and the very next request
+logged five seconds later was a page navigation away from Chat — consistent
+with the browser's `fetch()` being aborted by leaving the page mid-turn
+(`asyncio.CancelledError` propagates past both of `_stream_chat`'s `except`
+clauses, so a cancelled turn logs nothing), not a new failure shape. A SQL
+plan alone has taken over two minutes on this box on a real question
+(`EVALUATION.md` §2's `OLLAMA_GENERATE_TIMEOUT_SECONDS` margin exists for
+exactly this) — long enough that navigating away to check something else
+mid-turn will read as this fallback message every time.
+
+A live Ask question ("how many country liquor and composite shops in
+Lucknow in August 2026") undercounted by 417 shops — every one of them
+`FL5DB`. The exact worked example added for this question in an earlier
+pass (`FEW_SHOT_SQL_EXAMPLES`) filtered `retail_license_category IN ('CL5C',
+'CL5CC')`, and the model copies a worked example's pattern directly rather
+than reasoning about what a general category name covers —
+`analytics.license_categories.kind = 'composite'` is both `CL5CC` (Country
+Liquor with Beer) and `FL5DB` (Composite: Foreign + Country Liquor), and the
+hardcoded list only had one of them. The example now JOINs
+`license_categories` and filters on `kind IN ('country_liquor',
+'composite')` instead of a memorized code list, and `VIEW_NOTES` states the
+general rule directly: a category name that isn't a specific code (composite,
+country liquor, foreign liquor, beer, model shop) can mean more than one
+code, so filter on `kind`, never on a hand-picked list that can silently
+leave one out (`DATA_PIPELINE.md` §Row visibility for the AI path).
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures

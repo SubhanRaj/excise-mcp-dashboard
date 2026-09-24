@@ -457,6 +457,20 @@ says to do this whenever the answer will show shop categories to a reader.
 `CHAT_SYSTEM_PROMPT` tells the model to use the name column the result
 already carries, never to invent one for a code the result didn't name.
 
+A live Ask question ("how many country liquor and composite shops in
+Lucknow in August 2026") undercounted real shops by 417 — all of them
+`FL5DB`. `kind = 'composite'` in `analytics.license_categories` covers both
+`CL5CC` and `FL5DB`, but the worked `FEW_SHOT_SQL_EXAMPLES` entry for this
+exact question filtered `retail_license_category IN ('CL5C', 'CL5CC')`, a
+hand-picked list that only had one of the two composite codes — the model
+copies a worked example's pattern rather than deriving which codes a kind
+actually has. The example now JOINs `license_categories` and filters on
+`kind IN ('country_liquor', 'composite')` instead, and the `license_categories`
+`VIEW_NOTES` entry states the general rule: a question naming a category
+rather than a specific code (composite, country liquor, foreign liquor,
+beer, model shop) means every code of that kind, found by filtering on
+`kind`, never by a memorized code list that can silently leave one out.
+
 ### BI access (future — Power BI and similar, not built)
 
 `analytics.*` and `kb.*` are the entire surface any read-only consumer ever
