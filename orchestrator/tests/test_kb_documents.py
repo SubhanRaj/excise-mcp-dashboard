@@ -38,12 +38,17 @@ async def seeded_documents() -> AsyncIterator[list[int]]:
     conn = await asyncpg.connect(_etl_dsn())
     ids: list[int] = []
     try:
+        # ingested_at sits in the future, ahead of anything a real sync run could ever
+        # write (confirmed live: a re-sync backfilling `state` onto existing rows bumps
+        # their own ingested_at to now() and pushed this fixture off page 1 when it used
+        # to sit just a few minutes in the past).
         for i in range(3):
             doc_id = await conn.fetchval(
                 "INSERT INTO kb.documents "
                 "(origin, origin_ref, title, doc_type, content_sha256, ingested_at) "
                 "VALUES "
-                "('test', $1, $2, 'policy', 'deadbeef', now() - ($3 || ' minutes')::interval) "
+                "('test', $1, $2, 'policy', 'deadbeef', now() + interval '1000 minutes' "
+                "- ($3 || ' minutes')::interval) "
                 "RETURNING id",
                 f"documents-fixture-{i}",
                 f"Test Policy {i}",

@@ -441,15 +441,14 @@ replay is authoritative from the turn's first event, so `streamTurn()`
 rebuilds the message's content and tool calls from it wholesale rather than
 appending — but only once `persistIfNotWorseThanBefore()` confirms the new
 attempt reached at least as far as what is already saved (same content
-length or longer, same tool-call count or more). A resume's own connection
-can drop again before replaying anything: confirmed live, a `make_chart`
-retry made a turn run long enough to need a second resume, and that second
-attempt died with zero events — `resume()` used to wipe the message's tool
-calls before replaying and `streamTurn()` used to persist unconditionally,
-so a dropped second resume silently erased a real, already-answered message
-down to nothing. `chat.blade.php`'s `reconnectAndStream()` makes up to 5 attempts, 2s apart;
-each attempt is itself a full streaming connection bounded by the same
-~100s cap, together covering a turn up to `OLLAMA_GENERATE_TIMEOUT_SECONDS`'s
+length or longer, same tool-call count or more) — a resume's own connection
+can drop again before replaying anything, confirmed live on a `make_chart`
+retry that made a turn run long enough to need a second resume, and this
+check is what stops that second, empty attempt from overwriting a real,
+already-answered message. `chat.blade.php`'s `reconnectAndStream()` makes up
+to 5 attempts, 2s apart; each attempt is itself a full streaming connection
+bounded by the same ~100s cap, together covering a turn up to
+`OLLAMA_GENERATE_TIMEOUT_SECONDS`'s
 own 480s ceiling. `chat_turns` is memory-only, the same boundary
 `status_store` already has for Ask's polling — a resume against a `turn_id`
 an orchestrator restart has cleared gets a plain 404, and the browser shows

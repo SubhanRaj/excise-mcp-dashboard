@@ -1582,13 +1582,27 @@ a bare state name or the literal string `"null"`. Each retrieved chunk's
 citation now names its own state when it has one
 (`[title (state) — heading]`), and `CHAT_SYSTEM_PROMPT` tells the model
 never to blend facts from two states into one answer without saying which
-is which — the citation label is what keeps that honest. This is a pending
-migration, not yet live: `kb.documents.state` needs an operator-run
-`ALTER TABLE` (`OPERATOR_SETUP.md` §Data bank) before the pdf-markdown-pipeline
-sync can backfill it onto the corpus's existing rows, and every orchestrator
-test touching `kb.chunks`/`kb.documents` fails against the real local
-Postgres until that column exists — expected, not a regression, and called
-out rather than papered over.
+is which — the citation label is what keeps that honest. The operator-run
+`ALTER TABLE` and the pdf-markdown-pipeline re-sync (`OPERATOR_SETUP.md`
+§Data bank) have both run: `kb.documents.state` is live, the sync backfilled
+26 rows, and a live check confirms the labeling (13 states represented, 309
+documents with `state IS NULL`). All 136 orchestrator tests pass against the
+real database.
+
+The live check also surfaced a real gap in the NULL-means-agnostic
+assumption: of the 309 `state IS NULL` documents, 115 have no
+`rule_set_id` at all in pdf-markdown-pipeline, rather than a `rule_set`
+that is genuinely state-agnostic (a real Act or GO with `rule_sets.state`
+left blank on purpose). An untagged document — "Delhi CAG report," for one,
+confirmed live — reads identically to a real state-agnostic Act and stays
+in scope for every question regardless of which states it names, since
+nothing in `kb.documents` distinguishes "no rule set" from "a rule set with
+no state." A default UP-only question was not observed pulling in one of
+these (the FTS ranking still favors real matching content), but a broad or
+generic query can. Fixing this needs pdf-markdown-pipeline's own documents
+classified with a `rule_set`, not a change on this side — `ROADMAP.md`'s
+backlog names it rather than a heuristic guess from an untagged title, which
+would risk misclassifying a genuine UP document as another state's.
 
 Verifying candidate example questions for `sales_volumes` and `operations`
 surfaced two more stale-placeholder bugs, the same shape as the earlier

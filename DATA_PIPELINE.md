@@ -873,11 +873,10 @@ policies — not only the numbers. The corpus is verified Markdown, stored in a
    `rule_sets.state` onto `kb.documents.state`. Retrieval, not ingestion, is
    what keeps an ordinary question UP-only: `kb/retrieve.py` defaults to
    `state IS NULL OR state = 'Uttar Pradesh'` and only widens to other states
-   when a chat question names them (`MCP_ENGINES.md` §Tools). Excluding
-   other states at sync time was tried first and worked for an ordinary
-   question, but it also meant a genuinely comparative one ("how does UP's
-   policy compare to Delhi's") had nothing to retrieve at all — labeling
-   keeps both.
+   when a chat question names them (`MCP_ENGINES.md` §Tools). Scoping at
+   retrieval time rather than at sync time keeps a comparative question
+   answerable ("how does UP's policy compare to Delhi's") without an
+   ordinary UP-only question losing its own default scope.
 2. **Admin `.md` uploads** — the "Knowledge base" screen in `web/`. An
    uploaded file lands on a dedicated disk with a `kb_uploads` row; the ETL
    picks it up on the next run.

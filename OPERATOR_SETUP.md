@@ -241,10 +241,9 @@ PGPASSWORD='CHANGE_ME_ro' psql -h 127.0.0.1 -U excise_ro -d excise_bank -c \
 **Add `kb.documents.state`** (the other-state knowledge base labeling
 change — `db/schema.sql` now has this column, so a fresh provision picks it
 up on its own; this box's database was already provisioned from an earlier
-run of `schema.sql` and needs the column added directly. Every `kb/retrieve.py`
-query already selects `state` unconditionally, so this is not optional —
-`/kb/search`, `search_knowledge`, and the admin Knowledge base screen all
-fail with `column d.state does not exist` until it runs):
+run of `schema.sql` and needed the column added directly). Applied and
+confirmed live — `kb.documents.state` exists, the re-sync backfilled 26 rows
+onto it, and a direct query shows 13 states represented across the corpus:
 
 ```bash
 sudo -u postgres psql -d excise_bank -c "ALTER TABLE kb.documents ADD COLUMN IF NOT EXISTS state TEXT;"

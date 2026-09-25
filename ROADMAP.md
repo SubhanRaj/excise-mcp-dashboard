@@ -696,6 +696,16 @@ PDF / XLSX / ZIP with the data vintage on it.
   to run larger or better models, removing the single-CPU-inference
   ceiling that shapes most of this file's model-choice and concurrency
   decisions today
+- **Classify pdf-markdown-pipeline's untagged documents by state.** 115 of
+  the knowledge base's 309 `kb.documents.state IS NULL` rows have no
+  `rule_set_id` at all upstream, rather than a `rule_set` that is genuinely
+  state-agnostic — `NULL` currently reads as "always in scope" either way,
+  so an untagged other-state document (confirmed live: a "Delhi CAG report"
+  with no `rule_set`) can surface for a broad query the same way a real
+  state-agnostic Act does. Needs the documents classified with a
+  `rule_set` in pdf-markdown-pipeline itself, not a title-guessing
+  heuristic here, which would risk misclassifying a genuine UP document as
+  another state's
 - `pgvector` semantic retrieval — pulled in by Milestone 6's quality check if
   FTS recall is weak; otherwise stays off
 - MATLAB engine — needs a MATLAB install + a licence that permits multi-user
