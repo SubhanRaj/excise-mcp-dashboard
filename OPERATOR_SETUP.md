@@ -238,6 +238,28 @@ PGPASSWORD='CHANGE_ME_ro' psql -h 127.0.0.1 -U excise_ro -d excise_bank -c \
   "select code, name, kind from analytics.license_categories order by code;"
 ```
 
+**Add `kb.documents.state`** (the other-state knowledge base labeling
+change — `db/schema.sql` now has this column, so a fresh provision picks it
+up on its own; this box's database was already provisioned from an earlier
+run of `schema.sql` and needs the column added directly. Every `kb/retrieve.py`
+query already selects `state` unconditionally, so this is not optional —
+`/kb/search`, `search_knowledge`, and the admin Knowledge base screen all
+fail with `column d.state does not exist` until it runs):
+
+```bash
+sudo -u postgres psql -d excise_bank -c "ALTER TABLE kb.documents ADD COLUMN IF NOT EXISTS state TEXT;"
+```
+
+Then re-run the pdf-markdown-pipeline sync so every existing row picks up its
+own `rule_sets.state` value (the sync's own "unchanged content" check also
+looks at `state` now, so this backfills every already-synced document, not
+just new ones — same precedent as the earlier `effective_from` backfill):
+
+```bash
+cd ~/Sites/excise-mcp-dashboard/etl && source .venv/bin/activate
+python -m etl sync --source pdf_pipeline_docs
+```
+
 **Create the read-only MariaDB user for the pdf-markdown-pipeline sync**
 (Milestone 3 needs this; the pipeline's DB is `pdf_markdown_pipeline_local`):
 

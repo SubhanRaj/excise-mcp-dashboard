@@ -58,15 +58,21 @@ FEW_SHOT_SQL_EXAMPLES: list[dict[str, str]] = [
         "GROUP BY district ORDER BY total_inr DESC LIMIT 100;",
     },
     {
-        "question": "What was the dispatch volume trend for Lucknow since FY2018-19?",
+        # metric on sales_volumes names a liquor type ('beer', 'imfl', 'wine', ...), not a
+        # dispatch/consumption distinction — a plain "dispatch volume trend" question with
+        # no type named sums across every metric instead of guessing one to filter on
+        # (confirmed live against real data, schema_card.py's own VIEW_NOTES).
+        "question": "What was the sales volume trend for Lucknow since FY2018-19?",
         "sql": "SELECT financial_year, SUM(quantity) AS total_bl FROM analytics.sales_volumes "
-        "WHERE district = 'Lucknow' AND metric = 'dispatch_bl' AND start_year >= 2018 "
+        "WHERE district = 'Lucknow' AND start_year >= 2018 "
         "GROUP BY financial_year, start_year ORDER BY start_year LIMIT 100;",
     },
     {
+        # 'raids' was never a real metric value on this view — confirmed live, the actual
+        # value is 'inspections_raids' (schema_card.py's own VIEW_NOTES lists every real one).
         "question": "How many enforcement raids happened each financial year?",
         "sql": "SELECT financial_year, SUM(value) AS raids FROM analytics.operations "
-        "WHERE metric = 'raids' GROUP BY financial_year, start_year "
+        "WHERE metric = 'inspections_raids' GROUP BY financial_year, start_year "
         "ORDER BY start_year LIMIT 100;",
     },
     {
@@ -272,6 +278,55 @@ restating the question, no "In summary", no "showcase", "underscore",
 """
 
 
+_MONEY_COLUMN_HINTS = ("inr", "revenue", "amount", "fee", "duty", "mgr", "_lf", "price", "mrp")
+
+
+def _looks_like_money_column(name: str) -> bool:
+    lowered = name.lower()
+    return any(hint in lowered for hint in _MONEY_COLUMN_HINTS)
+
+
+def format_inr(value: float) -> str:
+    """Indian-digit-grouping lakh/crore rendering, computed exactly — confirmed live,
+    asked to state a figure "in crore" itself, the summarizing model divided by the
+    wrong power of ten and reported a district's revenue tenfold too large with full
+    confidence (₹28,608 crore for a real ₹2,860.80 crore). `build_summary_prompt` and
+    `chat/tools.py`'s run_sql_query both hand the model this pre-computed string for
+    every money-looking column instead of asking it to do the division itself.
+    """
+    magnitude = abs(value)
+    if magnitude >= 1_00_00_000:
+        return f"₹{value / 1_00_00_000:,.2f} crore"
+    if magnitude >= 1_00_000:
+        return f"₹{value / 1_00_000:,.2f} lakh"
+    return f"₹{value:,.2f}"
+
+
+def money_annotations(columns: list[str], rows: list[dict[str, object]]) -> str:
+    """One line per row, converting every money-looking column's value to its exact
+    lakh/crore rendering — empty string if no column looks like money or none of the
+    values are numeric.
+    """
+    money_cols = [c for c in columns if _looks_like_money_column(c)]
+    if not money_cols:
+        return ""
+    lines = []
+    for row in rows:
+        parts = []
+        for c in money_cols:
+            value = row.get(c)
+            if isinstance(value, int | float) and not isinstance(value, bool):
+                parts.append(f"{c} = {format_inr(float(value))}")
+        if parts:
+            lines.append("; ".join(parts))
+    if not lines:
+        return ""
+    return (
+        "\nPre-converted amounts (use these exact figures verbatim for any lakh/crore "
+        "value — do not recompute the conversion yourself):\n" + "\n".join(lines) + "\n"
+    )
+
+
 def build_summary_prompt(
     question: str, columns: list[str], row_count: int, rows_preview: list[dict[str, object]]
 ) -> str:
@@ -282,4 +337,5 @@ def build_summary_prompt(
         f"Columns: {', '.join(columns)}\n"
         f"Row count: {row_count}\n"
         f"Sample rows:\n{preview_block}\n"
+        f"{money_annotations(columns, rows_preview[:10])}"
     )

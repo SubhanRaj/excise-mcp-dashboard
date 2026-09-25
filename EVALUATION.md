@@ -48,7 +48,12 @@ adds a few hundred MB of shared buffers plus page cache).
 
 **All Ollama inference is CPU-only** (llama.cpp AVX2 / AVX-512 path on the
 i7-13700). This is the single biggest constraint on model choice and on
-expected concurrency.
+expected concurrency, and the reason a slow turn (a SQL plan alone has taken
+over two minutes on a real question) is a recurring theme through
+`CLAUDE.md`'s own build log, not an occasional fluke. This box is a proof
+of concept, not the intended long-term home — `ROADMAP.md`'s backlog names
+moving to dedicated data-center compute with a real GPU as the step that
+removes this constraint once the approach itself is validated here.
 
 ### Disk
 

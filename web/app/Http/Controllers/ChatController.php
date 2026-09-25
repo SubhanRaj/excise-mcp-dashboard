@@ -90,10 +90,15 @@ class ChatController extends Controller
      * from the start, since the earlier attempt may have died before
      * persisting any of it.
      *
-     * Any tool call rows this message already carries are wiped first — the
-     * replay is authoritative and starts from the turn's very first event, so
-     * keeping the old rows would just duplicate whatever had already arrived
-     * before the disconnect.
+     * The replay is authoritative and starts from the turn's very first event,
+     * so `streamTurn()` below rebuilds this message's tool calls from it wholesale
+     * rather than appending — but only once it knows the replay reached at least
+     * as far as what is already saved. A resume's own connection dying again
+     * partway through (the same ~100s cap that made this resume necessary in the
+     * first place) must never regress an already-working answer to less than it
+     * had; confirmed live, a chart-render retry that ran long enough to need a
+     * second resume left a real answer empty after the second attempt died with
+     * nothing replayed yet.
      */
     public function resume(
         Request $request,
@@ -103,11 +108,6 @@ class ChatController extends Controller
     ): StreamedResponse {
         abort_unless($conversation->user_id === Auth::id(), 403);
         abort_unless($message->conversation_id === $conversation->id && $message->role === 'assistant', 404);
-
-        foreach ($message->toolCalls as $toolCall) {
-            $toolCall->chartArtifact?->delete();
-        }
-        $message->toolCalls()->delete();
 
         return $this->streamTurn($message, $orchestrator->chatStream([
             'conversation_id' => $conversation->id,
@@ -150,7 +150,10 @@ class ChatController extends Controller
 
             $assistantText = '';
             $pendingToolCall = null;
-            $lastToolCallId = null;
+            // Accumulated locally and only written to the database once the loop
+            // below ends — the same deferred-persist shape $assistantText already
+            // used, extended to tool calls too (see persistIfNotWorseThanBefore()).
+            $toolCalls = [];
             $promptTokens = 0;
             $completionTokens = 0;
 
@@ -176,19 +179,15 @@ class ChatController extends Controller
                     } elseif (isset($event['tool_call'])) {
                         $pendingToolCall = $event['tool_call'];
                     } elseif (isset($event['tool_result']) && $pendingToolCall !== null) {
-                        $toolCall = $assistantMessage->toolCalls()->create([
+                        $toolCalls[] = [
                             'tool_name' => $pendingToolCall['name'],
                             'arguments' => $pendingToolCall['arguments'],
                             'result_summary' => $event['tool_result'],
-                        ]);
-                        $lastToolCallId = $toolCall->id;
+                            'chart' => null,
+                        ];
                         $pendingToolCall = null;
-                    } elseif (isset($event['chart']) && $lastToolCallId !== null) {
-                        ChartArtifact::create([
-                            'owner_type' => MessageToolCall::class,
-                            'owner_id' => $lastToolCallId,
-                            'spec' => $event['chart'],
-                        ]);
+                    } elseif (isset($event['chart']) && $toolCalls !== []) {
+                        $toolCalls[array_key_last($toolCalls)]['chart'] = $event['chart'];
                     } elseif (isset($event['done'])) {
                         $promptTokens = $event['done']['prompt_tokens'] ?? 0;
                         $completionTokens = $event['done']['completion_tokens'] ?? 0;
@@ -198,16 +197,68 @@ class ChatController extends Controller
                 Log::error('ChatController stream failed', ['error' => $e->getMessage()]);
                 echo json_encode(['error' => ['stage' => 'internal', 'message' => 'The chat connection was interrupted.']])."\n";
             } finally {
-                $assistantMessage->update([
-                    'content' => $assistantText,
-                    'prompt_tokens' => $promptTokens,
-                    'completion_tokens' => $completionTokens,
-                ]);
+                $this->persistIfNotWorseThanBefore(
+                    $assistantMessage, $assistantText, $toolCalls, $promptTokens, $completionTokens
+                );
             }
         }, 200, [
             'Content-Type' => 'application/x-ndjson',
             'Cache-Control' => 'no-cache',
             'X-Accel-Buffering' => 'no',
+        ]);
+    }
+
+    /**
+     * A resume's own connection can die again before replaying as far as an
+     * earlier attempt already got — confirmed live, a second resume (needed
+     * because a chart render kept retrying) died with nothing replayed yet,
+     * and unconditionally persisting turned a real, already-saved answer into
+     * an empty one. Comparing against what is already on the row — never
+     * writing something shorter or with fewer tool calls than what is already
+     * there — means a resume can only advance a message's own saved state, not
+     * regress it. A fresh send() always has empty content and zero tool calls
+     * to compare against, so this never blocks a first attempt, including one
+     * that genuinely produced nothing.
+     *
+     * @param  array<int, array{tool_name: string, arguments: mixed, result_summary: mixed, chart: mixed}>  $toolCalls
+     */
+    private function persistIfNotWorseThanBefore(
+        Message $assistantMessage,
+        string $assistantText,
+        array $toolCalls,
+        int $promptTokens,
+        int $completionTokens
+    ): void {
+        $existingContent = $assistantMessage->content ?? '';
+        $existingToolCallCount = $assistantMessage->toolCalls()->count();
+        if (strlen($assistantText) < strlen($existingContent) || count($toolCalls) < $existingToolCallCount) {
+            return;
+        }
+
+        foreach ($assistantMessage->toolCalls as $toolCall) {
+            $toolCall->chartArtifact?->delete();
+        }
+        $assistantMessage->toolCalls()->delete();
+
+        foreach ($toolCalls as $toolCall) {
+            $created = $assistantMessage->toolCalls()->create([
+                'tool_name' => $toolCall['tool_name'],
+                'arguments' => $toolCall['arguments'],
+                'result_summary' => $toolCall['result_summary'],
+            ]);
+            if ($toolCall['chart'] !== null) {
+                ChartArtifact::create([
+                    'owner_type' => MessageToolCall::class,
+                    'owner_id' => $created->id,
+                    'spec' => $toolCall['chart'],
+                ]);
+            }
+        }
+
+        $assistantMessage->update([
+            'content' => $assistantText,
+            'prompt_tokens' => $promptTokens,
+            'completion_tokens' => $completionTokens,
         ]);
     }
 }

@@ -623,6 +623,25 @@ chat model with nothing marking it as empty. Both now check whether every
 value in the result is empty, not just whether any rows came back, and treat
 that the same way as zero rows (`MCP_ENGINES.md` §Pipeline stages, §Tools).
 
+Verifying further candidate example questions against live data (not writing
+plausible ones — running each and checking the answer before showing it as
+"try an example") surfaced one more gap, structurally the same shape as the
+knowledge base's own other-state exclusion but never carried over to this
+table: `analytics.policy_entries` holds five states' own policy rules as
+comparative reference material (Uttar Pradesh, Delhi, Haryana, Rajasthan,
+Uttarakhand), the state named only inside a free-text `title` — "Policy
+rules — Rajasthan FY2025-26" — with no separate column to filter on. A
+question about this department's own policy with no explicit UP filter
+would match all five states' rows the same way an unfiltered knowledge-base
+search once could. `VIEW_NOTES` now says so directly and gives the exact
+filter — `title ILIKE '%Uttar Pradesh%'` — a UP-scoped question needs.
+Also found in the same pass: which district generated the highest revenue
+in FY2025-26 (Lucknow, ₹2,860.80 crore — confirmed live, and only after the
+crore-arithmetic fix `MCP_ENGINES.md` §Tools has in full; the same question
+first came back reporting ₹28,608 crore, tenfold too large). Both `Ask::
+EXAMPLE_QUESTIONS` and `Chat::EXAMPLE_QUESTIONS` gained it alongside the
+beer-revenue question.
+
 ### BI access (future — Power BI and similar, not built)
 
 `analytics.*` and `kb.*` are the entire surface any read-only consumer ever
@@ -848,10 +867,17 @@ policies — not only the numbers. The corpus is verified Markdown, stored in a
 1. **pdf-markdown-pipeline** — the department's verified document repository
    (`~/Sites/pdf-markdown-pipeline`, live at `docsrepo.exciseup.in`). Only
    `visibility = 'public'` **and** `status = 'verified'` **and**
-   `deleted_at IS NULL` **and** (no state-specific `rule_set`, or one tagged
-   `Uttar Pradesh`) documents are ingested — that repository also holds ten
-   other states' excise policies as comparative reference material, out of
-   scope for this UP-only tool.
+   `deleted_at IS NULL` documents are ingested, from any state — that
+   repository also holds ten other states' excise policies as comparative
+   reference material, and every one now syncs in, carrying its own
+   `rule_sets.state` onto `kb.documents.state`. Retrieval, not ingestion, is
+   what keeps an ordinary question UP-only: `kb/retrieve.py` defaults to
+   `state IS NULL OR state = 'Uttar Pradesh'` and only widens to other states
+   when a chat question names them (`MCP_ENGINES.md` §Tools). Excluding
+   other states at sync time was tried first and worked for an ordinary
+   question, but it also meant a genuinely comparative one ("how does UP's
+   policy compare to Delhi's") had nothing to retrieve at all — labeling
+   keeps both.
 2. **Admin `.md` uploads** — the "Knowledge base" screen in `web/`. An
    uploaded file lands on a dedicated disk with a `kb_uploads` row; the ETL
    picks it up on the next run.
@@ -863,7 +889,7 @@ flowchart TD
     classDef edge fill:#d97706,stroke:#b45309,stroke-width:2px,color:#fff
     classDef ai fill:#7c3aed,stroke:#6d28d9,stroke-width:2px,color:#fff
 
-    PDFP[("pdf-markdown-pipeline<br/>MariaDB documents + public .md files<br/>public + verified + not deleted, UP rule_sets only")]:::db
+    PDFP[("pdf-markdown-pipeline<br/>MariaDB documents + public .md files<br/>public + verified + not deleted, every state, labeled by rule_sets.state")]:::db
     Upload["web/ Knowledge base screen<br/>admin .md upload — extension, size, UTF-8, no path separators"]:::app
     KBU[("kb_uploads<br/>MariaDB in web/ — pending row + file on the kb-uploads disk")]:::db
     GAPI[["Google Docs / Drive API"]]:::edge
@@ -877,7 +903,7 @@ flowchart TD
     Chunk["chunk.py<br/>heading-aware, ~1,200-token cap, ~100-token overlap,<br/>tables kept whole, heading_path recorded"]:::app
 
     subgraph Bank["PostgreSQL — kb schema"]
-        Docs[("kb.documents<br/>origin, rule_set, effective_from, source_url, content_sha256, withdrawn_at")]:::db
+        Docs[("kb.documents<br/>origin, rule_set, state, effective_from, source_url, content_sha256, withdrawn_at")]:::db
         Chunks[("kb.chunks<br/>content + tsvector fts (+ embedding when enabled)")]:::db
     end
 
@@ -907,6 +933,7 @@ CREATE TABLE kb.documents (
     language       TEXT,                    -- 'english' | 'hindi' | 'both'
     department     TEXT,                    -- 'excise' | 'sugarcane' | ...
     rule_set       TEXT,                    -- named Act / Rules / policy series, when known
+    state          TEXT,                    -- NULL for a state-agnostic Act/GO, else which state's own policy this is (mirrors pdf-markdown-pipeline's rule_sets.state)
     effective_from DATE,
     effective_to   DATE,                    -- set when a later doc supersedes this one
     source_url     TEXT,                    -- deep link on docsrepo.exciseup.in, or the Drive/Docs URL
@@ -955,15 +982,15 @@ Reads from two places on the same box, both read-only:
 
 - **MariaDB `pdf_markdown_pipeline_local`** (the app's DB): the `documents`
   table, filtered `visibility = 'public' AND status = 'verified' AND
-  deleted_at IS NULL AND (rule_sets.state IS NULL OR rule_sets.state =
-  'Uttar Pradesh')`, joined to `sections` / `rule_sets` / `departments` for
+  deleted_at IS NULL`, joined to `sections` / `rule_sets` / `departments` for
   `rule_set`, `doc_type` (`documents.document_type`), `language`, and the slug
-  segments that build the `docsrepo.exciseup.in` URL. `rule_sets.state` also
-  names the other ten states whose policies live in that repository as
-  comparative reference material; a `NULL` state (a generic Act or government
-  order with no state-specific rule set) stays in scope, a different state's
-  does not. A dedicated read-only MariaDB user (`excise_mcp_kb_ro`, `SELECT`
-  on that DB only) — the operator creates it, `OPERATOR_SETUP.md` §KB.
+  segments that build the `docsrepo.exciseup.in` URL. `rule_sets.state` rides
+  straight onto `kb.documents.state` — `NULL` for a generic Act or government
+  order with no state-specific rule set, otherwise the name of whichever of
+  the repository's eleven states (UP plus ten others kept as comparative
+  reference material) that document's own rule set belongs to. A dedicated
+  read-only MariaDB user (`excise_mcp_kb_ro`, `SELECT` on that DB only) — the
+  operator creates it, `OPERATOR_SETUP.md` §KB.
 - **Filesystem**: the Markdown for each row is at
   `~/Sites/pdf-markdown-pipeline/storage/app/public/<markdown_path>`
   (`markdown_path` is relative to the `public` disk). Read-only file access;
@@ -976,11 +1003,11 @@ when present, it becomes `kb.documents.effective_from` as `<year>-01-01`, so
 retrieval can cite a real date rather than whatever a title happens to spell
 out; a document with no `effective_year` of its own stays undated, since the
 source repository has none to give it either. A `documents` row that no
-longer matches the filter (unpublished, un-verified, deleted, or now outside
-the state scope) sets `withdrawn_at` — the content stays for audit but
-retrieval skips it. Idempotent on an unchanged corpus; a document whose
-`effective_from` changes without its Markdown changing (the state filter
-above, or backfilling a column added after the document first synced) is not
+longer matches the filter (unpublished, un-verified, or deleted) sets
+`withdrawn_at` — the content stays for audit but retrieval skips it.
+Idempotent on an unchanged corpus; a document whose `effective_from` or
+`state` changes without its Markdown changing (backfilling a column added
+after the document first synced, most recently `state` itself) is not
 treated as unchanged, so it still gets re-applied.
 
 ### Admin upload flow

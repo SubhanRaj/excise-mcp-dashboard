@@ -20,14 +20,17 @@ class Chat extends Component
 
     /**
      * Verified against the real August 2026 Lucknow import (CLAUDE.md's dispatch-report
-     * milestone) and the live knowledge base — a first-time visitor's proof that the tool
-     * loop produces a real answer, not a hypothetical one. Shown only on the empty thread;
-     * not a data source of any kind, so a plain const is enough.
+     * milestone), the FY2025-26 SRO shop revenue snapshot, and the live knowledge base — a
+     * first-time visitor's proof that the tool loop produces a real answer, not a
+     * hypothetical one. Shown only on the empty thread; not a data source of any kind, so a
+     * plain const is enough.
      */
     public const EXAMPLE_QUESTIONS = [
         ['question' => 'How many country liquor and composite shops are in Lucknow in August 2026?', 'chart' => false],
         ['question' => 'Compare dispatched volume by shop category in Lucknow for August 2026.', 'chart' => true],
         ['question' => 'What does the excise policy say about MGQ?', 'chart' => false],
+        ['question' => 'How much revenue was generated from beer sale across Uttar Pradesh in FY 2025-26?', 'chart' => false],
+        ['question' => 'Which district generated the highest revenue in FY2025-26?', 'chart' => false],
     ];
 
     public ?string $conversationId = null;

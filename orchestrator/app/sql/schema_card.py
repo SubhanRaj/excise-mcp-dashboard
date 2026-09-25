@@ -57,17 +57,27 @@ VIEW_NOTES = {
         "beer) needs analytics.sro_shops instead — see its own note."
     ),
     "sales_volumes": (
-        "dispatch/consumption volumes, aggregated by district + financial_year + "
-        "license_category — one row per combination, not per shop and not per month. "
-        "metric is 'dispatch_bl' | 'consumption_bl' | 'cases'; quantity in the given unit. "
-        "There is no shop_id or dispatch_id column here; a question scoped to a specific "
-        "month or to individual shops needs analytics.dispatches instead — "
-        "dispatched_bulk_litres/dispatched_cases for volume, duty_fee_inr for amount, "
-        "retail_license_category for the shop type, transport_pass_issued_at for the date."
+        "sales volumes by liquor type, aggregated by district + financial_year + "
+        "metric — one row per combination, not per shop and not per month. license_category "
+        "is always blank on this view (confirmed live) — never filter or join on it here. "
+        "metric names the liquor type: 'beer' | 'country_liquor_cml' | "
+        "'country_liquor_upml' | 'imfl' | 'imported_liquor' | 'rtd_low_alcohol' | 'wine' "
+        "(confirmed live, not every metric has data for every year); quantity is always in "
+        "Bulk litres (the unit column). There is no shop_id or dispatch_id column here; a "
+        "question scoped to a specific month or to individual shops needs "
+        "analytics.dispatches instead — dispatched_bulk_litres/dispatched_cases for volume, "
+        "duty_fee_inr for amount, retail_license_category for the shop type, "
+        "transport_pass_issued_at for the date."
     ),
     "operations": (
-        "enforcement stats. metric is 'raids' | 'cases_registered' | 'arrests' | "
-        "'liquor_seized_bl' | 'vehicles_seized'."
+        "enforcement and licensing activity by district + financial_year + metric — one row "
+        "per combination. metric is one of (confirmed live): 'inspections_raids', "
+        "'firs_registered', 'cases_prosecuted', 'convictions', "
+        "'illicit_liquor_seized_litres', 'hospital_admissions', 'deaths_illicit_liquor', "
+        "'lab_samples_tested', 'lab_samples_failed' (enforcement), and 'retail_shops', "
+        "'wholesale_licences', 'model_shops', 'composite_shops', 'other_outlets', "
+        "'dispatch_cases' (licensing counts, only from FY2019-20 on) — never guess a metric "
+        "name outside this list."
     ),
     "shops": (
         "one row per currently licensed shop — a present-day snapshot, not a time series. "
@@ -146,7 +156,14 @@ VIEW_NOTES = {
         "special_beer_mgr ELSE 0 END) added together — total_revenue alone cannot be "
         "filtered down to the beer share of it."
     ),
-    "policy_entries": "excise policy/circular entries with an effective date range.",
+    "policy_entries": (
+        "excise policy/circular entries with an effective date range. Carries five "
+        "states' own policy rules as comparative reference material, not Uttar Pradesh "
+        "only — title is 'Policy rules — <state> <financial_year>' (e.g. 'Policy rules — "
+        "Uttar Pradesh FY2025-26'); there is no separate state column. Always filter "
+        "title ILIKE '%Uttar Pradesh%' for a question about this department's own policy, "
+        "or a query matches Delhi, Haryana, Rajasthan, and Uttarakhand rows too."
+    ),
 }
 
 # Plain-language name and one-sentence summary per table, for the admin data-dictionary

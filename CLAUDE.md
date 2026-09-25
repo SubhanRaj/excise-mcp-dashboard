@@ -1468,6 +1468,151 @@ Optimizer" ("SRO"), was wrong in one place in `schema_card.py`
 ("Shop Revenue Optimizer") — fixed to match every other reference to it
 already in this repo.
 
+Verifying candidate example questions for Ask's and Chat's empty states —
+not writing plausible ones, running each live and checking the answer
+against real data before showing it as "try an example" — surfaced a fresh
+round of live bugs. Also found a genuine schema gap along the way:
+`analytics.policy_entries` carries five states' own policy rules as
+comparative reference material (UP, Delhi, Haryana, Rajasthan,
+Uttarakhand), with the state named only inside a free-text `title` and no
+separate column — the exact shape of contamination risk the knowledge
+base's own pdf-pipeline sync already excludes for, undocumented here until
+now. `VIEW_NOTES` says so directly and gives the `title ILIKE '%Uttar
+Pradesh%'` filter a UP-scoped question needs.
+
+The beer-revenue question's own SQL model asked "which district generated
+the most revenue in FY2025-26" got right — then reported the number wrong
+by a factor of ten: told to "state a large amount in lakh or crore," it did
+the conversion itself and wrote ₹28,608 crore for what checking the raw
+figure directly showed was really ₹2,860.80 crore (dividing by one million
+and calling it crore instead of dividing by ten million). Real revenue
+figures reported confidently wrong are worse than the question going
+unanswered. `format_inr`/`money_annotations` (`orchestrator/app/llm/
+prompts.py`) compute the correct conversion in Python — never left to the
+model's own arithmetic again — for any column whose name looks like money,
+and hand the pre-converted figure to both `pipeline.py`'s summarizer and
+the chat `run_sql_query` tool's own result, the two places that used to
+ask the model to do this math itself.
+
+A knowledge-base candidate question ("what are the different UP Excise
+shop types and license codes") surfaced four more shapes of the
+tool-calling reliability gap `MCP_ENGINES.md` §Tools already tracks at
+length, each caught live in turn: `search_knowledge`'s `k` argument sent as
+the literal string `"null"` instead of the JSON value (a validation error
+`int | None` alone doesn't catch); the model declining with "I only answer
+UP Excise questions" immediately *after* `search_knowledge` had already
+returned exactly the right content, a real contradiction now caught and
+retried; a full 78-token reply reducing to a single streamed `"#"`, past
+what the existing brace/tool-name degenerate checks catch; and, even though
+`CHAT_SYSTEM_PROMPT` already forbids it by name, the model narrating "No
+tool call needed here" instead of answering. Each got its own targeted
+catch-and-retry, the same shape every other tool-calling fix in this file
+has closed with. A fifth, milder issue survived all four: the eventual
+answer was correct but read as a raw, bracket-and-all dump of every
+retrieved section rather than the model's own synthesis of the parts that
+actually answered the question — a prompt-only nudge for now, since the
+content itself was never wrong, just unpolished; this specific question
+stays out of the example set until it reads as cleanly as the others do.
+
+Two verified additions did make it into both `Ask::EXAMPLE_QUESTIONS` and
+`Chat::EXAMPLE_QUESTIONS`: the beer-revenue question itself, and "which
+district generated the highest revenue in FY2025-26" (Lucknow,
+₹2,860.80 crore, confirmed live after the crore-arithmetic fix). Further
+verified candidates, not added — the empty state is three-to-five
+questions, not a catalogue — surfaced across the rest of `analytics.*`:
+`sales_volumes` carries real beer/country-liquor/IMFL/wine volume series
+back to FY2014-15; `operations` carries enforcement data (illicit liquor
+seized, raids, convictions, deaths from illicit liquor) over the same
+span; `analytics.policy_entries`, UP-scoped, has real per-year wholesale
+and retail margin policy text once a question is written to survive the
+model actually reaching for it reliably (not yet confirmed, given this
+round's own findings). `db/analytics_views.sql` already builds `district`/
+`financial_year` labels onto every fact view — this survey is what finally
+exercised several of them for the first time since the NITI import.
+
+A live report — the beer-revenue answer came back fine, `make_chart` then
+failed twice, and reloading the page showed the answer itself gone — traced
+to two separate bugs stacked on each other. The persistence one: a resume's
+own connection can drop again before it replays anything, and a repeated
+`make_chart` failure is exactly what makes a turn run long enough to need a
+second resume. `ChatController::resume()` used to wipe a message's tool-call
+rows before replaying, and `streamTurn()`'s `finally` block persisted
+whatever the current attempt had accumulated regardless of how that compared
+to what was already saved — so a second resume dying immediately, with
+nothing replayed yet, overwrote a real, already-answered message with
+nothing. `resume()` no longer wipes anything upfront, tool calls accumulate
+locally through the stream instead of writing to the database as each one
+arrives, and a new `persistIfNotWorseThanBefore()` only overwrites the
+message once the new attempt is not shorter and has not lost any tool calls
+next to what is already there — a fresh message always starts from empty, so
+this never blocks a first attempt, including one that genuinely produces
+nothing. The `make_chart` failures underneath it were a real bug in their
+own right, not a knock-on effect of the connection dropping:
+`journalctl --user -u excise-orchestrator` showed the actual generated
+script had every quote character backslash-escaped
+(`x=\"category_name\"` instead of `x="category_name"`), invalid Python
+outside a string literal — `spec` is already a JSON tool-call argument, so
+Llama had no reason to escape its own quotes a second time, but it did
+anyway. Its own retry, handed that `SyntaxError`'s last line as feedback,
+dropped the escaping but introduced a mismatched bracket instead — still
+broken, just differently. `MakeChartArgs`'s validator now tries to compile
+the script as given and, only on failure, tries again with that specific
+double-escaping undone, keeping the original if neither version compiles —
+a genuinely broken script still comes back as an ordinary failed tool result
+for the model's own retry budget, rather than being mangled further
+(`MCP_ENGINES.md` §Tools).
+
+The knowledge base's other-state exclusion (above) traded away real
+capability: excluding every non-UP document at sync time stopped a UP-only
+question from getting OCR-noisy other-state fragments outranking real UP
+text, but it also meant a genuinely comparative question ("how does UP's
+excise policy compare to Delhi's") had nothing to retrieve at all — the
+department wants that comparison answerable on request, not designed out.
+`kb.documents` gains a `state` column mirroring pdf-markdown-pipeline's own
+`rule_sets.state` exactly; `etl/sources/pdf_pipeline.py`'s sync no longer
+excludes a document for having one, and carries it onto every row instead
+(NULL for a generic Act or government order, the real state name otherwise).
+Scoping moves from ingestion to retrieval: `kb/retrieve.py`'s `retrieve()`
+takes a `states` argument defaulting to `["Uttar Pradesh"]` (a state-agnostic
+document is always in scope regardless), and `search_knowledge`'s own
+`states` argument lets the chat model widen it for a question that actually
+asks to compare states — the same defensive-validator treatment `k` already
+needed for Llama's tool-calling quirks now also covers `states` arriving as
+a bare state name or the literal string `"null"`. Each retrieved chunk's
+citation now names its own state when it has one
+(`[title (state) — heading]`), and `CHAT_SYSTEM_PROMPT` tells the model
+never to blend facts from two states into one answer without saying which
+is which — the citation label is what keeps that honest. This is a pending
+migration, not yet live: `kb.documents.state` needs an operator-run
+`ALTER TABLE` (`OPERATOR_SETUP.md` §Data bank) before the pdf-markdown-pipeline
+sync can backfill it onto the corpus's existing rows, and every orchestrator
+test touching `kb.chunks`/`kb.documents` fails against the real local
+Postgres until that column exists — expected, not a regression, and called
+out rather than papered over.
+
+Verifying candidate example questions for `sales_volumes` and `operations`
+surfaced two more stale-placeholder bugs, the same shape as the earlier
+`CL5CC`/license-code fixes: `schema_card.py`'s `VIEW_NOTES` for both views
+still carried metric-value guesses and a grain description written before
+the real NITI data existed, and none of it matched what's actually in the
+database. `sales_volumes`' note claimed `metric` was
+`'dispatch_bl' | 'consumption_bl' | 'cases'` and that the grain included
+`license_category` — live data shows `metric` is really a liquor type
+(`beer`, `country_liquor_cml`, `imfl`, `wine`, ...) and
+`license_category`/`license_category_id` is always blank, so the real grain
+is just district + financial year + metric. `operations`' note listed five
+metric values, none of which exist — the real set is fourteen enforcement
+metrics (`inspections_raids`, `convictions`, `deaths_illicit_liquor`,
+`illicit_liquor_seized_litres`, ...). Both notes now carry the confirmed
+live values. The same stale guesses had leaked into two of
+`FEW_SHOT_SQL_EXAMPLES` (`llm/prompts.py`): a dispatch-volume-trend example
+filtered on `metric = 'dispatch_bl'` (rewritten to sum across every metric
+instead, since no single dispatch-only metric exists) and an
+enforcement-raids example filtered on `metric = 'raids'` (corrected to
+`inspections_raids`) — both re-verified live (Lucknow's sales volume:
+33.4M BL in FY2014-15 to 78.3M BL in FY2025-26; raids: 242,857 to 836,717
+over the same span).
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures

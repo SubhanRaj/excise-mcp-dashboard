@@ -32,11 +32,16 @@ ORIGIN = "pdf_pipeline"
 
 # Mirrors SitemapController::documentUrl() in pdf-markdown-pipeline — the exact
 # route shape per document kind (rule_set/policy, folder, division, section).
-# pdf-markdown-pipeline's excise department also holds other states' policies as
-# comparative reference material (rule_sets.state tags which one) — this app answers
-# for UP only, so a document under a rule_set tagged for a different state never
-# syncs. rule_sets.state is NULL for a document with no state-specific rule_set
-# (a generic Act/GO), which is not comparative material and stays in scope.
+# pdf-markdown-pipeline's excise department also holds ten other states' policies
+# as comparative reference material (rule_sets.state tags which one) — this used to
+# sync only Uttar Pradesh's own (plus a state-agnostic rs.state IS NULL doc, a
+# generic Act/GO) and drop the rest as out of scope. They're in scope now: every
+# state's own document syncs, carrying its rule_set.state straight onto
+# kb.documents.state, the same column name and the same meaning as the source —
+# NULL stays a state-agnostic Act/GO, everything else names the state its policy
+# belongs to. What changed is retrieval, not ingestion: kb/retrieve.py defaults to
+# Uttar Pradesh (plus state-agnostic docs) unless a question is explicitly
+# comparative, the same scope this query alone used to enforce.
 _DOCUMENTS_QUERY = """
     SELECT
         doc.id AS id, doc.slug AS slug, doc.title AS title,
@@ -46,7 +51,8 @@ _DOCUMENTS_QUERY = """
         sec.slug AS section_slug,
         dv.slug AS division_slug,
         fold.slug AS folder_slug,
-        rs.slug AS rule_set_slug, rs.kind AS rule_set_kind, rs.name AS rule_set_name
+        rs.slug AS rule_set_slug, rs.kind AS rule_set_kind, rs.name AS rule_set_name,
+        rs.state AS rule_set_state
     FROM documents doc
     JOIN departments dept ON dept.id = doc.department_id
     LEFT JOIN sections sec ON sec.id = doc.section_id
@@ -57,7 +63,6 @@ _DOCUMENTS_QUERY = """
       AND doc.status = 'verified'
       AND doc.deleted_at IS NULL
       AND dept.slug = %s
-      AND (rs.state IS NULL OR rs.state = 'Uttar Pradesh')
 """
 
 
@@ -77,6 +82,7 @@ class SourceDocRow(TypedDict):
     rule_set_slug: str | None
     rule_set_kind: str | None
     rule_set_name: str | None
+    rule_set_state: str | None
 
 
 @dataclass(frozen=True)
@@ -172,6 +178,7 @@ async def fetch_documents(department_slug: str) -> list[SourceDocRow]:
             rule_set_slug=r["rule_set_slug"],
             rule_set_kind=r["rule_set_kind"],
             rule_set_name=r["rule_set_name"],
+            rule_set_state=r["rule_set_state"],
         )
         for r in raw_rows
     ]
@@ -219,7 +226,7 @@ async def sync_documents(
         content_sha256 = hashlib.sha256(markdown.encode("utf-8")).hexdigest()
         effective_from = date(row["effective_year"], 1, 1) if row["effective_year"] else None
         existing = await pg_conn.fetchrow(
-            "SELECT content_sha256, effective_from, withdrawn_at FROM kb.documents "
+            "SELECT content_sha256, effective_from, state, withdrawn_at FROM kb.documents "
             "WHERE origin = $1 AND origin_ref = $2",
             origin,
             origin_ref,
@@ -228,6 +235,7 @@ async def sync_documents(
             existing
             and existing["content_sha256"] == content_sha256
             and existing["effective_from"] == effective_from
+            and existing["state"] == row["rule_set_state"]
             and existing["withdrawn_at"] is None
         ):
             continue  # unchanged and live — re-running the same corpus changes no rows
@@ -235,12 +243,13 @@ async def sync_documents(
         document_id = await pg_conn.fetchval(
             """
             INSERT INTO kb.documents
-                (origin, origin_ref, title, doc_type, language, department, rule_set,
+                (origin, origin_ref, title, doc_type, language, department, rule_set, state,
                  effective_from, source_url, content_sha256, ingested_at, withdrawn_at)
-            VALUES ($1, $2, $3, $4, $5, 'excise', $6, $7, $8, $9, now(), NULL)
+            VALUES ($1, $2, $3, $4, $5, 'excise', $6, $7, $8, $9, $10, now(), NULL)
             ON CONFLICT (origin, origin_ref) DO UPDATE SET
                 title = EXCLUDED.title, doc_type = EXCLUDED.doc_type,
                 language = EXCLUDED.language, rule_set = EXCLUDED.rule_set,
+                state = EXCLUDED.state,
                 effective_from = EXCLUDED.effective_from,
                 source_url = EXCLUDED.source_url, content_sha256 = EXCLUDED.content_sha256,
                 ingested_at = now(), withdrawn_at = NULL
@@ -252,6 +261,7 @@ async def sync_documents(
             row["document_type"],
             row["language"],
             row["rule_set_name"],
+            row["rule_set_state"],
             effective_from,
             url,
             content_sha256,

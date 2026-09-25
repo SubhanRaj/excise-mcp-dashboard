@@ -394,6 +394,9 @@ CREATE TABLE IF NOT EXISTS kb.documents (
     language       TEXT,                    -- 'english' | 'hindi' | 'both'
     department     TEXT,                    -- 'excise' | 'sugarcane' | ...
     rule_set       TEXT,                    -- named Act / Rules / policy series, when known
+    state          TEXT,                    -- mirrors pdf-markdown-pipeline's rule_sets.state: NULL for a
+                                             -- generic Act/GO not tied to one state, else the state this
+                                             -- document's own policy belongs to ('Uttar Pradesh', 'Delhi', ...)
     effective_from DATE,
     effective_to   DATE,                    -- set when a later doc supersedes this one
     source_url     TEXT,                    -- deep link on docsrepo.exciseup.in, or the Drive/Docs URL

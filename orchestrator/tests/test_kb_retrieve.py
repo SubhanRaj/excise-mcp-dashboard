@@ -91,6 +91,49 @@ async def test_retrieve_excludes_withdrawn_documents(seeded_document: int) -> No
     assert chunks == []
 
 
+@pytest.fixture
+async def seeded_other_state_document() -> AsyncIterator[int]:
+    # A document under a rule set tagged for a state other than UP — the sync no
+    # longer excludes these (DATA_PIPELINE.md §Knowledge base), so a search must
+    # keep it out of an ordinary UP-only question and only surface it when the
+    # caller names that state explicitly.
+    conn = await asyncpg.connect(_etl_dsn())
+    try:
+        doc_id = await conn.fetchval(
+            "INSERT INTO kb.documents (origin, origin_ref, title, doc_type, state, "
+            "content_sha256) VALUES ('test', $1, 'Delhi Zorquil Rules', 'policy', "
+            "'Delhi', 'deadbeef2') RETURNING id",
+            _TEST_ORIGIN_REF + "-delhi",
+        )
+        await conn.execute(
+            "INSERT INTO kb.chunks (document_id, ord, heading_path, content, token_estimate) "
+            "VALUES ($1, 0, 'Section 1', 'Delhi zorquil bendrafta rule text.', 15)",
+            doc_id,
+        )
+        yield doc_id
+    finally:
+        await conn.execute("DELETE FROM kb.documents WHERE id = $1", doc_id)
+        await conn.close()
+
+
+async def test_retrieve_defaults_to_uttar_pradesh_and_excludes_other_states(
+    seeded_document: int, seeded_other_state_document: int
+) -> None:
+    chunks = await retrieve("zorquil bendrafta", k=6)
+    assert all(c.title != "Delhi Zorquil Rules" for c in chunks)
+
+
+async def test_retrieve_widens_to_named_states(
+    seeded_document: int, seeded_other_state_document: int
+) -> None:
+    chunks = await retrieve("zorquil bendrafta", k=6, states=["Uttar Pradesh", "Delhi"])
+    titles = {c.title for c in chunks}
+    assert "Delhi Zorquil Rules" in titles
+    assert "MGQ Test Policy" in titles
+    delhi_chunk = next(c for c in chunks if c.title == "Delhi Zorquil Rules")
+    assert delhi_chunk.state == "Delhi"
+
+
 async def test_retrieve_no_match_returns_empty() -> None:
     chunks = await retrieve("xyzzy nonexistent gibberish query term", k=6)
     assert chunks == []

@@ -436,11 +436,18 @@ to `web/` before the stream opens. `POST /chat` starts a turn the first time
 its `turn_id` arrives and attaches to the existing one on every later call
 for the same id, which is what lets `ChatController::resume()` (`POST
 /chat/{conversation}/messages/{message}/resume`) reconnect a turn whose
-`fetch()` failed for a reason other than the user's own Stop click. Because
-the replay is authoritative from the turn's first event, `resume()` deletes
-any tool-call rows (and their chart artifacts) the message already carries
-before replaying, so the replay is not layered on top of them.
-`chat.blade.php`'s `reconnectAndStream()` makes up to 5 attempts, 2s apart;
+`fetch()` failed for a reason other than the user's own Stop click. The
+replay is authoritative from the turn's first event, so `streamTurn()`
+rebuilds the message's content and tool calls from it wholesale rather than
+appending — but only once `persistIfNotWorseThanBefore()` confirms the new
+attempt reached at least as far as what is already saved (same content
+length or longer, same tool-call count or more). A resume's own connection
+can drop again before replaying anything: confirmed live, a `make_chart`
+retry made a turn run long enough to need a second resume, and that second
+attempt died with zero events — `resume()` used to wipe the message's tool
+calls before replaying and `streamTurn()` used to persist unconditionally,
+so a dropped second resume silently erased a real, already-answered message
+down to nothing. `chat.blade.php`'s `reconnectAndStream()` makes up to 5 attempts, 2s apart;
 each attempt is itself a full streaming connection bounded by the same
 ~100s cap, together covering a turn up to `OLLAMA_GENERATE_TIMEOUT_SECONDS`'s
 own 480s ceiling. `chat_turns` is memory-only, the same boundary
@@ -480,11 +487,11 @@ sequenceDiagram
     B--xL: fetch() throws (not a Stop click)
     L--xO: (this request's own relay ends; the turn in R does not)
     B->>L: POST /chat/{conversation}/messages/{message}/resume
-    L->>L: delete this message's own tool-call rows + chart artifacts
     L->>O: POST /chat — same turn_id
     O->>R: turn_id already known — attach, don't start a new one
     O-->>L: replays R's buffer from the first event, then live events as they arrive
-    L-->>B: same ndjson lines, persisting messages + message_tool_calls as before
+    L-->>B: same ndjson lines, accumulated locally
+    Note over L: persistIfNotWorseThanBefore() — only overwrites the message if this attempt is not shorter/fewer tool calls than what's already saved
 ```
 
 > Stop sends `POST /chat/turn/{turn_id}/cancel` directly rather than relying
@@ -495,7 +502,7 @@ sequenceDiagram
 
 | Tool | Arguments | Does | Guardrails |
 |---|---|---|---|
-| `search_knowledge` | `{query: str, k?: int \| null}` | Retrieves from `kb.chunks` (§Retrieval), returns chunk text + `heading_path` + `source_url` | read-only; `withdrawn_at IS NULL`; `k` capped at 12, defaults to 6 on `null` |
+| `search_knowledge` | `{query: str, k?: int \| null, states?: list[str] \| null}` | Retrieves from `kb.chunks` (§Retrieval), returns chunk text + `heading_path` + `source_url`, each labeled by the state its own document belongs to | read-only; `withdrawn_at IS NULL`; `k` capped at 12, defaults to 6 on `null`; `states` defaults to Uttar Pradesh only (state-agnostic Acts/GOs always included) and widens only when named explicitly |
 | `run_sql_query` | `{question: str}` | Plans SQL like `/query`'s `plan_sql`, always — no raw-`sql` argument, so the chat model (which never sees the schema) can't hand-write a query against a table it invented; then `guard.py` -> `runner.py` (READ ONLY txn, statement timeout, row cap); returns column list + row count + a small preview | identical guard + read-only role as the one-shot path; no writes possible; a rejected or failing statement comes back as a failed tool result (see below), not a turn-ending exception |
 | `make_chart` | `{spec: str}` | Runs a generated Python plot script over the last `run_sql_query` result in the `bwrap` sandbox; returns artifact refs | same sandbox, same caps; the DataFrame is looked up by the request's own `conversation_id`, a trusted value the model never supplies and is never shown — an earlier `data_ref` argument asked the model to restate that id as a match check, which no real call could ever pass |
 
@@ -816,6 +823,77 @@ never told the true answer and guessed instead of declining.
 `CHAT_SYSTEM_PROMPT` now states the real fact (Llama 3.1, running locally)
 so there is nothing left to guess.
 
+Verifying candidate example questions for Ask's and Chat's empty states
+surfaced four more shapes of the same reliability gap, all on one knowledge
+question ("what are the different UP Excise shop types and license codes").
+First, `search_knowledge`'s `k` argument sometimes arrives as the literal
+JSON string `"null"` rather than the JSON value `null` — `int | None` alone
+doesn't coerce a string, valid or not, so the call failed validation outright.
+`SearchKnowledgeArgs` now has a `field_validator` that treats that one string,
+case-insensitively, the same as a real null. Second, after `search_knowledge`
+had already returned exactly the right content, the model declined anyway
+with the canned "I only answer UP Excise questions" line `CHAT_SYSTEM_PROMPT`
+itself supplies — a real contradiction, since a tool call succeeding earlier
+the same turn is proof the question was in scope.
+`_wrongly_refuses_after_a_successful_tool_call` catches this and retries with
+tools attached, nudging the model to answer using the result already in hand.
+Third, a full response — 78 completion tokens by Ollama's own count — reduced
+to a single streamed `"#"`, a markdown heading marker with nothing after it
+that neither the bare-`"{}"` nor the tool-name-prefix check in `_is_degenerate`
+catches. Markdown filler characters (`#`, `*`, `-`, whitespace) are now
+stripped the same way `{}` already is; a reply that is only ever those is
+held back the same way. Fourth, even though `CHAT_SYSTEM_PROMPT` already
+forbids it by name ("Do not write things like 'No tool call is needed'"), the
+model did exactly that — "No tool call needed here; this is just
+plain-language shop-type information" — the deliberation standing in for the
+answer. `_narrates_tool_decision` catches the same family of phrases the
+prompt already promises not to use and retries with tools attached, the same
+shape as the wrong-refusal fix. All four are additive: each only fires under
+its own specific condition, so none changes how an already-working turn
+behaves. A fifth, milder issue turned up past all four fixes: the model's
+eventual answer was correct but read as a raw dump of every retrieved
+section, brackets and all, rather than its own synthesis of the parts that
+answered the question — `search_knowledge`'s own prompt entry now says
+directly not to copy a result's `[title — heading]` citation prefix into the
+reply verbatim, and to use only the parts a question actually needs. Left as
+a prompt-only nudge, not a code guard, since the answer this produced was
+correct, just unpolished — CLAUDE.md's own example-question set holds off on
+adding this specific question until it reads more like the other examples do.
+
+The same pass fixed a different kind of hallucination: a real number,
+reported wrong. Asked which district generated the most revenue in
+FY2025-26, the correct SQL ran and returned a genuine result — then the
+model, asked to "state a large amount in lakh or crore," did the unit
+conversion itself and got it wrong by a factor of ten (₹28,608 crore quoted
+for a real ₹2,860.80 crore, i.e. dividing by one million and calling the
+result crore). `format_inr`/`money_annotations` (`llm/prompts.py`) compute
+the correct lakh/crore rendering in Python for every column whose name looks
+like money, and hand the model the pre-converted figure directly — both
+`pipeline.py`'s `build_summary_prompt` and the chat `run_sql_query` tool's
+own result summary carry it now, so neither the one-shot pipeline's
+summarizer nor the chat model doing its own narration has to compute the
+conversion itself (`DATA_PIPELINE.md` §Row visibility for the AI path has
+the same finding that surfaced the beer-revenue and CL5CC/FL5DB fixes this
+question needed first).
+
+A live `make_chart` failure surfaced a further shape of Llama's tool-calling
+unreliability, this time inside the script itself rather than around it: a
+`spec` argument arrived with every quote character backslash-escaped
+(`x=\"category_name\"` instead of `x="category_name"`) — invalid Python
+wherever it lands outside an actual string literal, and confirmed live as a
+real sandbox `SyntaxError` ("unexpected character after line continuation
+character"). The model's own retry, given that traceback's last line as
+feedback, dropped the escaping but introduced a mismatched bracket instead,
+still failing. `spec` is already a JSON string argument — the model has no
+reason to escape its own quote characters a second time — so
+`MakeChartArgs`'s validator now tries `compile()`-ing the script as given
+and, only if that fails, tries again after undoing exactly that
+double-escaping; it returns the original untouched if neither version
+compiles, so a genuinely broken script (the mismatched-bracket case) still
+surfaces as a normal failed tool result for the model's own retry budget to
+handle, rather than being silently mangled further. The tool description
+also now says directly not to backslash-escape quotes in `spec`.
+
 ### Routing (knowledge / data / hybrid / general)
 
 There is no separate classifier. The system prompt describes the three tools
@@ -838,20 +916,31 @@ Default path, no embeddings:
 
 ```sql
 SELECT c.content, c.heading_path, d.title, d.source_url, d.doc_type, d.effective_from,
-       ts_rank(c.fts, websearch_to_tsquery('simple', $1)) AS rank
+       d.state, ts_rank(c.fts, websearch_to_tsquery('simple', $1)) AS rank
 FROM kb.chunks c
 JOIN kb.documents d ON d.id = c.document_id
 WHERE d.withdrawn_at IS NULL
   AND c.fts @@ websearch_to_tsquery('simple', $1)
+  AND (d.state IS NULL OR d.state = ANY($3))  -- $3 defaults to ['Uttar Pradesh']
 ORDER BY rank DESC
 LIMIT $2;                                    -- KB_RETRIEVE_K
 ```
 
+The corpus holds ten other states' own excise policies as comparative
+reference material alongside UP's (`DATA_PIPELINE.md` §Knowledge base); the
+`state` filter is what keeps an ordinary question scoped to UP without
+excluding that material from the corpus entirely — `retrieve()`'s `states`
+argument defaults to `["Uttar Pradesh"]` and only widens when
+`search_knowledge`'s own `states` argument names others. A state-agnostic
+document (`state IS NULL` — a generic Act or government order) is always in
+scope regardless of what's requested.
+
 `chat/tools.py`'s `search_knowledge` formats each retrieved chunk for the
-model as `[<title> (effective <year>) — <heading_path>] <content>` when
-`effective_from` is set (`DATA_PIPELINE.md` §Knowledge base has where that
-date comes from), so a rule amendment can be cited by its real year rather
-than whatever a title happens to spell out.
+model as `[<title> (<state>) (effective <year>) — <heading_path>] <content>`,
+the state segment present only when the document has one, so the model can
+tell a UP result from a comparative one at a glance and cite accordingly
+(`DATA_PIPELINE.md` §Knowledge base has where the effective-year date comes
+from).
 
 With `KB_EMBEDDINGS_ENABLED`: also embed the query via `kb/embed.py`
 (local Ollama embed model), run an HNSW cosine search on `kb.chunks.embedding`,

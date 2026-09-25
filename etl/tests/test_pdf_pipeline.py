@@ -45,6 +45,7 @@ def _row(doc_id: int = 999001, **overrides: object) -> SourceDocRow:
         "rule_set_slug": None,
         "rule_set_kind": None,
         "rule_set_name": None,
+        "rule_set_state": None,
     }
     base.update(overrides)  # type: ignore[typeddict-item]  # test helper, keys always valid SourceDocRow keys
     return base
@@ -231,6 +232,65 @@ async def test_rerun_with_unchanged_content_still_backfills_effective_from(
     )
     assert doc is not None
     assert doc["effective_from"].year == 2024
+
+
+async def test_sync_carries_rule_set_state_onto_the_document(
+    pg_conn: asyncpg.Connection, tmp_path: Path
+) -> None:
+    # Every state's own document syncs now, not just Uttar Pradesh's — state is what a
+    # comparative question filters and cites by (kb/retrieve.py, DATA_PIPELINE.md
+    # §Knowledge base).
+    (tmp_path / "test-policy.md").write_text("# Test Policy\n\nBody text.\n")
+    run_id = await _new_run(pg_conn)
+
+    await sync_documents(
+        pg_conn,
+        run_id,
+        [_row(rule_set_state="Delhi")],
+        markdown_root=tmp_path,
+        base_url=BASE_URL,
+        origin=TEST_ORIGIN,
+    )
+
+    doc = await pg_conn.fetchrow(
+        "SELECT state FROM kb.documents WHERE origin = $1 AND origin_ref = '999001'", TEST_ORIGIN
+    )
+    assert doc is not None
+    assert doc["state"] == "Delhi"
+
+
+async def test_rerun_with_unchanged_content_still_backfills_state(
+    pg_conn: asyncpg.Connection, tmp_path: Path
+) -> None:
+    # Same reasoning as the effective_from backfill above: a code change that starts
+    # populating a previously-NULL column is not itself a content change, so every
+    # document synced before this column existed must not stay unlabeled forever.
+    (tmp_path / "test-policy.md").write_text("# Test Policy\n\nBody text.\n")
+    run_id = await _new_run(pg_conn)
+
+    await sync_documents(
+        pg_conn,
+        run_id,
+        [_row(rule_set_state=None)],
+        markdown_root=tmp_path,
+        base_url=BASE_URL,
+        origin=TEST_ORIGIN,
+    )
+    counts = await sync_documents(
+        pg_conn,
+        run_id,
+        [_row(rule_set_state="Uttar Pradesh")],
+        markdown_root=tmp_path,
+        base_url=BASE_URL,
+        origin=TEST_ORIGIN,
+    )
+
+    assert counts.upserted == 1
+    doc = await pg_conn.fetchrow(
+        "SELECT state FROM kb.documents WHERE origin = $1 AND origin_ref = '999001'", TEST_ORIGIN
+    )
+    assert doc is not None
+    assert doc["state"] == "Uttar Pradesh"
 
 
 async def test_rerun_unchanged_content_upserts_nothing(

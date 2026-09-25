@@ -82,12 +82,20 @@ class KbChunk(BaseModel):
     source_url: str | None
     doc_type: str | None
     effective_from: date | None
+    # NULL for a state-agnostic Act/GO, else the state this document's own policy
+    # belongs to — mirrors kb.documents.state, itself mirroring pdf-markdown-pipeline's
+    # own rule_sets.state (DATA_PIPELINE.md §Knowledge base).
+    state: str | None
     rank: float
 
 
 class KbSearchRequest(BaseModel):
     query: str
     k: int = 6
+    # None retrieves Uttar Pradesh (plus state-agnostic documents) only — the safe
+    # default every question already gets. A comparative question names the states
+    # to widen to, e.g. ["Uttar Pradesh", "Delhi"] (MCP_ENGINES.md §Tools).
+    states: list[str] | None = None
 
 
 class KbSearchResponse(BaseModel):
@@ -98,6 +106,7 @@ class KbDocument(BaseModel):
     id: int
     title: str
     doc_type: str | None
+    state: str | None
     effective_from: date | None
     source_url: str | None
     ingested_at: datetime

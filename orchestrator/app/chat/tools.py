@@ -7,14 +7,14 @@ implementation.
 """
 
 import pandas as pd
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, field_validator
 
 from app.config import settings
 from app.engines.base import RenderRequest
 from app.engines.base import get as get_engine
 from app.kb.retrieve import retrieve as kb_retrieve
 from app.llm.client import OllamaClient, TokenUsage
-from app.llm.prompts import build_sql_prompt
+from app.llm.prompts import build_sql_prompt, money_annotations
 from app.pipeline import _json_safe_rows, _write_parquet
 from app.schemas import (
     ChartArtifact,
@@ -41,8 +41,30 @@ class SearchKnowledgeArgs(BaseModel):
     query: str
     # Llama's tool-calling fills in every schema property rather than omitting ones it
     # doesn't want to set, sending an explicit `k: null` — plain `int = 6` rejects that,
-    # since a default only applies when the key is absent, not when it's null.
+    # since a default only applies when the key is absent, not when it's null. Confirmed
+    # live: it also sometimes sends the literal string "null" instead of the JSON value,
+    # which int | None does not coerce on its own — "null" is a valid (if odd) string,
+    # not a null, as far as int parsing is concerned.
     k: int | None = 6
+    # None retrieves Uttar Pradesh (plus state-agnostic Acts/GOs) only — the safe
+    # default. A comparative question ("how does X compare to Y state") names the
+    # states to widen to, e.g. ["Uttar Pradesh", "Delhi"]. Same "null" string quirk as
+    # k above, plus a single bare state name instead of a one-item list — both
+    # confirmed shapes of how Llama's tool-calling fills in an unset or singular
+    # argument for a schema it hasn't seen a worked example of yet.
+    states: list[str] | None = None
+
+    @field_validator("k", mode="before")
+    @classmethod
+    def _treat_the_string_null_as_none(cls, v: object) -> object:
+        return None if isinstance(v, str) and v.strip().lower() == "null" else v
+
+    @field_validator("states", mode="before")
+    @classmethod
+    def _tolerate_a_null_string_or_a_bare_state_name(cls, v: object) -> object:
+        if isinstance(v, str):
+            return None if v.strip().lower() == "null" else [v]
+        return v
 
 
 class RunSqlQueryArgs(BaseModel):
@@ -56,13 +78,38 @@ class RunSqlQueryArgs(BaseModel):
 class MakeChartArgs(BaseModel):
     spec: str
 
+    @field_validator("spec", mode="before")
+    @classmethod
+    def _unescape_over_escaped_quotes(cls, v: object) -> object:
+        # Confirmed live: Llama's tool-calling sometimes sends spec's string
+        # value with every quote backslash-escaped (`x=\"category_name\"`
+        # instead of `x="category_name"`) — invalid Python wherever it lands
+        # outside an actual string literal, and the cause of a real make_chart
+        # failure ("unexpected character after line continuation character").
+        # Only applied when the script as given doesn't compile and the naive
+        # unescape does, so a spec that already runs is never touched.
+        if not isinstance(v, str):
+            return v
+        try:
+            compile(v, "<make_chart>", "exec")
+            return v
+        except SyntaxError:
+            pass
+        unescaped = v.replace('\\"', '"').replace("\\'", "'")
+        try:
+            compile(unescaped, "<make_chart>", "exec")
+            return unescaped
+        except SyntaxError:
+            return v
+
 
 async def _search_knowledge(args: SearchKnowledgeArgs) -> ToolResult:
-    chunks = await kb_retrieve(args.query, min(args.k or 6, 12))
+    chunks = await kb_retrieve(args.query, min(args.k or 6, 12), args.states)
     if not chunks:
         return ToolResult(ok=True, summary="No matching passages in the knowledge base.")
     lines = [
-        f"[{c.title}{f' (effective {c.effective_from.year})' if c.effective_from else ''}"
+        f"[{c.title}{f' ({c.state})' if c.state else ''}"
+        f"{f' (effective {c.effective_from.year})' if c.effective_from else ''}"
         f"{f' — {c.heading_path}' if c.heading_path else ''}] {c.content}"
         for c in chunks
     ]
@@ -111,7 +158,11 @@ async def _run_sql_query(
             "no matching data for this question, not a real zero or total."
         )
     else:
-        summary = f"{len(rows)} row(s), columns: {columns}. Preview: {preview}"
+        # The chat model narrates this preview directly with no summarize() call of
+        # its own to hand a pre-computed figure to otherwise — same reasoning and
+        # same helper as pipeline.py's build_summary_prompt.
+        annotations = money_annotations(list(rows[0].keys()), rows[:5]) if rows else ""
+        summary = f"{len(rows)} row(s), columns: {columns}. Preview: {preview}{annotations}"
     return ToolResult(ok=True, summary=summary)
 
 

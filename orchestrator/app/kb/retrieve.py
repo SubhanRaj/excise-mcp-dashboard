@@ -50,26 +50,35 @@ def _strip_stopwords(query: str) -> str:
 
 _RETRIEVE_QUERY = """
     SELECT c.content, c.heading_path, d.title, d.source_url, d.doc_type, d.effective_from,
-           ts_rank(c.fts, websearch_to_tsquery('simple', $1)) AS rank
+           d.state, ts_rank(c.fts, websearch_to_tsquery('simple', $1)) AS rank
     FROM kb.chunks c
     JOIN kb.documents d ON d.id = c.document_id
     WHERE d.withdrawn_at IS NULL
       AND c.fts @@ websearch_to_tsquery('simple', $1)
+      AND (d.state IS NULL OR d.state = ANY($3::text[]))
     ORDER BY rank DESC
     LIMIT $2
 """
 
 _DOCUMENTS_PAGE_QUERY = """
-    SELECT id, title, doc_type, effective_from, source_url, ingested_at, withdrawn_at
+    SELECT id, title, doc_type, state, effective_from, source_url, ingested_at, withdrawn_at
     FROM kb.documents
     ORDER BY ingested_at DESC
     LIMIT $1 OFFSET $2
 """
 
+# The corpus's own default scope — every question gets this unless it names other
+# states explicitly. A state-agnostic document (state IS NULL — a generic Act or GO,
+# not tied to any one state) is always in scope regardless, the same rule
+# `_DOCUMENTS_QUERY`'s old sync-time filter used to apply for every question at once;
+# retrieval enforces it per-question now that ingestion no longer does
+# (DATA_PIPELINE.md §Knowledge base).
+_DEFAULT_STATES = ["Uttar Pradesh"]
 
-async def retrieve(query: str, k: int) -> list[KbChunk]:
+
+async def retrieve(query: str, k: int, states: list[str] | None = None) -> list[KbChunk]:
     pool = await get_pool()
-    rows = await pool.fetch(_RETRIEVE_QUERY, _strip_stopwords(query), k)
+    rows = await pool.fetch(_RETRIEVE_QUERY, _strip_stopwords(query), k, states or _DEFAULT_STATES)
     return [KbChunk(**dict(r)) for r in rows]
 
 

@@ -89,13 +89,24 @@ def _is_degenerate(text: str) -> bool:
     accumulates unstreamed the same way a bare "{}" does instead of leaking the
     fake call's tokens to the user one at a time as they arrive.
 
+    A third shape: confirmed live, asked "what are the different UP Excise shop
+    types and license codes" — a question with real, substantial knowledge-base
+    content already retrieved — the model's whole reply, all 78 completion
+    tokens Ollama reported generating, reduced to a single streamed "#" with
+    nothing else ever released. Markdown-filler characters (#, *, -, whitespace)
+    stripped from both ends the same way the brace check strips {} — a reply
+    that is only ever those, at any point while it is still arriving, is exactly
+    as unhelpful as a bare "{}" and held back the same way.
+
     Both checks resolve within a few characters, so holding matching text back
-    from the live stream costs nothing. `_needs_retry` below adds a third,
+    from the live stream costs nothing. `_needs_retry` below adds a fourth,
     slower-to-detect shape on top of this one — see its own docstring for why
     that one only gates the retry decision, not the live stream.
     """
     stripped = text.strip()
     if stripped.strip("{}") == "":
+        return True
+    if stripped.strip("#*-_ \n\t") == "":
         return True
     return any(stripped.startswith(name[: len(stripped)]) for name in _TOOL_NAMES)
 
@@ -159,6 +170,55 @@ def _claims_unmade_chart(text: str, chart_made: bool) -> bool:
         return False
     lowered = text.lower()
     return any(phrase in lowered for phrase in _CHART_CLAIM_PHRASES)
+
+
+_TOOL_DECISION_NARRATION_PHRASES = (
+    "no tool call is needed",
+    "no tool call needed",
+    "tool call is needed here",
+    "i'll respond directly",
+    "i will respond directly",
+    "let me respond directly",
+)
+
+
+def _narrates_tool_decision(text: str) -> bool:
+    """CHAT_SYSTEM_PROMPT already forbids narrating a tool-call decision by name
+    ("Never narrate a tool call... Do not write things like 'No tool call is
+    needed'") -- confirmed live that the prompt instruction alone is not
+    reliable, the same as every other tool-calling gap here: asked a knowledge
+    question with real content already retrieved by an earlier search_knowledge
+    call this same turn, the model's whole reply was "# No tool call needed
+    here; this is just plain-language shop-type information." -- the
+    deliberation itself standing in for the answer, not the answer. Checked
+    once the full text is in, same reasoning as _claims_unmade_chart: these
+    phrases read like ordinary prose until complete, and holding a whole
+    generation back per chunk risks the connection going quiet long enough to
+    look dropped.
+    """
+    lowered = text.lower()
+    return any(phrase in lowered for phrase in _TOOL_DECISION_NARRATION_PHRASES)
+
+
+def _wrongly_refuses_after_a_successful_tool_call(
+    text: str, last_tool_result: ToolResult | None
+) -> bool:
+    """CHAT_SYSTEM_PROMPT's own out-of-scope decline can fire on a question that
+    plainly was in scope -- confirmed live, asked "what are the different UP
+    Excise shop types and license codes" (the department's own terminology,
+    right in the question), the model called search_knowledge, got back exactly
+    the right knowledge-base content, and then declined anyway with the canned
+    "I only answer UP Excise questions" line instead of using what it had just
+    retrieved. A tool call succeeding earlier this same turn is proof the
+    question was answerable, so a refusal reached after that is a contradiction
+    worth retrying, not a legitimate decline.
+    """
+    if last_tool_result is None or not last_tool_result.ok:
+        return False
+    lowered = text.lower()
+    return "up excise questions" in lowered and (
+        "only answer" in lowered or "only answers" in lowered
+    )
 
 
 def _tool_failure_fallback(result: ToolResult) -> str:
@@ -295,7 +355,13 @@ async def run_chat(
 
         needs_plain_retry = _needs_retry(assistant_text)
         claims_chart = _claims_unmade_chart(assistant_text, chart_made_this_turn)
-        if not pending_calls and (needs_plain_retry or claims_chart):
+        wrongly_refuses = _wrongly_refuses_after_a_successful_tool_call(
+            assistant_text, last_tool_result
+        )
+        narrates_decision = _narrates_tool_decision(assistant_text)
+        if not pending_calls and (
+            needs_plain_retry or claims_chart or wrongly_refuses or narrates_decision
+        ):
             # The turn didn't need a tool and the model's tool-aware reply came
             # back degenerate — retry once as a plain chat call, same
             # retry-once shape guard_sql/render already use for a bad first
@@ -311,6 +377,10 @@ async def run_chat(
             # claim since it had no tool to fall back on. This retry keeps tools
             # attached and gets one line saying what it did wrong, the same
             # feedback-and-retry shape a failed run_sql_query call already gets.
+            # A wrong scope-refusal is the same shape again: the fix is answering
+            # using the tool result already in hand, not a fresh tool call, but
+            # tools stay attached in case the model legitimately wants another one
+            # (e.g. make_chart once it actually answers).
             retry_tools = [] if needs_plain_retry else CHAT_TOOL_SCHEMAS
             retry_messages = messages
             if claims_chart and not needs_plain_retry:
@@ -323,6 +393,32 @@ async def run_chat(
                             "make_chart. Call make_chart now, using the last "
                             "run_sql_query result's own column names, if a chart "
                             "would help — otherwise answer without mentioning one."
+                        ),
+                    },
+                ]
+            elif wrongly_refuses and not needs_plain_retry:
+                retry_messages = [
+                    *messages,
+                    {
+                        "role": "user",
+                        "content": (
+                            "Your last reply declined to answer, but a tool call "
+                            "already succeeded this turn with relevant results — "
+                            "the question is in scope. Answer it now using that "
+                            "result."
+                        ),
+                    },
+                ]
+            elif narrates_decision and not needs_plain_retry:
+                retry_messages = [
+                    *messages,
+                    {
+                        "role": "user",
+                        "content": (
+                            "Your last reply narrated whether a tool call was "
+                            "needed instead of answering. Do not mention that "
+                            "decision at all — either call a tool silently, or "
+                            "write the plain-language answer itself, nothing else."
                         ),
                     },
                 ]
@@ -346,16 +442,22 @@ async def run_chat(
             if not pending_calls and (
                 _is_degenerate(assistant_text)
                 or _claims_unmade_chart(assistant_text, chart_made_this_turn)
+                or _wrongly_refuses_after_a_successful_tool_call(assistant_text, last_tool_result)
+                or _narrates_tool_decision(assistant_text)
             ):
                 # Both attempts came back degenerate — either genuinely empty (an 8B
                 # model can fail to produce any follow-up text at all, with or without
-                # a prior tool call) or still narrating a fake call. The per-chunk
+                # a prior tool call), still narrating a fake call, still wrongly
+                # declining a question a tool call already answered, or still
+                # narrating the tool-call decision itself. The per-chunk
                 # holdback above kept every degenerate attempt off the wire, so
                 # nothing has been shown to the user yet; this is the turn's first and
                 # only answer. With a tool result to reference, state its failure in
-                # plain terms; with none (the model never called a tool at all, e.g. a
-                # knowledge question it tried to answer directly), a plain retry
-                # prompt is the only honest fallback — there's no tool error to show.
+                # plain terms (or, for a successful call the model still won't use,
+                # its own summary stands fine on its own); with none (the model never
+                # called a tool at all, e.g. a knowledge question it tried to answer
+                # directly), a plain retry prompt is the only honest fallback — there's
+                # no tool error to show.
                 assistant_text = (
                     _tool_failure_fallback(last_tool_result)
                     if last_tool_result is not None

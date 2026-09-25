@@ -678,6 +678,24 @@ PDF / XLSX / ZIP with the data vintage on it.
 
 ## Backlog (not scheduled)
 
+- **Answer any question, not a curated set.** `Ask::EXAMPLE_QUESTIONS` /
+  `Chat::EXAMPLE_QUESTIONS` and this file's own build log both exist because
+  each example was verified against live data before being shown as one —
+  that verification-first discipline is what a proof of concept needs, not
+  the boundary of what the tool is meant to answer. The actual goal is
+  answering, analysing, and visualizing any question over all of the
+  department's own data and documents, curated examples included only to
+  demonstrate that on day one. Reaching it is mostly the work already
+  scheduled or in backlog elsewhere — broader ETL coverage (Google sources,
+  the statewide `sro_shops` shape extended to more districts, Bhang data
+  once a source exists), the knowledge base's admin-upload sync path getting
+  a real ETL consumer, and the tool-calling reliability fixes `MCP_ENGINES.md`
+  §Tools already tracks — rather than a separate initiative. Once this
+  proof of concept is validated on the current CPU-only box (`EVALUATION.md`
+  §1), the plan is moving to dedicated data-center compute with a real GPU
+  to run larger or better models, removing the single-CPU-inference
+  ceiling that shapes most of this file's model-choice and concurrency
+  decisions today
 - `pgvector` semantic retrieval — pulled in by Milestone 6's quality check if
   FTS recall is weak; otherwise stays off
 - MATLAB engine — needs a MATLAB install + a licence that permits multi-user

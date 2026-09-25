@@ -88,6 +88,28 @@ async def test_a_bare_brace_reply_retries_once_without_tools() -> None:
     assert isinstance(events[-1], DoneEvent)
 
 
+async def test_a_markdown_filler_only_reply_retries_once_without_tools() -> None:
+    # Confirmed live: asked a knowledge question with real, substantial content
+    # already retrieved, the model's whole reply — all 78 completion tokens Ollama
+    # reported generating — reduced to a single streamed "#" with nothing else ever
+    # released. Neither the bare-"{}" check nor the tool-name-prefix check catches a
+    # lone markdown heading marker.
+    ollama = _FakeOllama(
+        [
+            [_FakeChunk(content="#")],
+            [
+                _FakeChunk(
+                    content="A Composite Shop holds a combined Foreign Liquor + Beer license."
+                )
+            ],
+        ]
+    )
+    events = await _events(ollama)
+    tokens = "".join(e.delta for e in events if isinstance(e, TokenEvent))
+    assert tokens == "A Composite Shop holds a combined Foreign Liquor + Beer license."
+    assert not any(isinstance(e, ToolCallEvent) for e in events)
+
+
 async def test_a_narrated_fake_tool_call_retries_once_without_tools() -> None:
     # Confirmed live: after an earlier tool call failed, llama3.1 answered a follow-up
     # turn with the literal text `run_sql_query(question="...")` instead of either a
@@ -422,6 +444,87 @@ async def test_a_slow_generation_emits_heartbeats_before_its_first_chunk(
     heartbeat_index = next(i for i, e in enumerate(events) if isinstance(e, HeartbeatEvent))
     call_index = next(i for i, e in enumerate(events) if isinstance(e, ToolCallEvent))
     assert heartbeat_index < call_index
+
+
+async def test_a_wrong_scope_refusal_retries_and_answers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Confirmed live: asked "what are the different UP Excise shop types and license
+    # codes" (the department's own terminology, right in the question), the model
+    # called search_knowledge, got back exactly the right content, and declined anyway
+    # with "I only answer UP Excise questions" instead of using it. A tool call
+    # succeeding earlier the same turn is proof the question was in scope.
+    kb_call = ToolCall(name="search_knowledge", arguments={"query": "shop types"})
+    ollama = _FakeOllama(
+        [
+            [_FakeChunk(content="", tool_calls=[kb_call])],
+            [_FakeChunk(content="I only answer UP Excise questions.")],
+            [_FakeChunk(content="A Composite Shop (FL5DB) holds Foreign Liquor + Beer.")],
+        ]
+    )
+
+    async def fake_dispatch(call: ToolCall, **kwargs: object) -> ToolResult:
+        return ToolResult(ok=True, summary="[UP Excise shop types] A Composite Shop ...")
+
+    monkeypatch.setattr(chat_loop, "dispatch", fake_dispatch)
+
+    # Same tradeoff as the chart-claim and fenced-sql retries: the check only fires
+    # once the full text is in, so the first (wrong) attempt has already streamed live
+    # by the time the retry runs — the retry's correct answer follows it, rather than
+    # replacing it.
+    events = await _events(ollama)
+    tokens = "".join(e.delta for e in events if isinstance(e, TokenEvent))
+    assert "Composite Shop" in tokens
+
+
+async def test_a_wrong_scope_refusal_retry_that_still_refuses_falls_back_to_the_tool_summary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    kb_call = ToolCall(name="search_knowledge", arguments={"query": "shop types"})
+    ollama = _FakeOllama(
+        [
+            [_FakeChunk(content="", tool_calls=[kb_call])],
+            [_FakeChunk(content="I only answer UP Excise questions.")],
+            [_FakeChunk(content="I only answer UP Excise questions.")],
+        ]
+    )
+
+    async def fake_dispatch(call: ToolCall, **kwargs: object) -> ToolResult:
+        return ToolResult(ok=True, summary="[UP Excise shop types] A Composite Shop ...")
+
+    monkeypatch.setattr(chat_loop, "dispatch", fake_dispatch)
+
+    events = await _events(ollama)
+    tokens = "".join(e.delta for e in events if isinstance(e, TokenEvent))
+    assert tokens.endswith("[UP Excise shop types] A Composite Shop ...")
+    assert isinstance(events[-1], DoneEvent)
+
+
+async def test_narrating_the_tool_decision_retries_and_answers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # CHAT_SYSTEM_PROMPT already forbids this by name ("Do not write things like
+    # 'No tool call is needed'") -- confirmed live that the instruction alone isn't
+    # reliable: asked a knowledge question with real content already retrieved, the
+    # whole reply was "# No tool call needed here; this is just plain-language
+    # shop-type information." -- the deliberation standing in for the answer.
+    kb_call = ToolCall(name="search_knowledge", arguments={"query": "shop types"})
+    ollama = _FakeOllama(
+        [
+            [_FakeChunk(content="", tool_calls=[kb_call])],
+            [_FakeChunk(content="No tool call is needed here; this is plain information.")],
+            [_FakeChunk(content="A Composite Shop (FL5DB) holds Foreign Liquor + Beer.")],
+        ]
+    )
+
+    async def fake_dispatch(call: ToolCall, **kwargs: object) -> ToolResult:
+        return ToolResult(ok=True, summary="[UP Excise shop types] A Composite Shop ...")
+
+    monkeypatch.setattr(chat_loop, "dispatch", fake_dispatch)
+
+    events = await _events(ollama)
+    tokens = "".join(e.delta for e in events if isinstance(e, TokenEvent))
+    assert "Composite Shop" in tokens
 
 
 async def test_a_chart_claim_retry_keeps_tools_and_can_call_make_chart(

@@ -201,7 +201,7 @@ async def health() -> dict[str, object]:
 @app.post("/kb/search", dependencies=[Depends(require_bearer_token)])
 async def kb_search(request: KbSearchRequest) -> KbSearchResponse:
     await _ensure_ready(_ctx())
-    return KbSearchResponse(chunks=await kb_retrieve(request.query, request.k))
+    return KbSearchResponse(chunks=await kb_retrieve(request.query, request.k, request.states))
 
 
 @app.get("/kb/documents", dependencies=[Depends(require_bearer_token)])

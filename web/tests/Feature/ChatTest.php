@@ -248,6 +248,40 @@ class ChatTest extends TestCase
         $this->assertSame(1, MessageToolCall::where('message_id', $assistant->id)->count());
     }
 
+    public function test_a_resume_that_fails_immediately_does_not_erase_a_previously_saved_answer(): void
+    {
+        // A resume's own connection can drop again before replaying anything — confirmed
+        // live, a make_chart retry made a turn run long enough to need a second resume,
+        // and that second attempt died with zero events, which used to overwrite the
+        // real, already-saved answer with empty content (persistIfNotWorseThanBefore()
+        // above is what stops it).
+        $user = User::factory()->create();
+        $conversation = Conversation::create(['user_id' => $user->id]);
+
+        $fake = new FlakyOrchestratorStream(
+            firstEvents: [
+                ['tool_call' => ['name' => 'run_sql_query', 'arguments' => ['question' => 'x']]],
+                ['tool_result' => ['name' => 'run_sql_query', 'ok' => true, 'summary' => '3 rows']],
+                ['token' => 'The total beer revenue was Rs 7,142.87 crore.'],
+                ['done' => ['tool_calls_count' => 1, 'prompt_tokens' => 200, 'completion_tokens' => 50]],
+            ],
+            resumeEvents: [],
+            firstCallSucceeds: true,
+        );
+        $this->app->instance(OrchestratorStream::class, $fake);
+
+        $this->actingAs($user)->post(route('chat.send', $conversation), ['message' => 'x'])->streamedContent();
+        $assistant = Message::where('conversation_id', $conversation->id)->where('role', 'assistant')->first();
+        $this->assertSame('The total beer revenue was Rs 7,142.87 crore.', $assistant->content);
+        $this->assertSame(1, MessageToolCall::where('message_id', $assistant->id)->count());
+
+        $this->actingAs($user)->post(route('chat.resume', [$conversation, $assistant]))->streamedContent();
+
+        $assistant->refresh();
+        $this->assertSame('The total beer revenue was Rs 7,142.87 crore.', $assistant->content);
+        $this->assertSame(1, MessageToolCall::where('message_id', $assistant->id)->count());
+    }
+
     public function test_a_user_cannot_resume_another_users_conversation(): void
     {
         $owner = User::factory()->create();
