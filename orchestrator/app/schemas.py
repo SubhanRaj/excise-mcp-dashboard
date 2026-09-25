@@ -153,6 +153,8 @@ class SchemaColumn(BaseModel):
 
 class SchemaTable(BaseModel):
     name: str
+    display_name: str
+    summary: str | None = None
     note: str | None = None
     columns: list[SchemaColumn]
 

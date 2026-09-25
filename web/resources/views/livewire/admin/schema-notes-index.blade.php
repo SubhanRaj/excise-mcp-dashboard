@@ -16,9 +16,16 @@
     <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-5" wire:key="table-{{ $table['name'] }}">
         <div class="flex items-center justify-between mb-3">
             <div>
-                <h3 class="font-mono text-sm font-semibold text-slate-800 dark:text-slate-100">analytics.{{ $table['name'] }}</h3>
+                <h3 class="text-sm font-semibold text-slate-800 dark:text-slate-100">{{ $table['display_name'] }}</h3>
+                <p class="font-mono text-xs text-slate-400 dark:text-slate-500 mt-0.5">analytics.{{ $table['name'] }}</p>
+                @if($table['summary'] ?? null)
+                <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">{{ $table['summary'] }}</p>
+                @endif
                 @if($table['note'] ?? null)
-                <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">{{ $table['note'] }}</p>
+                <details class="mt-1">
+                    <summary class="text-xs text-govviolet-600 cursor-pointer hover:underline">Technical note (what the AI is told)</summary>
+                    <p class="text-xs text-slate-500 dark:text-slate-400 mt-1">{{ $table['note'] }}</p>
+                </details>
                 @endif
             </div>
             <button type="button" wire:click="toggleSample('{{ $table['name'] }}')" class="text-govviolet-600 hover:underline text-xs flex-shrink-0 ml-3">

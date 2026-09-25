@@ -18,6 +18,8 @@ class SchemaNotesIndexTest extends TestCase
     {
         return [
             'name' => 'districts',
+            'display_name' => 'Districts',
+            'summary' => 'The 75 UP districts, grouped into divisions and zones.',
             'note' => '75 UP districts...',
             'columns' => [
                 ['name' => 'id', 'data_type' => 'bigint', 'note' => null],
@@ -41,6 +43,7 @@ class SchemaNotesIndexTest extends TestCase
         Http::fake(['*/schema/tables*' => Http::response(['tables' => [$this->fakeTable()]], 200)]);
 
         Livewire::actingAs($admin)->test(SchemaNotesIndex::class)
+            ->assertSee('Districts')
             ->assertSee('analytics.districts');
     }
 

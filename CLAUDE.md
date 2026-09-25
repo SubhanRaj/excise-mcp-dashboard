@@ -1330,6 +1330,24 @@ message — the full traceback stays in the log line next to it, operator-only,
 same as before. Confirmed against the real sandbox: a three-frame traceback
 now comes back as a single `ExceptionType: message` line.
 
+The admin Data dictionary screen showed each table under its raw Postgres
+name (`analytics.dispatch_strength_lines`) with `VIEW_NOTES`' own text as
+the only description — that text is planning guidance written for the SQL
+model, dense with column names and JOIN instructions, not a sentence an
+admin reads to find out what a table is for. `schema_card.py` now carries a
+plain-language name and one-sentence summary per view (`TABLE_DISPLAY`);
+`GET /schema/tables` returns them as `display_name`/`summary` alongside the
+existing `note`, and the Data dictionary screen leads with those, keeping
+the raw `analytics.*` name in small type underneath and the full technical
+note behind a "Technical note (what the AI is told)" disclosure
+(`DATA_PIPELINE.md` §Row visibility for the AI path). Writing the summaries
+surfaced a real gap alongside the display one: `analytics.sro_shops` — live
+since the SRO import earlier in this file — had no `VIEW_NOTES` entry at
+all, so the SQL model had no guidance to prefer it over `analytics.revenues`
+for a district-level revenue question past FY2018-19, exactly the
+consolidation problem `revenues`' own note already warns about. Both notes
+now say so.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures

@@ -46,7 +46,9 @@ VIEW_NOTES = {
         "began receiving the whole state's receipts that year, not because Lucknow's own "
         "economic activity grew 227x. Never answer a district-level revenue question for "
         "FY2019-20 onward from this view without saying so; a statewide total for those "
-        "years is fine."
+        "years is fine. analytics.sro_shops carries a real per-district revenue figure "
+        "(total_revenue) for FY2025-26 with no such consolidation problem — use it instead "
+        "for a district-level revenue question about a recent year."
     ),
     "sales_volumes": (
         "dispatch/consumption volumes, aggregated by district + financial_year + "
@@ -113,8 +115,98 @@ VIEW_NOTES = {
     "brands": "registered liquor brands.",
     "brand_prices": "MRP per brand per pack size per financial year.",
     "duty_rates": "excise duty rate per licence category per financial year.",
+    "sro_shops": (
+        "one row per shop from the SRO (Shop Revenue Optimizer) survey, for a financial "
+        "year — the only view with shop-level revenue in every one of the state's 75 "
+        "districts; analytics.revenues only holds that for the districts the live IESCMS "
+        "dispatch import covers, and its own district attribution breaks down after "
+        "FY2017-18 (see that view's note). Use this view, not revenues, for a statewide or "
+        "cross-district revenue question. total_revenue is the shop's revenue for the "
+        "financial year; mgq_quantity is its minimum guaranteed quota. shop_type is "
+        "COUNTRY_LIQUOR, COMPOSITE, MODEL_SHOP, PRV, BHANG, or HBR — not the same code set "
+        "as analytics.license_categories; has_cl5cc marks a country-liquor shop with a beer "
+        "endorsement, kept as its own flag rather than a separate shop_type. "
+        "circle_sector_name and thana_name are this view's own detail, not present on any "
+        "other shop table here."
+    ),
     "policy_entries": "excise policy/circular entries with an effective date range.",
 }
+
+# Plain-language name and one-sentence summary per table, for the admin data-dictionary
+# screen (CLAUDE.md's "Data dictionary" section). VIEW_NOTES above is planning guidance
+# for the SQL model — exact column names, JOIN keys, code lists — and stays that way; an
+# admin reading the screen wants the plain version first, with the technical note kept
+# available underneath for the JOINs and edge cases it documents (schema-notes-index.blade.php).
+TABLE_DISPLAY: dict[str, tuple[str, str]] = {
+    "districts": ("Districts", "The 75 UP districts, grouped into divisions and zones."),
+    "license_categories": (
+        "License categories",
+        "Every shop and wholesale license code, with its name and category — country "
+        "liquor, foreign liquor, composite, beer, model shop, and so on.",
+    ),
+    "revenues": (
+        "Revenue collections",
+        "Duty and fee revenue by district, financial year, and license category. "
+        "District-level figures are only reliable through FY2017-18 — see the technical "
+        "note for why, and analytics.sro_shops for a reliable statewide figure since.",
+    ),
+    "sales_volumes": (
+        "Sales volumes (annual)",
+        "Dispatch and consumption volumes by district, financial year, and license "
+        "category. No shop-level or month-level detail — use Dispatches for that.",
+    ),
+    "operations": (
+        "Enforcement activity",
+        "Raids, cases registered, arrests, and seizures, one row per district, year, and metric.",
+    ),
+    "shops": (
+        "Licensed shops",
+        "A present-day list of licensed shops. Carries no reporting date of its own — use "
+        "Dispatches for a question about a specific month or year.",
+    ),
+    "shop_years": (
+        "Shop quotas",
+        "Each shop's minimum guaranteed quota and settlement, by financial year.",
+    ),
+    "dispatches": (
+        "Wholesale-to-retail dispatches",
+        "One row per transport pass from a wholesaler to a retail shop, with the amount, "
+        "volume, and date — the live IESCMS import.",
+    ),
+    "dispatch_strength_lines": (
+        "Dispatch strength breakdown",
+        "How much of a country-liquor dispatch was at each alcohol strength. Join back to "
+        "Dispatches for the date.",
+    ),
+    "brands": ("Registered brands", "Every registered liquor brand."),
+    "brand_prices": (
+        "Brand prices",
+        "The MRP for each brand, pack size, and financial year.",
+    ),
+    "duty_rates": (
+        "Duty rates",
+        "The excise duty rate for each license category and financial year.",
+    ),
+    "sro_shops": (
+        "Statewide shop revenue (SRO)",
+        "Shop-level revenue for every district in the state, from the SRO survey — the "
+        "district coverage analytics.revenues doesn't have.",
+    ),
+    "policy_entries": (
+        "Policy entries",
+        "Excise policy and circular entries, each with the date range it was in effect.",
+    ),
+}
+
+
+def _display_name(table_name: str) -> str:
+    display_name, _ = TABLE_DISPLAY.get(table_name, (None, None))
+    return display_name or table_name.replace("_", " ").capitalize()
+
+
+def _summary(table_name: str) -> str | None:
+    return TABLE_DISPLAY.get(table_name, (None, None))[1]
+
 
 _SCHEMA_QUERY = """
 SELECT table_name, column_name, data_type, ordinal_position
@@ -175,6 +267,8 @@ async def list_schema_tables(
     return [
         SchemaTable(
             name=table_name,
+            display_name=_display_name(table_name),
+            summary=_summary(table_name),
             note=table_notes.get(table_name, VIEW_NOTES.get(table_name)),
             columns=columns,
         )

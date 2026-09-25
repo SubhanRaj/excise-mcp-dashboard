@@ -121,6 +121,30 @@ async def test_list_schema_tables_merges_column_notes_onto_the_schema(
     )
 
 
+async def test_list_schema_tables_sets_a_human_display_name_and_summary() -> None:
+    tables = await list_schema_tables(_FakePool(), _FakeHttpClient())  # type: ignore[arg-type]
+
+    districts = next(t for t in tables if t.name == "districts")
+    assert districts.display_name == "Districts"
+    assert districts.summary == "The 75 UP districts, grouped into divisions and zones."
+
+
+async def test_list_schema_tables_falls_back_to_a_humanized_name_for_an_undocumented_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(schema_card.settings, "web_base_url", "")
+    pool = _FakePool()
+
+    async def fetch(query: str, *args: object) -> list[dict[str, object]]:
+        return [{"table_name": "some_new_table", "column_name": "id", "data_type": "bigint"}]
+
+    monkeypatch.setattr(pool, "fetch", fetch)
+    tables = await list_schema_tables(pool, _FakeHttpClient())  # type: ignore[arg-type]
+
+    assert tables[0].display_name == "Some new table"
+    assert tables[0].summary is None
+
+
 async def test_sample_table_rejects_an_unknown_table_name() -> None:
     with pytest.raises(ValueError):
         await sample_table(_FakePool(table_exists=False), "not_a_real_table")  # type: ignore[arg-type]

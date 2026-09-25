@@ -84,7 +84,7 @@ orchestrator/
 | `POST` | `/chart/render` | `ChartRenderRequest` (`spec`: a Plotly figure dict, `format`: `png`/`svg`/`pdf`) | the rasterized bytes, correct `Content-Type` — rasterizes an already-produced figure through `get_static_renderer()` (`engines/static_render.py`), the same persistent-browser renderer the sandboxed render step uses; no LLM-authored code runs on this path |
 | `GET` | `/etl/runs` | — (paginated: `?page`) | `{runs: [...], total}` — `etl.ingestion_runs` rows for the admin ETL visibility screen |
 | `GET` | `/etl/quarantine` | — (paginated: `?page`, optional `?run_id`) | `{rows: [...], total}` — `etl.quarantine` rows, optionally filtered to one run |
-| `GET` | `/schema/tables` | — | `{tables: [...]}` — every `analytics.*` table/view and its columns, each carrying its current note (`VIEW_NOTES`, an admin's own edit, or none) for the data-dictionary screen |
+| `GET` | `/schema/tables` | — | `{tables: [...]}` — every `analytics.*` table/view and its columns; each table carries a `display_name` and `summary` (`schema_card.py`'s `TABLE_DISPLAY`) for the data-dictionary screen's human-facing text, plus its current technical `note` (`VIEW_NOTES`, an admin's own edit, or none) |
 | `GET` | `/schema/tables/{name}/sample` | — | `{rows: [...]}` — five rows from the named table; 404 if `name` isn't a real `analytics.*` table |
 
 Both `/query` and `/chat` require the bearer token. `/query` is the one-shot

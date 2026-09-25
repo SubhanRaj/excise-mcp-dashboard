@@ -546,6 +546,24 @@ rather than a specific code (composite, country liquor, foreign liquor,
 beer, model shop) means every code of that kind, found by filtering on
 `kind`, never by a memorized code list that can silently leave one out.
 
+The data dictionary screen showed each table under its raw name
+(`analytics.dispatch_strength_lines`) with `VIEW_NOTES`' own prose as its
+only description — planning guidance written for the SQL model, full of
+column names and JOIN instructions, not a sentence an admin reads to find
+out what a table holds. `schema_card.py`'s `TABLE_DISPLAY` now carries a
+plain-language name and one-sentence summary per view — `SchemaTable` from
+`GET /schema/tables` gains `display_name` and `summary` fields alongside the
+existing `note` — and `schema-notes-index.blade.php` leads with those, the
+raw `analytics.*` name kept underneath in monospace for reference, the full
+technical note tucked behind a "Technical note (what the AI is told)"
+disclosure. A table missing from `TABLE_DISPLAY` falls back to its own name
+with underscores turned to spaces, never a blank heading. `VIEW_NOTES` itself
+gained a missing entry along the way: `analytics.sro_shops` (the SRO shop
+census, imported earlier this section) had no note at all despite being live
+data and the correct source for a district-level revenue question past
+`analytics.revenues`' own post-2018 consolidation problem — the `revenues`
+note now says so directly.
+
 That fix's own premise about `CL5CC` was wrong: checked against
 `~/Projects/up-excise-spatial-revenue-optimizer`'s roadmap, the canonical
 shop-type reference for this department, `CL5CC` is not `kind = 'composite'`
