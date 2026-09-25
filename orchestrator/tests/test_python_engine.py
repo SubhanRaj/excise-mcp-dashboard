@@ -2,8 +2,10 @@
 static-render wiring that replaces it (engines/static_render.py).
 """
 
+import json
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 from app.engines.base import RenderRequest
@@ -97,3 +99,33 @@ async def test_static_output_is_skipped_when_no_renderer_is_available(
 
     assert "png" not in result.files
     assert result.plotly_json == '{"data": [], "layout": {}}'
+
+
+async def test_a_hallucinated_write_json_keyword_is_tolerated_by_the_real_sandbox(
+    tmp_path: Path,
+) -> None:
+    # Confirmed live: a generated chart script called fig.write_json(path,
+    # output_type="...") -- output_type isn't a real write_json keyword, and it
+    # crashed the render with a TypeError even though the prompt already says the
+    # call takes exactly one argument. PREAMBLE now wraps write_json to drop any
+    # keyword the real function doesn't accept, so this same mistake no longer
+    # fails the render -- a real bwrap run, not a mocked run_in_sandbox, since the
+    # fix lives in the preamble text a mock would never execute.
+    data_path = tmp_path / "data.parquet"
+    pd.DataFrame({"category": ["a", "b"], "total": [1, 2]}).to_parquet(data_path)
+
+    req = RenderRequest(
+        script=(
+            'fig = px.bar(df, x="category", y="total"); '
+            'fig.write_json(f"{OUT}/chart.plotly.json", output_type="bad")'
+        ),
+        data_path=data_path,
+        outputs=["plotly_json"],
+        title="x",
+        scratch_dir=tmp_path,
+    )
+
+    result = await PythonEngine().render(req)
+
+    assert result.plotly_json is not None
+    assert json.loads(result.plotly_json)["data"]

@@ -269,7 +269,8 @@ async def run_in_sandbox(
         with contextlib.suppress(ProcessLookupError):
             await proc.wait()
         raise
-    stdout_tail = stdout_bytes.decode(errors="replace")[-4000:]
+    full_output = stdout_bytes.decode(errors="replace")
+    stdout_tail = full_output[-4000:]
 
     if proc.returncode in _TIMEOUT_EXIT_CODES:
         cleanup_scratch(run_dir)
@@ -284,8 +285,12 @@ async def run_in_sandbox(
         # in (venv_root/real_python_home, both this box's actual filesystem layout, not
         # a sandboxed alias) — the full log line above keeps it, but the exception message
         # below reaches a chat user verbatim as a failed tool result, so it gets the host
-        # path stripped first.
-        user_facing = stdout_tail.replace(str(Path(sys.prefix).resolve()), "<venv>").replace(
+        # path stripped first. Searched from the full output, not the 4000-char stdout_tail
+        # above — confirmed live, a genuine Plotly schema-validation error runs to several
+        # thousand characters on its own, long enough that its real "ValueError: ..." line
+        # can fall entirely outside that tail window, leaving nothing for the search below
+        # to find and silently reproducing the exact bug it exists to fix.
+        user_facing = full_output.replace(str(Path(sys.prefix).resolve()), "<venv>").replace(
             str(Path(sys.executable).resolve().parents[1]), "<venv>"
         )
         # A full Python traceback is dozens of internal pandas/plotly stack frames with
@@ -312,7 +317,10 @@ async def run_in_sandbox(
             if error_line_index is not None
             else (lines[-1] if lines else user_facing)
         )
-        raise SandboxViolationError(f"exit {proc.returncode}: {summary}")
+        # A 10-line cap still doesn't bound a single pathologically long line (a
+        # message with no embedded newline of its own) — capped again by character
+        # count for exactly that case.
+        raise SandboxViolationError(f"exit {proc.returncode}: {summary[:2000]}")
 
     return run_dir, stdout_tail
 

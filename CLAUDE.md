@@ -1699,7 +1699,12 @@ further bugs past the redesign itself, both pre-existing and shared with
 before. First, Qwen wrote `fig.write_json(path, output_type=...)` —
 `output_type` isn't a real keyword on Plotly's `write_json`, a
 hallucination the prompt's own wording left room for by never saying the
-call takes exactly one argument; it does now.
+call takes exactly one argument; it does now, and `python_engine.py`'s own
+sandbox preamble wraps `write_json` to silently drop any keyword the real
+function doesn't accept, so the same mistake stops failing the render
+outright regardless of whether the prompt fix alone would have been
+followed — the same tolerate-the-known-quirk pattern `chat/tools.py`'s own
+argument validators already use, applied to the sandbox side this time.
 Second, the resulting `TypeError` came back to the chat user as
 `"chart at line 6 column 1"` — a trailing location-pointer line, not the
 actual message — because `run_in_sandbox`'s "an exception's summary is its
@@ -1708,15 +1713,67 @@ for Plotly's own multi-line schema-validation `ValueError`, which puts its
 real description first and a location pointer last. The summary now
 starts at the last line matching `SomeError:`/`SomeException:` and keeps
 what follows it, capped, rather than assuming the message is always
-exactly one line. With both fixed, the same question rendered its chart
-correctly on the next run, and re-verifying every SQL/chart demo question
-in `Ask::EXAMPLE_QUESTIONS`/`Chat::EXAMPLE_QUESTIONS` live confirmed each
-one clean — correct figures, correct chart, no chart claims, no narrated
-fake calls. The remaining example (an MGQ knowledge question,
-`search_knowledge` only, untouched by this change) still has the
-already-documented "reads like a raw retrieval dump" polish gap from
-earlier in this file, deliberately left out of scope here since it never
-touched `run_sql_query` or a chart at all.
+exactly one line.
+
+That fix's own search ran against `stdout_tail`, itself already sliced to
+the raw output's last 4000 characters before the search ever runs — a live
+Plotly schema-validation error turned out to run to several thousand
+characters on its own (reproduced directly: one hallucinated property on a
+single `add_bar()` call alone printed a "valid properties" listing several
+thousand characters long), long enough that the real `ValueError:` line
+landed entirely outside that pre-sliced window, leaving nothing for the
+search to find and silently reproducing the exact symptom the fix above
+was meant to close. The search now runs against the full, untruncated
+output; the final summary stays capped by line count and character count
+so a genuinely huge message still can't reach the user whole.
+
+The same chart still failed once more after that, on a completely
+different axis: the actual error wasn't Python or Plotly at all — GNU
+Octave's `error: bar: Y must be numeric`. `auto_chart` offered both engines
+through the same `_ENGINE_CAPABILITIES` dict `/query`'s own `plan_plot`
+stage uses, and Qwen picked Octave for this chart; Octave's own capability
+text already says it can never produce `plotly_json`, the one file
+`auto_chart` ever collects, so nothing that engine did — succeed or fail —
+could have produced a usable chat chart. A second, related instance
+surfaced right after: with Octave excluded, Qwen instead wrote a
+matplotlib script (`_ENGINE_CAPABILITIES["python"]` legitimately offers
+matplotlib too, for `/query`'s own static-export use case), which failed
+outright inside this sandbox on its own font loading (`Fontconfig error:
+Cannot load default config file`) — again, not something `auto_chart`
+could have used regardless. `auto_chart` no longer reuses `/query`'s
+shared, multi-engine capability text at all; `_chat_plot_prompt` names
+exactly one engine (Python) and one call
+(`fig.write_json(f"{OUT}/chart.plotly.json")`, no matplotlib, no other
+arguments), and the render request hardcodes `outputs=["plotly_json"]`
+regardless of what the model asks for. With all four fixes in — the
+`Decimal` check, the retry-completion gate, the sandbox search window, and
+the engine/output restriction — the same chart question finally rendered
+correctly, confirmed live, and re-verifying every SQL/chart demo question
+in `Ask::EXAMPLE_QUESTIONS`/`Chat::EXAMPLE_QUESTIONS` came back clean:
+correct figures, correct charts, no chart claims, no narrated fake calls.
+The remaining example (an MGQ knowledge question, `search_knowledge` only,
+untouched by this whole change) still has the already-documented "reads
+like a raw retrieval dump" polish gap from earlier in this file,
+deliberately left out of scope here since it never touched `run_sql_query`
+or a chart at all.
+
+Also added while this was live-tested: the sidebar's collapse/expand
+toggle was already fully wired (cookie + `localStorage` persistence, a
+server-side initial render from the cookie so there is no flash-of-wrong-
+state to guard against, the `sidebar-collapsed`/`sidebar-expanded` CSS,
+`window.toggleSidebar()`) except for the one piece that makes a collapsed,
+icon-only sidebar actually usable: nothing displayed the `data-tooltip`
+label a collapsed nav item already carried — `data-tooltip` is not a
+native browser tooltip attribute, so every icon was unlabeled once
+collapsed. `layout.blade.php` now carries the same fixed-position tooltip
+bubble the sibling apps (`excise-budget-tracker`) already use —
+`showTooltip`/`hideTooltip`/`initTooltips`, positioned from the hovered
+element's own bounding rect so it escapes the sidebar's own scroll
+clipping — plus `updateToggleTooltip()` keeping the collapse button's own
+label in sync with its current state after a click, which this app's
+version had been missing even though the button already showed the
+correct label on a fresh page load (via the server-rendered cookie
+check).
 
 ## What this project is
 

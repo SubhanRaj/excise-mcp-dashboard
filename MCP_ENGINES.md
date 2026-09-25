@@ -510,20 +510,33 @@ triggered automatically right after a `run_sql_query` call succeeds with
 more than one row, when `ChatRequest.want_chart` is set (`web/`'s composer
 chart toggle, sent as its own field rather than left for the model to
 notice in the message text). `auto_chart` plans the chart's own script
-through `settings.ollama_sql_model` (Qwen, the coder-role model) using the
-same `build_plot_prompt`/`PlotPlan` machinery `/query`'s own `plan_plot`
-stage already uses, with the same reprompt-and-retry-once shape on a
-sandbox failure — the chat model (Llama) never decides whether to chart
-and never writes a line of the chart's own Python. Removing this as a
-tool call also removed the quote-escaping bug a raw Llama-authored `spec`
-argument used to need a validator for (below): Qwen's structured output
-goes through the same `PlotPlan` Pydantic model `/query` already validates
-against, so a malformed script fails as a normal `LLMStructuredOutputError`
-retry instead of arriving as free-form text with its own escaping
-artifacts. A single-row result (a bare `COUNT(*)`, say) has nothing to
-plot — `auto_chart` returns `None` for exactly this, the same
-`row_count > 1` gate `/query`'s own pipeline already uses, and the turn
-shows no chart card at all rather than a failed one.
+through `settings.ollama_sql_model` (Qwen, the coder-role model) and the
+same `PlotPlan` Pydantic model, `generate_structured`, and
+reprompt-and-retry-once shape `/query`'s own `plan_plot` stage uses — the
+chat model (Llama) never decides whether to chart and never writes a line
+of the chart's own Python. Its prompt is `chat/tools.py`'s own
+`_chat_plot_prompt`, not `llm/prompts.py`'s shared `build_plot_prompt`:
+that shared function's engine-capability text legitimately offers both
+Octave and a matplotlib static-export path for `/query`'s real
+multi-output use case, but `auto_chart` only ever collects one file,
+`chart.plotly.json`, from the Python engine — confirmed live, offering the
+same choice here let Qwen pick Octave (which can never produce
+`plotly_json` at all) once, and matplotlib (whose own font loading fails
+inside this sandbox regardless: `Fontconfig error: Cannot load default
+config file`) another time, neither of which could ever have produced a
+usable chat chart even had the render succeeded. `_chat_plot_prompt` names
+exactly one engine and one call, and the render request hardcodes
+`outputs=["plotly_json"]` regardless of what the model asks for, removing
+the choice instead of correcting it after the fact. Removing `make_chart`
+as a tool call also removed the quote-escaping bug a raw Llama-authored
+`spec` argument used to need a validator for (below): Qwen's structured
+output goes through `PlotPlan`'s own Pydantic validation, so a malformed
+script fails as a normal `LLMStructuredOutputError` retry instead of
+arriving as free-form text with its own escaping artifacts. A single-row
+result (a bare `COUNT(*)`, say) has nothing to plot — `auto_chart` returns
+`None` for exactly this, the same `row_count > 1` gate `/query`'s own
+pipeline already uses, and the turn shows no chart card at all rather than
+a failed one.
 
 Ollama's native tool-calling (`tools=[...]` on `/api/chat`) drives this;
 Qwen 2.5 and Llama 3.1 both support it. A live chat turn on a plain greeting
@@ -1094,10 +1107,17 @@ Contract every engine keeps:
   ```
 
   and appends nothing. The LLM is instructed: use `df`; for an interactive
-  chart build a Plotly figure and `fig.write_json(f"{OUT}/chart.plotly.json")`;
-  for a static chart built with matplotlib directly, use `plt.savefig(...)`;
-  never call a Plotly figure's own `fig.write_image()`; do not read other
-  files, do not call the network.
+  chart build a Plotly figure and `fig.write_json(f"{OUT}/chart.plotly.json")`
+  — that call takes exactly one argument and nothing else; for a static chart
+  built with matplotlib directly, use `plt.savefig(...)`; never call a Plotly
+  figure's own `fig.write_image()`; do not read other files, do not call the
+  network. The preamble also wraps `write_json` to drop any keyword argument
+  the real function doesn't accept — confirmed live, a generated script called
+  it with a hallucinated `output_type=...` and crashed with a `TypeError`
+  despite the prompt instruction above; tolerating the mistake in the
+  sandbox itself, the same defensive pattern `chat/tools.py`'s own argument
+  validators already use for a known LLM quirk, closes it regardless of
+  whether the model follows the prompt.
 - **Outputs**: `plotly_json` for the interactive pane; `png` (2x DPI), `svg`,
   `pdf` for the export buttons — via `plt.savefig(...)` for a matplotlib
   script, or derived automatically from `chart.plotly.json` for a Plotly one

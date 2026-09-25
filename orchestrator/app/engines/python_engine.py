@@ -26,7 +26,8 @@ from app.engines.static_render import get_renderer as get_static_renderer
 from app.sandbox.bwrap import run_in_sandbox
 from app.schemas import RenderEmptyError, SandboxViolationError
 
-PREAMBLE = """import pandas as pd
+PREAMBLE = """import inspect
+import pandas as pd
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
@@ -34,8 +35,20 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import plotly.graph_objects as go
 import plotly.express as px
+import plotly.io as pio
 df = pd.read_parquet("/scratch/data.parquet")
 OUT = "/scratch"
+
+# A generated chart script sometimes hallucinates a keyword write_json doesn't
+# take (output_type=..., confirmed live) -- the prompt already says the call
+# takes exactly one argument, but this tolerates the mistake by construction
+# too, the same defensive pattern chat/tools.py's own argument validators
+# already use for a known LLM quirk, rather than relying on the prompt alone.
+_real_write_json = pio.write_json
+_write_json_params = set(inspect.signature(_real_write_json).parameters)
+def _tolerant_write_json(*args, **kwargs):
+    return _real_write_json(*args, **{k: v for k, v in kwargs.items() if k in _write_json_params})
+pio.write_json = _tolerant_write_json
 """
 
 _OUTPUT_FILENAMES = {

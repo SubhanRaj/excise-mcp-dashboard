@@ -117,6 +117,25 @@ async def test_violation_message_keeps_a_multi_line_exception_from_its_own_start
     assert "chart at line 6 column 1" in message
 
 
+async def test_violation_message_finds_the_exception_line_even_past_4000_characters(
+    data_path: Path,
+) -> None:
+    # Confirmed live: a real Plotly schema-validation error (an invalid trace
+    # property) runs to several thousand characters on its own -- long enough
+    # that its "ValueError: ..." line landed entirely outside the raw stdout's
+    # last 4000 characters. The search used to run against that pre-truncated
+    # tail, so it found no exception line at all and silently fell back to
+    # whatever short fragment happened to survive the cut -- reproducing the
+    # exact symptom the multi-line fix above was supposed to close. The search
+    # now runs against the untruncated output.
+    script = "msg = 'the real reason. ' + ('y' * 4500)\nraise ValueError(msg)\n"
+    with pytest.raises(SandboxViolationError) as excinfo:
+        await run_in_sandbox(script=script, data_path=data_path)
+
+    message = str(excinfo.value)
+    assert "ValueError: the real reason." in message
+
+
 async def test_memory_cap(data_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "sandbox_memory_mb", 64)
     # b"1" * n forces real page commits (unlike bytearray(n), which CPython

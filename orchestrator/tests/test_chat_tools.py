@@ -23,6 +23,15 @@ def _ollama_returning(response_text: str) -> OllamaClient:
     return OllamaClient("http://fake-ollama", http_client)
 
 
+def _ollama_capturing(response_text: str, captured_prompts: list[str]) -> OllamaClient:
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured_prompts.append(json.loads(request.content)["prompt"])
+        return httpx.Response(200, json={"response": response_text})
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return OllamaClient("http://fake-ollama", http_client)
+
+
 @pytest.mark.parametrize(
     ("model", "payload"),
     [
@@ -230,6 +239,32 @@ async def test_auto_chart_uses_the_conversations_own_last_result(
     assert result.ok is True
     del chat_tools._LAST_RESULT["c1"]
     del chat_tools._LAST_RESULT["c2"]
+
+
+async def test_auto_chart_never_offers_octave(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Confirmed live: with both engines offered, Qwen picked Octave for a
+    # categorical bar chart -- Octave's own capability text says it can never
+    # produce plotly_json, the only output chat's auto_chart ever collects, so a
+    # script that succeeded there still could not have produced a usable chart.
+    # Octave is excluded from build_plot_prompt's own engine list entirely rather
+    # than corrected after the fact.
+    class _FakeEngine:
+        supported_outputs = frozenset({"plotly_json"})
+
+        async def render(self, req: RenderRequest) -> RenderResult:
+            return RenderResult(plotly_json="{}", files={}, engine="python")
+
+    monkeypatch.setattr(chat_tools, "get_engine", lambda name: _FakeEngine())
+    chat_tools._LAST_RESULT["c-engines"] = pd.DataFrame([{"a": 1}, {"a": 2}])
+    prompts: list[str] = []
+    await auto_chart(
+        "c-engines",
+        "chart it",
+        ollama=_ollama_capturing(_plan_plot_response(), prompts),
+        usage=None,
+    )
+    assert "octave" not in prompts[0].lower()
+    del chat_tools._LAST_RESULT["c-engines"]
 
 
 async def test_auto_chart_returns_none_when_theres_nothing_to_chart() -> None:

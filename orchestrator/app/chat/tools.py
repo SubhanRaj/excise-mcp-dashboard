@@ -11,12 +11,11 @@ from pydantic import BaseModel, ValidationError, field_validator
 
 from app.config import settings
 from app.engines.base import RenderRequest
-from app.engines.base import available as available_engines
 from app.engines.base import get as get_engine
 from app.kb.retrieve import retrieve as kb_retrieve
 from app.llm.client import OllamaClient, TokenUsage
-from app.llm.prompts import build_plot_prompt, build_sql_prompt, money_annotations
-from app.pipeline import _json_safe_rows, _resolve_outputs, _write_parquet
+from app.llm.prompts import PLOT_SYSTEM_PROMPT, build_sql_prompt, money_annotations
+from app.pipeline import _json_safe_rows, _write_parquet
 from app.schemas import (
     ChartArtifact,
     ChatToolArgumentError,
@@ -140,6 +139,41 @@ async def _run_sql_query(
     return ToolResult(ok=True, summary=summary)
 
 
+# Chat's own plot prompt, not llm/prompts.py's shared build_plot_prompt/
+# _ENGINE_CAPABILITIES — that dict legitimately offers matplotlib as an option
+# for /query's real static-export outputs (png/svg/pdf) and lets the model pick
+# between engines. auto_chart below only ever collects one file,
+# chart.plotly.json, from the python engine — confirmed live, reusing the
+# shared prompt let Qwen pick Octave (which can never produce plotly_json at
+# all) and, separately, matplotlib (whose own font loading fails inside this
+# sandbox regardless: "Fontconfig error: Cannot load default config file") —
+# neither could ever have produced a usable chat chart even if the render had
+# succeeded. Naming exactly one engine and one call here removes the choice
+# instead of correcting it after the fact.
+_CHAT_CHART_CAPABILITY = (
+    "python: a pandas DataFrame `df` is already loaded, `OUT` is the output "
+    "directory. Build a Plotly figure and call exactly "
+    '`fig.write_json(f"{OUT}/chart.plotly.json")` — that call takes exactly one '
+    "argument, the path, and nothing else. Never use matplotlib or call "
+    "plt.savefig() — nothing else is collected here. Never call a Plotly "
+    "figure's own fig.write_image() — it needs a headless Chrome this sandbox "
+    "cannot launch."
+)
+
+
+def _chat_plot_prompt(question: str, df: pd.DataFrame) -> str:
+    columns_block = "\n".join(
+        f"  {c}: {d}" for c, d in zip(df.columns, df.dtypes.astype(str), strict=True)
+    )
+    return (
+        f"{PLOT_SYSTEM_PROMPT}\n\n"
+        f"Available engines:\n- {_CHAT_CHART_CAPABILITY}\n\n"
+        f"The question was: {question}\n\n"
+        f"The data has {len(df)} rows and these columns:\n{columns_block}\n\n"
+        "Return only the JSON the schema asks for, no prose, no markdown fence."
+    )
+
+
 async def auto_chart(
     conversation_id: str,
     question: str,
@@ -153,9 +187,11 @@ async def auto_chart(
     chart's own Python via a make_chart tool argument produced matplotlib instead of
     the required Plotly contract, broken quote-escaping, and the call narrated as
     literal text instead of a real tool call. `/query`'s own plan_plot stage already
-    solves exactly this through the coder-role model (settings.ollama_sql_model) —
-    reused here instead of a parallel implementation, matching the Qwen-writes-code,
-    Llama-converses split (`CLAUDE.md`'s own Decisions section).
+    solves exactly this shape through the coder-role model (settings.ollama_sql_model)
+    — same model, same retry-once shape, matching the Qwen-writes-code,
+    Llama-converses split (`CLAUDE.md`'s own Decisions section) — but chat's own
+    narrower contract (one engine, one output) needs its own prompt (above), not
+    `/query`'s full engine/output choice.
 
     Returns None when there is nothing to chart (a single-row result has no
     dimension to plot — same reasoning as pipeline.py's own row_count > 1 gate).
@@ -164,10 +200,8 @@ async def auto_chart(
     if df is None or len(df) <= 1:
         return None
 
-    avail = available_engines()
-    plot_prompt = build_plot_prompt(
-        question, list(df.columns), [str(t) for t in df.dtypes], len(df), avail
-    )
+    engine = get_engine("python")
+    plot_prompt = _chat_plot_prompt(question, df)
     data_path = _write_parquet(df, conversation_id)
     try:
         plot_plan = await ollama.generate_structured(
@@ -177,14 +211,12 @@ async def auto_chart(
             stage="tool_call",
             usage=usage,
         )
-        engine = get_engine(plot_plan.engine if plot_plan.engine in avail else "python")
-        outputs = _resolve_outputs([str(o) for o in plot_plan.outputs], engine.supported_outputs)
         try:
             render_result = await engine.render(
                 RenderRequest(
                     script=plot_plan.script,
                     data_path=data_path,
-                    outputs=outputs,
+                    outputs=["plotly_json"],
                     title=plot_plan.title,
                     scratch_dir=data_path.parent,
                 )
@@ -203,14 +235,11 @@ async def auto_chart(
                 stage="tool_call",
                 usage=usage,
             )
-            outputs = _resolve_outputs(
-                [str(o) for o in plot_plan.outputs], engine.supported_outputs
-            )
             render_result = await engine.render(  # a second failure propagates
                 RenderRequest(
                     script=plot_plan.script,
                     data_path=data_path,
-                    outputs=outputs,
+                    outputs=["plotly_json"],
                     title=plot_plan.title,
                     scratch_dir=data_path.parent,
                 )

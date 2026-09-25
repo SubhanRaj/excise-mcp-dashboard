@@ -30,6 +30,14 @@
     </div>
 </div>
 
+{{-- Sidebar tooltip bubble — positioned by JS, escapes the sidebar's own overflow
+     clipping. Only shown while the sidebar is collapsed (icon-only nav, no room
+     for the label itself to stay visible). --}}
+<div id="nav-tooltip-bubble"
+     style="display:none;position:fixed;z-index:9999;pointer-events:none;transform:translateY(-50%)"
+     class="px-2.5 py-1.5 text-xs font-medium text-slate-100 bg-slate-800 rounded-md shadow-lg whitespace-nowrap">
+</div>
+
 <x-customization-panel />
 
 @flasher_render
@@ -69,6 +77,8 @@ window.toggleSidebar = function () {
     localStorage.setItem('sidebar_collapsed', collapsed ? '0' : '1');
     document.cookie = 'sidebar_collapsed=' + (collapsed ? '0' : '1') + ';path=/;max-age=31536000;SameSite=Lax';
     updateSidebarIcon();
+    updateToggleTooltip(!collapsed);
+    hideTooltip();
 };
 
 function updateSidebarIcon() {
@@ -79,6 +89,42 @@ function updateSidebarIcon() {
     icon.className  = collapsed
         ? 'ti ti-layout-sidebar-left-expand w-5 text-center text-base flex-shrink-0'
         : 'ti ti-layout-sidebar-left-collapse w-5 text-center text-base flex-shrink-0';
+}
+
+function updateToggleTooltip(collapsed) {
+    const btn = document.getElementById('sidebar-toggle');
+    if (btn) btn.dataset.tooltip = collapsed ? 'Expand sidebar' : 'Collapse sidebar';
+}
+
+// ── Sidebar tooltips (fixed-position, escapes the sidebar's own overflow
+// clipping) — the only way to tell one icon-only nav item from another once
+// the sidebar is collapsed, since data-tooltip is not a native browser tooltip.
+const tooltipEl = document.getElementById('nav-tooltip-bubble');
+
+function showTooltip(el) {
+    const sidebar = document.getElementById('sidebar');
+    if (!sidebar || !sidebar.classList.contains('sidebar-collapsed')) return;
+    const label = el.dataset.tooltip;
+    if (!label || !tooltipEl) return;
+    const rect = el.getBoundingClientRect();
+    tooltipEl.textContent = label;
+    tooltipEl.style.left  = (rect.right + 10) + 'px';
+    tooltipEl.style.top   = (rect.top + rect.height / 2) + 'px';
+    tooltipEl.style.display = 'block';
+}
+
+function hideTooltip() {
+    if (tooltipEl) tooltipEl.style.display = 'none';
+}
+
+function initTooltips() {
+    document.querySelectorAll('#sidebar [data-tooltip]').forEach(function (el) {
+        if (el.dataset.tooltipBound) return;
+        el.dataset.tooltipBound = '1';
+        el.addEventListener('mouseenter', function () { showTooltip(el); });
+        el.addEventListener('mouseleave', hideTooltip);
+        el.addEventListener('click',      hideTooltip);
+    });
 }
 
 document.addEventListener('livewire:navigated', function () {
@@ -95,6 +141,7 @@ document.addEventListener('livewire:navigated', function () {
     }
     updateSidebarIcon();
     updateDarkIcon();
+    initTooltips();
 
     document.querySelectorAll('#sidebar a, #sidebar button[type="submit"]').forEach(function (el) {
         el.addEventListener('click', function () {
