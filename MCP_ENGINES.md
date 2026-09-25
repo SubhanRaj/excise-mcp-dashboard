@@ -455,6 +455,31 @@ own 480s ceiling. `chat_turns` is memory-only, the same boundary
 an orchestrator restart has cleared gets a plain 404, and the browser shows
 "The connection was interrupted."
 
+A turn also survives the browser leaving the page outright, not just a
+fetch that dies mid-stream — every conversation-rail link is a plain `<a>`
+(`CLAUDE.md`'s Laravel conventions, §Chat UI), so switching threads mid-turn
+is a full page unload with no chance for `reconnectAndStream()` to run at
+all. The turn keeps going in `chat_turns` regardless; what was missing was
+anything to reattach once the page came back. Opening a conversation whose
+last message still reads as pending — blank content, no tool calls, the
+same condition `chat.blade.php`'s own "No response was generated for this
+message" fallback checks — now makes one `resumePending()` attempt using
+that message's own id as `turn_id`, through the same `/resume` endpoint
+above. A turn that already finished, was cancelled, or has aged out of
+`chat_turns` just resumes into an empty replay, a harmless no-op past the
+one fetch.
+
+That auto-resume shares the same JS state (`liveAssistantText`,
+`liveToolCalls`, `currentTurnId`) as an ordinary send, all on one
+`streaming` flag — the composer's Send button already hides itself while
+`streaming` is true, but the textarea's Enter-to-submit handler didn't
+check it, so pressing Enter on a follow-up while an earlier message was
+still auto-resuming started a second stream on the same shared variables.
+Confirmed live: the first message's real answer (already correctly
+persisted) appeared to vanish on screen while both streams raced over the
+same live-view state. Enter now checks `streaming` the same way the Send
+button does.
+
 Cancellation is explicit rather than a side effect of the connection
 dropping, since a turn worth resuming and a turn the user actually wants
 stopped otherwise look identical from the connection's own point of view.
@@ -882,6 +907,20 @@ itself supplies — a real contradiction, since a tool call succeeding earlier
 the same turn is proof the question was in scope.
 `_wrongly_refuses_after_a_successful_tool_call` catches this and retries with
 tools attached, nudging the model to answer using the result already in hand.
+The same function later caught a second, more serious refusal shape on a
+real knowledge question ("What does the excise policy say about MGQ?"):
+`search_knowledge` returned genuine Country Liquor Rules amendment text
+about licence fees, minimum guaranteed quantities, and penalties for a
+licensee's shortfall, and the model refused anyway with "I can't provide
+information or guidance on potentially illegal activities, including tax
+evasion and money laundering" — a safety-style misfire on ordinary
+government rule text that only superficially resembles financial-crime
+language. The scope-refusal check only matched the one canned phrase; it
+now also matches a small set of general refusal openers ("I can't
+provide", "I cannot assist", ...) whenever they follow a successful tool
+call, and `CHAT_SYSTEM_PROMPT` states directly that the knowledge base
+holds ordinary published rules, not guidance on illegal activity, so there
+is less for the model to mistake it for in the first place.
 Third, a full response — 78 completion tokens by Ollama's own count — reduced
 to a single streamed `"#"`, a markdown heading marker with nothing after it
 that neither the bare-`"{}"` nor the tool-name-prefix check in `_is_degenerate`
@@ -904,6 +943,14 @@ reply verbatim, and to use only the parts a question actually needs. Left as
 a prompt-only nudge, not a code guard, since the answer this produced was
 correct, just unpolished — CLAUDE.md's own example-question set holds off on
 adding this specific question until it reads more like the other examples do.
+A live retest with the fixes above in place got a real answer, but a
+synthesized one that still read as a summary of everything retrieved
+rather than the one term asked about — a ten-point list covering monthly
+licence-fee payment, security deposits, applicant selection, and Bhang
+licensing alongside the actual MGQ definition, none of it wrong, just not
+what was asked. `search_knowledge`'s own prompt entry now says directly to
+answer the specific term asked about, not every rule the retrieved
+sections happen to also cover.
 
 The same pass fixed a different kind of hallucination: a real number,
 reported wrong. Asked which district generated the most revenue in
@@ -920,6 +967,20 @@ summarizer nor the chat model doing its own narration has to compute the
 conversion itself (`DATA_PIPELINE.md` §Row visibility for the AI path has
 the same finding that surfaced the beer-revenue and CL5CC/FL5DB fixes this
 question needed first).
+
+A follow-up question in the same conversation ("break it down across all
+districts... also how much came from CL5CC vs composite shops") surfaced a
+gap in that same mechanism: `run_sql_query`'s tool result only ever previews
+and pre-converts the first 5 rows, so a 75-row per-district breakdown left
+the model with no correct total to cite for "across all districts" — it
+reached for a different tool call's total from earlier in the same turn
+instead (the CL5CC-vs-composite breakdown's own ₹2,450.66 crore, mislabeled
+as the statewide district total). `money_column_totals` (`llm/prompts.py`)
+sums every money-looking column over the *full* result set, not just the
+preview, and `run_sql_query` appends it — labeled as covering all rows,
+distinct from the preview annotations — whenever the result runs past 5
+rows; the same truncated case also gets an explicit note to say "top 5 of
+75" rather than presenting the preview as the complete list.
 
 A live `make_chart` failure surfaced a further shape of Llama's tool-calling
 unreliability, this time inside the script itself rather than around it: a

@@ -14,7 +14,12 @@ from app.engines.base import RenderRequest
 from app.engines.base import get as get_engine
 from app.kb.retrieve import retrieve as kb_retrieve
 from app.llm.client import OllamaClient, TokenUsage
-from app.llm.prompts import PLOT_SYSTEM_PROMPT, build_sql_prompt, money_annotations
+from app.llm.prompts import (
+    PLOT_SYSTEM_PROMPT,
+    build_sql_prompt,
+    money_annotations,
+    money_column_totals,
+)
 from app.pipeline import _json_safe_rows, _write_parquet
 from app.schemas import (
     ChartArtifact,
@@ -135,7 +140,24 @@ async def _run_sql_query(
         # its own to hand a pre-computed figure to otherwise — same reasoning and
         # same helper as pipeline.py's build_summary_prompt.
         annotations = money_annotations(list(rows[0].keys()), rows[:5]) if rows else ""
-        summary = f"{len(rows)} row(s), columns: {columns}. Preview: {preview}{annotations}"
+        # Truncated past the 5-row preview: give the model a real total over the
+        # full result set instead of leaving it to guess one, or reach for a
+        # different tool call's total from earlier in the same turn.
+        totals = money_column_totals(list(rows[0].keys()), rows) if len(rows) > 5 else ""
+        # A 75-row breakdown that only ever shows a 5-row preview reads to the model
+        # like the whole answer, unless told otherwise -- confirmed live, a per-
+        # district breakdown was narrated as complete off exactly these 5 rows, with
+        # no "top 5 of 75" qualifier anywhere in the reply.
+        truncated_note = (
+            f" This preview shows only the first 5 of {len(rows)} rows -- say so "
+            '(e.g. "top 5 of 75") rather than presenting it as the complete list.'
+            if len(rows) > 5
+            else ""
+        )
+        summary = (
+            f"{len(rows)} row(s), columns: {columns}. Preview: {preview}"
+            f"{annotations}{totals}{truncated_note}"
+        )
     return ToolResult(ok=True, summary=summary)
 
 

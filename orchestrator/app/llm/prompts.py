@@ -170,6 +170,18 @@ FEW_SHOT_SQL_EXAMPLES: list[dict[str, str]] = [
         "AND EXTRACT(YEAR FROM d.transport_pass_issued_at) = 2026 "
         "GROUP BY d.retail_license_category, lc.name ORDER BY total_bl DESC LIMIT 100;",
     },
+    {
+        # Confirmed live: asked which district generated the highest revenue in FY2025-26,
+        # the model joined analytics.sro_shops to something on a hallucinated shop_id
+        # column — sro_shops has no shop_id at all (its own row identifier is
+        # source_shop_id, unique only within a district), and the question needs no join
+        # in the first place: district and total_revenue both already live on this one
+        # view (schema_card.py's sro_shops note now says so directly).
+        "question": "Which district generated the highest revenue in FY2025-26?",
+        "sql": "SELECT district, SUM(total_revenue) AS total_revenue "
+        "FROM analytics.sro_shops WHERE financial_year = 'FY2025-26' "
+        "GROUP BY district ORDER BY total_revenue DESC LIMIT 100;",
+    },
 ]
 
 
@@ -334,6 +346,36 @@ def money_annotations(columns: list[str], rows: list[dict[str, object]]) -> str:
     return (
         "\nPre-converted amounts (use these exact figures verbatim for any lakh/crore "
         "value — do not recompute the conversion yourself):\n" + "\n".join(lines) + "\n"
+    )
+
+
+def money_column_totals(columns: list[str], rows: list[dict[str, object]]) -> str:
+    """Sum of every money-looking column across the *full* result set — for a result
+    too large to preview whole, chat/tools.py's run_sql_query only ever shows the
+    first 5 rows, so a question asking for a total ("across all districts") had no
+    correct figure to cite and instead borrowed a different tool call's own total
+    from the same turn. Confirmed live: a 75-row per-district beer-revenue breakdown
+    got summarized with the unrelated CL5CC-vs-composite breakdown's total
+    (₹2,450.66 crore) standing in for the real, much larger statewide figure.
+    """
+    money_cols = [c for c in columns if _looks_like_money_column(c)]
+    if not money_cols:
+        return ""
+    lines = []
+    for c in money_cols:
+        numeric = [
+            float(v)
+            for row in rows
+            if isinstance(v := row.get(c), int | float | Decimal) and not isinstance(v, bool)
+        ]
+        if numeric:
+            lines.append(f"{c} (sum of all {len(rows)} rows) = {format_inr(sum(numeric))}")
+    if not lines:
+        return ""
+    return (
+        "\nFull-result totals (the preview above is truncated — use these exact "
+        "figures, not the preview rows, for any question about the total across "
+        "every row):\n" + "\n".join(lines) + "\n"
     )
 
 

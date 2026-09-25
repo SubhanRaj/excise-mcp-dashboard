@@ -1775,6 +1775,57 @@ version had been missing even though the button already showed the
 correct label on a fresh page load (via the server-rendered cookie
 check).
 
+A further round of live Chat testing found four more gaps. Asking which
+district generated the highest revenue in FY2025-26 — the department's own
+prepared question, already worked into `FEW_SHOT_SQL_EXAMPLES` once before
+— started failing with `column t1.shop_id does not exist`: the model
+joined `analytics.sro_shops` to something on a hallucinated `shop_id`
+column that view has never had, when the question needs no join at all
+(`district` and `total_revenue` both live on the view directly). Fixed with
+an explicit warning in the view's own schema note and a corrected worked
+example, both confirmed live. A knowledge question ("What does the excise
+policy say about MGQ?") got refused outright — "I can't provide
+information or guidance on potentially illegal activities, including tax
+evasion and money laundering" — even though `search_knowledge` had already
+returned genuine Country Liquor Rules text about licence fees and
+quotas; a safety-style misfire on ordinary government rule text, not a
+retrieval gap. The existing wrong-refusal retry only matched one specific
+canned phrase ("I only answer UP Excise questions"); it now also catches a
+general refusal opener following a successful tool call, and
+`CHAT_SYSTEM_PROMPT` states plainly that the knowledge base holds ordinary
+published rules, not guidance on illegal activity. Retested, the refusal
+was gone, but the answer read as a ten-point summary of everything
+retrieved rather than the one term actually asked about — the prompt now
+says to answer the specific term, not every rule the retrieved sections
+happen to also cover.
+
+Switching to a new conversation (or another existing one) right after
+asking a question left that question stuck reading "No response was
+generated for this message" even though the turn was genuinely still
+running server-side — every conversation-rail link is a plain `<a>`, not
+`wire:navigate`, so leaving mid-turn is a full page unload with no chance
+for the existing drop-recovery logic (`reconnectAndStream()`) to run at
+all, since that logic only reconnects from the same page. Reopening a
+conversation whose last message still reads as pending now makes one
+resume attempt automatically, the same `/resume` endpoint a dropped
+connection already uses, keyed off that message's own id. That auto-resume
+surfaced a second bug it made newly reachable: the composer's Enter key
+could still submit a follow-up while an earlier message was mid-resume,
+racing two streams over the same shared JS state and making the first
+message's already-correct answer appear to vanish on screen (the database
+itself was never actually affected). Enter now checks the same `streaming`
+flag the Send button already hides itself on.
+
+A compound follow-up in the same conversation ("break it down across all
+districts... also how much came from CL5CC vs composite shops") surfaced a
+last gap: `run_sql_query`'s tool result only ever previews and
+pre-converts the first 5 rows, so a 75-row per-district breakdown left the
+model with no correct total to cite for "across all districts" and it
+borrowed a different tool call's total from the same turn instead. A
+truncated result now also carries a genuine sum over every row, not just
+the preview, plus an explicit note to say "top 5 of 75" rather than
+presenting the preview as the complete list.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures

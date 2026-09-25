@@ -200,25 +200,41 @@ def _narrates_tool_decision(text: str) -> bool:
     return any(phrase in lowered for phrase in _TOOL_DECISION_NARRATION_PHRASES)
 
 
+_REFUSAL_PHRASES = (
+    "i can't provide",
+    "i cannot provide",
+    "i can't help with",
+    "i cannot help with",
+    "i can't assist",
+    "i cannot assist",
+    "i'm not able to provide",
+    "i am not able to provide",
+)
+
+
 def _wrongly_refuses_after_a_successful_tool_call(
     text: str, last_tool_result: ToolResult | None
 ) -> bool:
-    """CHAT_SYSTEM_PROMPT's own out-of-scope decline can fire on a question that
-    plainly was in scope -- confirmed live, asked "what are the different UP
-    Excise shop types and license codes" (the department's own terminology,
-    right in the question), the model called search_knowledge, got back exactly
-    the right knowledge-base content, and then declined anyway with the canned
-    "I only answer UP Excise questions" line instead of using what it had just
-    retrieved. A tool call succeeding earlier this same turn is proof the
-    question was answerable, so a refusal reached after that is a contradiction
-    worth retrying, not a legitimate decline.
+    """A refusal reached after a tool call already succeeded this turn is a
+    contradiction, not a legitimate decline -- the successful call is proof the
+    question was answerable. Confirmed live twice, in two different refusal
+    shapes: asked "what are the different UP Excise shop types and license
+    codes" (the department's own terminology), the model retrieved exactly the
+    right content and then declined anyway with the canned "I only answer UP
+    Excise questions" line. Asked "What does the excise policy say about MGQ?",
+    search_knowledge returned real Country Liquor Rules amendment text about
+    licence fees and quotas, and the model refused with "I can't provide
+    information or guidance on potentially illegal activities, including tax
+    evasion and money laundering" -- a safety-style misfire on ordinary
+    government rule text (licence fees, security deposits, penalties for
+    shortfall) that only superficially resembles financial-crime language.
     """
     if last_tool_result is None or not last_tool_result.ok:
         return False
     lowered = text.lower()
-    return "up excise questions" in lowered and (
-        "only answer" in lowered or "only answers" in lowered
-    )
+    if "up excise questions" in lowered and ("only answer" in lowered or "only answers" in lowered):
+        return True
+    return any(phrase in lowered for phrase in _REFUSAL_PHRASES)
 
 
 def _tool_failure_fallback(result: ToolResult) -> str:

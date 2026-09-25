@@ -67,10 +67,24 @@
         </div>
     </div>
 
+    {{--
+        A conversation reopened after leaving mid-turn can have its last message stuck
+        at "No response was generated" not because the turn failed, but because nothing
+        was left connected to persist what the orchestrator kept generating — the same
+        condition that renders that fallback text below drives one auto-resume attempt.
+    --}}
+    @php
+        $lastMessage = $activeConversation?->messages->last();
+        $pendingResumeId = ($lastMessage && $lastMessage->role === 'assistant'
+            && ! $lastMessage->content && $lastMessage->toolCalls->isEmpty())
+            ? $lastMessage->id
+            : null;
+    @endphp
+
     {{-- Active thread --}}
     <div
         wire:key="thread-{{ $mountedConversationId ?? 'new' }}"
-        x-data="chatThread()"
+        x-data="chatThread(@js($mountedConversationId), @js($pendingResumeId))"
         class="flex-1 min-w-0 flex flex-col bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 overflow-hidden"
     >
         {{-- The composer lives inside this same scrolling element, pinned with
@@ -150,7 +164,9 @@
                  fetch's finally block flips streaming off. --}}
             <template x-if="streaming || liveError">
                 <div class="space-y-4">
-                    <div class="flex justify-end">
+                    {{-- Blank during an auto-resume (resumePending never sets liveUserMessage —
+                         the real question is already the persisted message above it). --}}
+                    <div class="flex justify-end" x-show="liveUserMessage">
                         <div class="bg-govviolet-600 text-white rounded-2xl rounded-br-sm px-4 py-2 max-w-lg text-sm whitespace-pre-wrap" x-text="liveUserMessage"></div>
                     </div>
                     <div class="flex justify-start">
@@ -205,7 +221,7 @@
                 </label>
                 <textarea wire:model="message" x-ref="composer" rows="1" placeholder="Ask anything..."
                           x-on:input="autoGrow($el)"
-                          x-on:keydown.enter="if (! $event.shiftKey) { $event.preventDefault(); $el.closest('form').requestSubmit(); }"
+                          x-on:keydown.enter="if (! $event.shiftKey && ! streaming) { $event.preventDefault(); $el.closest('form').requestSubmit(); }"
                           class="field-input flex-1 resize-none max-h-40 overflow-y-auto @error('message') field-error @enderror"></textarea>
                 @error('message') <p class="field-err-msg">{{ $message }}</p> @enderror
                 <button type="submit" x-show="!streaming" wire:loading.attr="disabled" wire:target="send"
@@ -235,7 +251,7 @@
     .chat-markdown :where(p code) { background: rgb(100 116 139 / 0.15); padding: 0.1em 0.35em; border-radius: 0.3em; }
 </style>
 <script>
-    function chatThread() {
+    function chatThread(conversationId, pendingResumeId) {
         return {
             streaming: false,
             liveUserMessage: '',
@@ -257,8 +273,12 @@
 
             cancelTurn() {
                 if (this.currentConversationId && this.currentTurnId) {
+                    // keepalive: true — a plain fetch gets cut off the instant a pagehide
+                    // handler's own unload navigation starts, before the request would
+                    // otherwise reach the network; keepalive lets it survive that.
                     fetch(`/chat/${this.currentConversationId}/messages/${this.currentTurnId}/cancel`, {
                         method: 'POST',
+                        keepalive: true,
                         headers: { 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content },
                     }).catch(() => {});
                 }
@@ -291,9 +311,34 @@
                 // repeatedly doesn't pile up duplicate window listeners.
                 this._onMessageReady = (e) => this.sendToOrchestrator(e.detail);
                 window.addEventListener('chat-message-ready', this._onMessageReady);
+                // Every conversation-rail link (New conversation, another thread) is a
+                // plain <a>, not wire:navigate — leaving mid-turn is a full page unload
+                // with no chance for onSubmit's own finally block to run. The turn keeps
+                // running server-side either way (the same design that already survives a
+                // Cloudflare connection drop), so opening a conversation whose last message
+                // rendered as "No response was generated" (blank content, no tool calls —
+                // computed server-side, same condition as that fallback text) attempts one
+                // resume the same way reconnectAndStream() already does after a drop. A
+                // turn that already finished, was cancelled, or never really started
+                // resumes into an empty replay and this is a no-op past the one fetch.
+                if (pendingResumeId) this.resumePending(pendingResumeId);
             },
             destroy() {
                 window.removeEventListener('chat-message-ready', this._onMessageReady);
+            },
+            async resumePending(messageId) {
+                this.currentConversationId = conversationId;
+                this.currentTurnId = messageId;
+                this.streaming = true;
+                try {
+                    await this.streamFrom(`/chat/${this.currentConversationId}/messages/${messageId}/resume`, {});
+                } catch (e) {
+                    // Nothing to resume (turn never started, or the orchestrator has
+                    // since restarted) — leave the persisted fallback text as-is.
+                } finally {
+                    this.streaming = false;
+                    this.$wire.call('syncAfterStream');
+                }
             },
             async sendToOrchestrator({ conversationId, message, model, includeChart }) {
                 this.liveUserMessage = message;

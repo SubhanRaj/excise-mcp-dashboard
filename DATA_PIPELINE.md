@@ -642,6 +642,16 @@ first came back reporting ₹28,608 crore, tenfold too large). Both `Ask::
 EXAMPLE_QUESTIONS` and `Chat::EXAMPLE_QUESTIONS` gained it alongside the
 beer-revenue question.
 
+That same example question later failed outright in Chat with a Postgres
+error, `column t1.shop_id does not exist`: the model joined
+`analytics.sro_shops` to something on a hallucinated `shop_id` column —
+this view has no such column at all, its own row identifier is
+`source_shop_id` (unique only within a district, never state-wide), and the
+question needs no join in the first place, since `district` and
+`total_revenue` both already live on the view directly. `VIEW_NOTES` now
+says so, and `FEW_SHOT_SQL_EXAMPLES` has this exact question worked
+correctly — confirmed live, the same Lucknow figure as above with no join.
+
 ### BI access (future — Power BI and similar, not built)
 
 `analytics.*` and `kb.*` are the entire surface any read-only consumer ever
