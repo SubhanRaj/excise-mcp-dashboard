@@ -154,6 +154,16 @@ _CHART_CLAIM_PHRASES = (
     "graph showing",
     "visualization showing",
     "chart illustrat",
+    "created a chart",
+    "created a pie chart",
+    "created a bar chart",
+    "created a graph",
+    "created a visualization",
+    "made a chart",
+    "made a pie chart",
+    "made a bar chart",
+    "made a graph",
+    "made a visualization",
 )
 
 

@@ -1826,6 +1826,32 @@ truncated result now also carries a genuine sum over every row, not just
 the preview, plus an explicit note to say "top 5 of 75" rather than
 presenting the preview as the complete list.
 
+A live retest of the same beer-revenue conversation surfaced a worse shape of
+the same follow-up gap: asked to break the total down by district and split
+it between CL5CC and composite shops, with two charts, the model called
+`run_sql_query` with the *original* question's own wording verbatim
+("Total revenue generated from beer sales across Uttar Pradesh in FY2025-26")
+instead of a question describing either breakdown, got back the same
+single-row total as before, and then wrote both a district breakdown and a
+CL5CC/composite split with specific rupee figures that appear nowhere in
+that tool result — invented outright, not derived from anything retrieved.
+The root cause: `history` (`ChatController::send`) carries only each earlier
+turn's final answer text, never the question actually sent to
+`run_sql_query` or the numbers it returned, so the model has no way to tell
+whether a follow-up's own ask was already covered by a prior call without
+being told directly. `CHAT_SYSTEM_PROMPT` now says so explicitly — a
+follow-up asking for a different breakdown needs its own fresh
+`run_sql_query` call describing exactly what this turn asks for, a question
+naming more than one breakdown needs one call per breakdown, and a figure
+with no tool result behind it this turn must not be stated at all. Past
+that, both fabricated charts were also never real: with only one
+`run_sql_query` call and its single-row result, `auto_chart` never ran (a
+single-row result silently skips charting, same as a genuine one-row
+answer), yet the reply claimed both a pie chart and a bar chart had been
+made. `_claims_unmade_chart`'s own phrase list only ever matched "chart
+showing"/"here is a chart"-shaped wording, not "we have created a pie
+chart" — a real gap in phrasing coverage, now covered alongside it.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures
