@@ -39,8 +39,16 @@ FEW_SHOT_SQL_EXAMPLES: list[dict[str, str]] = [
         "WHERE zone = 'Varanasi' ORDER BY division LIMIT 100;",
     },
     {
+        # There is no analytics.financial_years view — financial_year and start_year are
+        # denormalized onto every fact view instead (analytics.revenues, sales_volumes,
+        # operations, dispatches, sro_shops, shop_years, duty_rates, policy_entries), the
+        # same way district is. This example's own earlier version pointed at
+        # analytics.financial_years directly; guard_sql let it through (a syntactically
+        # valid single SELECT against a schema-qualified name), and it failed at run_sql
+        # with an undefined-table error every time, since the table it named was never
+        # real.
         "question": "What financial years do we have data for?",
-        "sql": "SELECT label, start_year FROM analytics.financial_years "
+        "sql": "SELECT DISTINCT financial_year, start_year FROM analytics.revenues "
         "ORDER BY start_year LIMIT 100;",
     },
     {
@@ -112,6 +120,32 @@ FEW_SHOT_SQL_EXAMPLES: list[dict[str, str]] = [
         "AND EXTRACT(MONTH FROM d.transport_pass_issued_at) = 8 "
         "AND EXTRACT(YEAR FROM d.transport_pass_issued_at) = 2026 "
         "GROUP BY ROLLUP(lc.kind) ORDER BY lc.kind NULLS LAST LIMIT 100;",
+    },
+    {
+        # Confirmed live: asked for statewide beer revenue in FY2025-26, the model
+        # guessed analytics.revenues WHERE license_category IN ('CL5CC', 'FL5DB') —
+        # those are shop licence codes, not a liquor-type filter, and analytics.revenues
+        # has no column that isolates beer revenue at all. It matched nothing, SUM()
+        # over zero matching rows returned one row with total_revenue = NULL (not zero
+        # rows — see pipeline.py's own no_data check), and the summarizing model, having
+        # nothing to say NULL meant empty, invented a full answer with a fabricated
+        # urban/rural split nothing in the query even asked for. The Excise Policy 2025
+        # abolished standalone beer shops, so beer revenue is a component within two
+        # other shop_types' own totals on analytics.sro_shops, not a filterable category
+        # anywhere: composite_lf_beer + composite_mgr_beer for a COMPOSITE_SHOP, and
+        # special_beer_lf + special_beer_mgr for a COUNTRY_LIQUOR shop with
+        # has_cl5cc = true. This example sums both (schema_card.py's sro_shops note has
+        # the same reasoning).
+        "question": (
+            "How much revenue was generated from beer sale across Uttar Pradesh in FY 2025-26?"
+        ),
+        "sql": "SELECT "
+        "SUM(CASE WHEN shop_type = 'COMPOSITE_SHOP' "
+        "THEN COALESCE(composite_lf_beer, 0) + COALESCE(composite_mgr_beer, 0) ELSE 0 END) "
+        "+ SUM(CASE WHEN has_cl5cc "
+        "THEN COALESCE(special_beer_lf, 0) + COALESCE(special_beer_mgr, 0) ELSE 0 END) "
+        "AS total_beer_revenue "
+        "FROM analytics.sro_shops WHERE financial_year = 'FY2025-26' LIMIT 100;",
     },
     {
         # A bare code (CL5C, FL4A, FL5DB, ...) means nothing to a reader who hasn't

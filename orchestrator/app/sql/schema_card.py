@@ -48,7 +48,13 @@ VIEW_NOTES = {
         "FY2019-20 onward from this view without saying so; a statewide total for those "
         "years is fine. analytics.sro_shops carries a real per-district revenue figure "
         "(total_revenue) for FY2025-26 with no such consolidation problem — use it instead "
-        "for a district-level revenue question about a recent year."
+        "for a district-level revenue question about a recent year. license_category here "
+        "is a shop's own licence code (CL5C, FL4A, ...), not a liquor type, and this view "
+        "has no rows for a liquor-type breakdown regardless of code guessed — confirmed "
+        "live, even license_category = 'BEER' (a real code in analytics.license_categories) "
+        "matches zero rows here, since the NITI import this view comes from was never "
+        "broken down by liquor type. A liquor-type revenue question (e.g. how much from "
+        "beer) needs analytics.sro_shops instead — see its own note."
     ),
     "sales_volumes": (
         "dispatch/consumption volumes, aggregated by district + financial_year + "
@@ -116,18 +122,29 @@ VIEW_NOTES = {
     "brand_prices": "MRP per brand per pack size per financial year.",
     "duty_rates": "excise duty rate per licence category per financial year.",
     "sro_shops": (
-        "one row per shop from the SRO (Shop Revenue Optimizer) survey, for a financial "
+        "one row per shop from the SRO (Spatial Revenue Optimizer) survey, for a financial "
         "year — the only view with shop-level revenue in every one of the state's 75 "
         "districts; analytics.revenues only holds that for the districts the live IESCMS "
         "dispatch import covers, and its own district attribution breaks down after "
         "FY2017-18 (see that view's note). Use this view, not revenues, for a statewide or "
         "cross-district revenue question. total_revenue is the shop's revenue for the "
         "financial year; mgq_quantity is its minimum guaranteed quota. shop_type is "
-        "COUNTRY_LIQUOR, COMPOSITE, MODEL_SHOP, PRV, BHANG, or HBR — not the same code set "
-        "as analytics.license_categories; has_cl5cc marks a country-liquor shop with a beer "
-        "endorsement, kept as its own flag rather than a separate shop_type. "
+        "COUNTRY_LIQUOR, COMPOSITE_SHOP, MODEL_SHOP, PRV, BHANG_SHOP, or HBR — not the same "
+        "code set as analytics.license_categories; has_cl5cc marks a COUNTRY_LIQUOR shop "
+        "with a beer endorsement, kept as its own flag rather than a separate shop_type. "
         "circle_sector_name and thana_name are this view's own detail, not present on any "
-        "other shop table here."
+        "other shop table here.\n"
+        "Beer revenue: the Excise Policy 2025 abolished standalone beer shops, so no "
+        "shop_type is beer-specific and no view here has a 'beer' license_category either — "
+        "beer revenue is a component within two other shop_types' own totals. For a "
+        "COMPOSITE_SHOP, it is composite_lf_beer + composite_mgr_beer (its foreign-liquor "
+        "counterpart, composite_lf_fl + composite_mgr_fl, makes up the rest of that shop's "
+        "total_revenue). For a COUNTRY_LIQUOR shop with has_cl5cc = true, it is "
+        "special_beer_lf + special_beer_mgr. A statewide beer-revenue question needs both "
+        "SUM(CASE WHEN shop_type = 'COMPOSITE_SHOP' THEN composite_lf_beer + "
+        "composite_mgr_beer ELSE 0 END) and SUM(CASE WHEN has_cl5cc THEN special_beer_lf + "
+        "special_beer_mgr ELSE 0 END) added together — total_revenue alone cannot be "
+        "filtered down to the beer share of it."
     ),
     "policy_entries": "excise policy/circular entries with an effective date range.",
 }

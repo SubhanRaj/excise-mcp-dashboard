@@ -29,6 +29,11 @@ class ChatTurn(BaseModel):
 
 class ChatRequest(BaseModel):
     conversation_id: str
+    # web/'s own assistant Message ULID — identifies this turn across a dropped
+    # connection so a resume request can attach to the same in-flight (or just-
+    # finished) turn instead of starting a duplicate one (MCP_ENGINES.md §Streamed
+    # events).
+    turn_id: str
     message: str
     history: list[ChatTurn] = Field(default_factory=list)
     model: str | None = None

@@ -5,6 +5,7 @@ MCP_ENGINES.md §HTTP surface.
 import asyncio
 import contextlib
 import json
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -76,12 +77,44 @@ logger = structlog.get_logger()
 
 
 @dataclass
+class ChatTurnState:
+    """One chat turn's own record, independent of any specific HTTP request.
+
+    A Cloudflare-fronted connection can die mid-turn on nothing but its own
+    total-duration cap (confirmed live: cloudflared logs "context canceled"
+    around the 90-100s mark on a compound question, well after the 15s
+    heartbeat has already proven the wire itself is fine) — no idle timeout,
+    no app bug, just a ceiling this app cannot configure. `buffered` is the
+    turn's full ndjson history so far; a request that attaches after the
+    original one died replays it from the start and then keeps reading live,
+    rather than losing whatever the turn had already done. Written by exactly
+    one task (`_run_chat_turn`), read by however many requests attach — safe
+    with no lock under asyncio's single-threaded event loop.
+    """
+
+    buffered: list[bytes] = field(default_factory=list)
+    done: bool = False
+    finished_at: float | None = None
+    task: asyncio.Task[None] | None = None
+
+
+# How long a finished turn stays attachable after it ends — long enough for a
+# browser that reconnects a few seconds late to still pick up the answer, short
+# enough that a tab closed outright doesn't pin memory forever. Lost entirely
+# on an orchestrator restart (chat_turns is in-memory only, same boundary
+# ctx.status_store already has for Ask's own polling) — a resume request past
+# that point gets a plain 404, same as a turn that never existed.
+_CHAT_TURN_RETENTION_S = 300.0
+
+
+@dataclass
 class AppContext:
     http_client: httpx.AsyncClient
     ollama: OllamaClient
     pool: Pool | None = None
     schema_card: str | None = None
     status_store: dict[str, Stage] = field(default_factory=dict)
+    chat_turns: dict[str, ChatTurnState] = field(default_factory=dict)
 
 
 app_context: AppContext | None = None
@@ -311,7 +344,37 @@ async def _stream_query(
 async def chat(request: ChatRequest) -> StreamingResponse:
     if request.model is not None and request.model not in settings.allowed_models:
         raise HTTPException(status_code=400, detail=f"model not in registry: {request.model}")
-    return StreamingResponse(_stream_chat(_ctx(), request), media_type="application/x-ndjson")
+    ctx = _ctx()
+    # A turn_id already in the registry means this is a resumed connection for a
+    # turn still running (or just finished) rather than a fresh question — attach
+    # to it instead of starting a duplicate turn. web/'s resend of the same
+    # message/history on a resume is otherwise unused; run_chat only ever sees
+    # them on the call that actually starts the turn.
+    state = ctx.chat_turns.get(request.turn_id) or _start_chat_turn(ctx, request)
+    return StreamingResponse(_tail_chat_turn(state), media_type="application/x-ndjson")
+
+
+@app.post("/chat/turn/{turn_id}/cancel", dependencies=[Depends(require_bearer_token)])
+async def chat_turn_cancel(turn_id: str) -> dict[str, bool]:
+    """The chat Stop button's real cancellation, now that a dropped connection
+    no longer cancels a turn on its own (below) — Stop has to say so explicitly.
+    """
+    state = _ctx().chat_turns.get(turn_id)
+    if state is None or state.task is None or state.task.done():
+        return {"cancelled": False}
+    state.task.cancel()
+    return {"cancelled": True}
+
+
+def _sweep_finished_chat_turns(ctx: AppContext) -> None:
+    now = time.monotonic()
+    stale = [
+        turn_id
+        for turn_id, state in ctx.chat_turns.items()
+        if state.finished_at is not None and now - state.finished_at > _CHAT_TURN_RETENTION_S
+    ]
+    for turn_id in stale:
+        del ctx.chat_turns[turn_id]
 
 
 def _chat_event_line(item: object) -> bytes:
@@ -340,55 +403,87 @@ def _chat_event_line(item: object) -> bytes:
     return (json.dumps(line) + "\n").encode()
 
 
-async def _stream_chat(ctx: AppContext, request: ChatRequest) -> AsyncIterator[bytes]:
-    queue: asyncio.Queue[object | None] = asyncio.Queue()
+async def _run_chat_turn(ctx: AppContext, request: ChatRequest, state: ChatTurnState) -> None:
+    """Runs the turn to completion and appends every event to `state.buffered`
+    as it goes — the one place anything writes to it, so any number of
+    requests can safely tail it (`_tail_chat_turn`) with no lock needed.
 
-    async def runner() -> None:
-        try:
-            await _ensure_ready(ctx)
-            assert ctx.pool is not None
-            assert ctx.schema_card is not None
-            async for event in run_chat(
-                request, pool=ctx.pool, ollama=ctx.ollama, schema_card=ctx.schema_card
-            ):
-                if isinstance(event, DoneEvent):
-                    logger.info(
-                        "chat turn complete",
-                        conversation_id=request.conversation_id,
-                        model=request.model,
-                        tool_calls_count=event.tool_calls_count,
-                        prompt_tokens=event.prompt_tokens,
-                        completion_tokens=event.completion_tokens,
-                    )
-                await queue.put(event)
-        except OrchestratorError as e:
-            logger.warning(
-                "chat turn failed",
-                conversation_id=request.conversation_id,
-                stage=e.stage,
-                error=e.message,
-            )
-            await queue.put(e)
-        except Exception as e:  # noqa: BLE001 — last resort so the stream always terminates
-            logger.exception(
-                "unhandled error in /chat loop", conversation_id=request.conversation_id
-            )
-            await queue.put(OrchestratorError(str(e), stage="internal", http_status=500))
-        finally:
-            await queue.put(None)
-
-    task = asyncio.create_task(runner())
+    Deliberately *not* tied to any particular HTTP request's own cancellation
+    the way this used to be — a dropped connection used to cancel the whole
+    turn outright (a genuine feature for a user's own Stop click), but that
+    made a Cloudflare-side disconnect indistinguishable from one, killing a
+    turn that was still making real progress. Cancellation is now only ever
+    explicit, via /chat/turn/{turn_id}/cancel.
+    """
     try:
-        while True:
-            item = await queue.get()
-            if item is None:
-                break
-            yield _chat_event_line(item)
+        await _ensure_ready(ctx)
+        assert ctx.pool is not None
+        assert ctx.schema_card is not None
+        async for event in run_chat(
+            request, pool=ctx.pool, ollama=ctx.ollama, schema_card=ctx.schema_card
+        ):
+            if isinstance(event, DoneEvent):
+                logger.info(
+                    "chat turn complete",
+                    conversation_id=request.conversation_id,
+                    turn_id=request.turn_id,
+                    model=request.model,
+                    tool_calls_count=event.tool_calls_count,
+                    prompt_tokens=event.prompt_tokens,
+                    completion_tokens=event.completion_tokens,
+                )
+            state.buffered.append(_chat_event_line(event))
+    except OrchestratorError as e:
+        logger.warning(
+            "chat turn failed",
+            conversation_id=request.conversation_id,
+            turn_id=request.turn_id,
+            stage=e.stage,
+            error=e.message,
+        )
+        state.buffered.append(_chat_event_line(e))
+    except asyncio.CancelledError:
+        logger.info(
+            "chat turn cancelled", conversation_id=request.conversation_id, turn_id=request.turn_id
+        )
+        raise
+    except Exception as e:  # noqa: BLE001 — last resort so the stream always terminates
+        logger.exception(
+            "unhandled error in /chat loop",
+            conversation_id=request.conversation_id,
+            turn_id=request.turn_id,
+        )
+        state.buffered.append(
+            _chat_event_line(OrchestratorError(str(e), stage="internal", http_status=500))
+        )
     finally:
-        if not task.done():
-            task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await task
+        state.done = True
+        state.finished_at = time.monotonic()
+
+
+def _start_chat_turn(ctx: AppContext, request: ChatRequest) -> ChatTurnState:
+    _sweep_finished_chat_turns(ctx)
+    state = ChatTurnState()
+    state.task = asyncio.create_task(_run_chat_turn(ctx, request, state))
+    ctx.chat_turns[request.turn_id] = state
+    return state
+
+
+async def _tail_chat_turn(state: ChatTurnState, *, from_index: int = 0) -> AsyncIterator[bytes]:
+    """Replays whatever the turn already produced, then keeps polling for more
+    until it's done. A plain poll, not a queue a consumer could starve of, since
+    more than one request may need to tail the same state in turn (the original
+    connection, then a resume) with nothing already consumed to make up for.
+    """
+    i = from_index
+    while True:
+        if i < len(state.buffered):
+            yield state.buffered[i]
+            i += 1
+            continue
+        if state.done:
+            return
+        await asyncio.sleep(0.05)
 
 
 @app.get("/query/{request_id}/status", dependencies=[Depends(require_bearer_token)])

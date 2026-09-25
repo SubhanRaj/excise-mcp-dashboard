@@ -114,6 +114,21 @@ class OrchestratorClient
     }
 
     /**
+     * Stops a chat turn outright — the Stop button's real cancellation.
+     * ChatController::send() used to rely on the browser's own disconnect for
+     * this (cancelling the fetch cancelled the orchestrator's turn as a side
+     * effect), but a turn now survives a dropped connection on purpose so it
+     * can be resumed after one caused by nothing but Cloudflare's own
+     * duration cap — so Stop has to say so explicitly instead.
+     *
+     * @throws ConnectionException|RequestException
+     */
+    public function cancelChatTurn(string $turnId): void
+    {
+        $this->request()->post("/chat/turn/{$turnId}/cancel")->throw();
+    }
+
+    /**
      * @return array{runs: array<int, array<string, mixed>>, total: int}
      *
      * @throws ConnectionException|RequestException

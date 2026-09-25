@@ -584,6 +584,45 @@ has the `kb_uploads` ETL-sync gap this surfaced: the admin upload screen has
 no sync consumer yet, so this one document was ingested by calling
 `etl/etl/chunk.py` directly).
 
+A live question about statewide beer revenue for FY2025-26 surfaced two more
+gaps in the same area. First, `sro_shops`' own note had the same kind of
+mistake `CL5CC`'s classification did above: it listed `shop_type` as
+`COUNTRY_LIQUOR, COMPOSITE, MODEL_SHOP, PRV, BHANG, HBR`, but the real column
+values are `COMPOSITE_SHOP` and `BHANG_SHOP` — a filter written from the note
+as given would silently match nothing. Second, and the direct cause of the
+live failure: nothing anywhere said how to answer a liquor-type revenue
+question at all. The Excise Policy 2025 abolished standalone beer shops, so
+there is no `shop_type` and no populated `license_category` for beer (a
+`BEER` code exists in `analytics.license_categories`, but `analytics.revenues`
+carries zero rows against it — the NITI import was never broken out by liquor
+type). Beer revenue for FY2025-26 lives inside two other shop types' own
+totals on `sro_shops` instead: `composite_lf_beer + composite_mgr_beer` for a
+`COMPOSITE_SHOP`, and `special_beer_lf + special_beer_mgr` for a
+`COUNTRY_LIQUOR` shop with `has_cl5cc = true` — confirmed against
+`~/Projects/up-excise-spatial-revenue-optimizer`'s own roadmap and live data
+(9,362 composite shops, 2,885 `has_cl5cc` country-liquor shops, both fully
+populated). Statewide for FY2025-26: ₹7,142.87 crore (₹6,740.18 crore from
+composite shops, ₹402.69 crore from CL5CC-endorsed country liquor shops).
+`schema_card.py`'s `sro_shops` and `revenues` notes and a worked
+`FEW_SHOT_SQL_EXAMPLES` entry now carry this (`MCP_ENGINES.md` §Pipeline
+stages). The project's own name is "Spatial Revenue Optimizer" — "SRO" — not
+"Shop Revenue Optimizer"; a stray instance of the wrong expansion in
+`schema_card.py` is fixed to match every other reference to it in this repo.
+
+Tracing the live failure itself surfaced a third gap, more serious than the
+wrong revenue figure: the generated SQL (guessing at `analytics.revenues`
+filtered to a shop licence code as a stand-in for "beer") matched nothing,
+and `SUM()` with no `GROUP BY` always returns exactly one row even when
+nothing matched — `NULL`, not zero rows. `row_count == 0` was the only
+no-hallucination guard `run_query`'s summarize step had, so a `NULL` total
+reached it as one real-looking row, and it wrote a complete, confident answer
+with a fabricated urban/rural revenue split that nothing in the query or the
+data supported. The same shape reached the chat `run_sql_query` tool too,
+just less visibly: a bare `[{'total_revenue': None}]` preview handed to the
+chat model with nothing marking it as empty. Both now check whether every
+value in the result is empty, not just whether any rows came back, and treat
+that the same way as zero rows (`MCP_ENGINES.md` §Pipeline stages, §Tools).
+
 ### BI access (future — Power BI and similar, not built)
 
 `analytics.*` and `kb.*` are the entire surface any read-only consumer ever

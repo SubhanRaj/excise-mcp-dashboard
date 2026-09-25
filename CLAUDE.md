@@ -1348,6 +1348,126 @@ for a district-level revenue question past FY2018-19, exactly the
 consolidation problem `revenues`' own note already warns about. Both notes
 now say so.
 
+A live report that the department's own prepared demo question ("how many
+country liquor and composite shops are in Lucknow in August 2026") sometimes
+answered fine and sometimes hung on "still working" before "The connection
+was interrupted" traced to a ceiling past every fix `MCP_ENGINES.md` §Streamed
+events already documents. Matching the browser's own timing against
+`journalctl --user -u excise-orchestrator`, Ollama's own request log, and
+`journalctl --user -u excise-mcp-dashboard-tunnel` line by line: the 15s
+heartbeat pings were landing on schedule the whole time — the SQL plan alone
+took just over two minutes that run — but cloudflared logged
+`"context canceled"` around the 90-100s mark regardless. That's Cloudflare's
+own edge, not this app: it caps a single connection's total duration at
+roughly 100 seconds, a limit no amount of keep-alive traffic can raise,
+separate from — and tighter than — every idle-timeout this project has
+already chased down. A genuinely slow turn on this CPU-only box was always
+going to cross it eventually. (A second, unrelated failure showed up in the
+same trace: the very first retry of the same question landed while
+`excise-orchestrator.service` was mid-restart for the data-dictionary
+deploy above, hanging 90s in "Waiting for application shutdown" before
+systemd's own default `TimeoutStopSec` SIGKILLed it — collateral from the
+restart's own graceful-shutdown time, not a chat-path bug, and not chased
+further here.)
+
+The real fix survives the disconnect instead of trying to outrun it, mirroring
+the resume-by-polling shape Ask's own `RunExciseQuery` + status route already
+uses for the same reason. `run_chat`'s turn no longer lives or dies with the
+one HTTP request that started it: `orchestrator/app/main.py` keeps each turn
+in an in-memory `ChatTurnState`, keyed by `turn_id` (web/'s own assistant
+`Message` ULID), that buffers every event as the turn produces it regardless
+of whether anything is still reading. `POST /chat` starts a turn the first
+time its `turn_id` is seen and attaches to the already-running (or
+just-finished) one on every call after that, replaying its full history from
+the start. `ChatController::resume()` (`POST
+/chat/{conversation}/messages/{message}/resume`) is what calls back in after
+`chat.blade.php`'s `fetch()` throws for a reason other than the user's own
+Stop click — clearing any tool-call rows the dropped attempt already
+persisted first, since the replay is authoritative and would otherwise
+double them up. Bounded at 5 reconnect attempts, 2s apart, enough headroom
+for a turn up to `OLLAMA_GENERATE_TIMEOUT_SECONDS`'s own 480s ceiling. This
+also meant the Stop button's old mechanism (aborting the fetch, which used
+to reach the orchestrator as a disconnect and cancel the call as a side
+effect) quietly stopped doing anything — worse, it would now make a
+deliberate Stop just as resumable as an accidental drop. `POST
+/chat/turn/{turn_id}/cancel` is Stop's own real cancellation now, called
+directly alongside the fetch abort rather than left to its side effect.
+None of this survives an orchestrator restart (`chat_turns` is memory-only,
+the same boundary `status_store` already has for Ask's polling) — a resume
+past that point gets a plain 404 and the same "connection was interrupted"
+message as before, which is correct: a restart really did end the work.
+**This is an `orchestrator/`-only change — `systemctl --user restart
+excise-orchestrator` (documented, not run — this file's own hard constraint)
+is still owed before it's live.**
+
+A live retest of that exact demo question, right after the restart, still
+came back with the tool card's query result but no answer text at all — not
+the same failure, a new one the fix above made possible. The orchestrator's
+own log showed the turn genuinely finishing (`"chat turn complete"`, 361
+completion tokens) three minutes after the browser had given up on it.
+`uptime` showed a load average over 10 at the time, and two turns abandoned
+during this same debugging session (curl calls left to time out client-side
+with no cancel sent) were still running minutes later, one still holding an
+Ollama `llama-server` process north of 700% CPU until cancelled by hand — the
+turn that survives a dropped connection on purpose also survived being given
+up on, since nothing distinguished the two. `reconnectAndStream()` giving up
+(no `turn_id` ever learned, or all 5 reconnect attempts exhausted) now calls
+the same `/chat/turn/{turn_id}/cancel` Stop already uses, factored into a
+shared `cancelTurn()` — freeing the turn's Ollama and CPU time the moment
+nothing is left to show it to, instead of it running to completion for an
+answer nobody will ever see. The same repeated-attempt pattern (the
+department's demo question tried again and again in quick succession,
+each attempt abandoned rather than resumed to completion) is the most likely
+cause of the turn that finished with nothing to show for it — several
+turns competing for this CPU-only box's one Ollama instance at once
+made every one of them slower, including whichever was genuinely still
+being watched.
+
+A live question — "how much revenue was generated from beer sale across
+Uttar Pradesh in FY 2025-26?" — came back with a tool card showing a clean
+query and then nothing: `1 row(s), columns: total_revenue. Preview:
+[{'total_revenue': None}]`. Reproducing the same question directly against
+`/query` (Ask's own pipeline, same planner) showed the real shape of the
+problem: the model wrote `SELECT SUM(amount_inr) ... FROM analytics.revenues
+WHERE financial_year = 'FY2025-26' AND license_category IN ('CL5CC',
+'FL5DB')` — `CL5CC`/`FL5DB` are shop licence codes, not a liquor-type
+filter, and `analytics.revenues` has no breakdown by liquor type at all (a
+real `BEER` code exists in `analytics.license_categories`, but the NITI
+import that `revenues` comes from was never broken out by it — zero rows
+either way). `SUM()` with no `GROUP BY` still returns one row, `NULL`, when
+nothing matches — not the zero-row case `run_query`'s own no-hallucination
+guard already checks for — and summarize, handed a `NULL` total with nothing
+marking it empty, wrote a full confident answer anyway: "₹12,451 crore...
+approximately 70%... urban areas... 30%... rural areas" — a complete
+fabrication, worse than the chat path's silent nothing, since it read as a
+real number. `run_query`'s guard now also fires when every value in the
+result is empty, whatever `row_count` says; the chat `run_sql_query` tool
+checks the same thing on its own raw result before it ever reaches the
+model. The underlying question has a real answer, just not from
+`analytics.revenues`: the Excise Policy 2025 abolished standalone beer
+shops, so beer revenue for FY2025-26 lives inside two other shop types' own
+totals on `analytics.sro_shops` — `composite_lf_beer + composite_mgr_beer`
+for a `COMPOSITE_SHOP`, `special_beer_lf + special_beer_mgr` for a
+`COUNTRY_LIQUOR` shop with `has_cl5cc = true` — confirmed against
+`~/Projects/up-excise-spatial-revenue-optimizer`'s own roadmap and live
+data: ₹7,142.87 crore statewide (₹6,740.18 crore composite, ₹402.69 crore
+CL5CC country liquor). `schema_card.py`'s `sro_shops` note also had the same
+`CL5CC`-shaped mistake the shop-type classification fix above already
+caught once: it listed `shop_type` as bare `COMPOSITE`/`BHANG`, when the
+real column values are `COMPOSITE_SHOP`/`BHANG_SHOP` — a filter copied
+straight from the note would have matched nothing. Both notes and a worked
+`FEW_SHOT_SQL_EXAMPLES` entry now carry the corrected values and the
+two-part beer calculation (`DATA_PIPELINE.md` §Row visibility for the AI
+path). A second, unrelated broken example turned up in the same file while
+fixing this one: "What financial years do we have data for?" queried
+`analytics.financial_years`, which does not exist — every fact view
+denormalizes `financial_year`/`start_year` onto its own rows instead, the
+same way `district` already is; the example now queries
+`analytics.revenues` directly. And the project's own name, "Spatial Revenue
+Optimizer" ("SRO"), was wrong in one place in `schema_card.py`
+("Shop Revenue Optimizer") — fixed to match every other reference to it
+already in this repo.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures

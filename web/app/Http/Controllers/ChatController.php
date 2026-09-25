@@ -7,6 +7,7 @@ use App\Models\Conversation;
 use App\Models\Message;
 use App\Models\MessageToolCall;
 use App\Services\OrchestratorClient;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Log;
@@ -69,7 +70,84 @@ class ChatController extends Controller
 
         $assistantMessage = $conversation->messages()->create(['role' => 'assistant', 'content' => '', 'model' => $model]);
 
-        return response()->stream(function () use ($conversation, $assistantMessage, $orchestratorMessage, $model, $history, $orchestrator) {
+        return $this->streamTurn($assistantMessage, $orchestrator->chatStream([
+            'conversation_id' => $conversation->id,
+            'turn_id' => $assistantMessage->id,
+            'message' => $orchestratorMessage,
+            'history' => $history,
+            'model' => $model,
+        ]));
+    }
+
+    /**
+     * Reconnects to a turn whose own connection died for a reason that has
+     * nothing to do with the model still working — confirmed live, Cloudflare's
+     * own edge enforces roughly a 100s cap on total connection duration and
+     * drops the browser regardless of the 15s heartbeat pings still arriving
+     * (MCP_ENGINES.md §Streamed events). The orchestrator keeps the turn
+     * running server-side once started; this attaches to it by the same
+     * turn_id (the assistant message's own ULID) and replays its full history
+     * from the start, since the earlier attempt may have died before
+     * persisting any of it.
+     *
+     * Any tool call rows this message already carries are wiped first — the
+     * replay is authoritative and starts from the turn's very first event, so
+     * keeping the old rows would just duplicate whatever had already arrived
+     * before the disconnect.
+     */
+    public function resume(
+        Request $request,
+        Conversation $conversation,
+        Message $message,
+        OrchestratorClient $orchestrator
+    ): StreamedResponse {
+        abort_unless($conversation->user_id === Auth::id(), 403);
+        abort_unless($message->conversation_id === $conversation->id && $message->role === 'assistant', 404);
+
+        foreach ($message->toolCalls as $toolCall) {
+            $toolCall->chartArtifact?->delete();
+        }
+        $message->toolCalls()->delete();
+
+        return $this->streamTurn($message, $orchestrator->chatStream([
+            'conversation_id' => $conversation->id,
+            'turn_id' => $message->id,
+            // Ignored by the orchestrator once turn_id already names a running
+            // (or just-finished) turn — only the first /chat call for a turn_id
+            // actually starts it (main.py's chat()).
+            'message' => '',
+            'history' => [],
+            'model' => $message->model,
+        ]));
+    }
+
+    /**
+     * The chat Stop button's real cancellation now that a dropped connection no
+     * longer cancels the turn on its own (resume() above needs that not to
+     * happen) — Stop has to say so explicitly instead.
+     */
+    public function cancel(
+        Conversation $conversation,
+        Message $message,
+        OrchestratorClient $orchestrator
+    ): JsonResponse {
+        abort_unless($conversation->user_id === Auth::id(), 403);
+        abort_unless($message->conversation_id === $conversation->id && $message->role === 'assistant', 404);
+
+        $orchestrator->cancelChatTurn($message->id);
+
+        return response()->json(['cancelled' => true]);
+    }
+
+    private function streamTurn(Message $assistantMessage, \Generator $events): StreamedResponse
+    {
+        return response()->stream(function () use ($assistantMessage, $events) {
+            echo json_encode(['turn_id' => $assistantMessage->id])."\n";
+            if (ob_get_level() > 0) {
+                ob_flush();
+            }
+            flush();
+
             $assistantText = '';
             $pendingToolCall = null;
             $lastToolCallId = null;
@@ -77,25 +155,18 @@ class ChatController extends Controller
             $completionTokens = 0;
 
             try {
-                foreach ($orchestrator->chatStream([
-                    'conversation_id' => $conversation->id,
-                    'message' => $orchestratorMessage,
-                    'history' => $history,
-                    'model' => $model,
-                ]) as $event) {
+                foreach ($events as $event) {
                     echo json_encode($event)."\n";
                     if (ob_get_level() > 0) {
                         ob_flush();
                     }
                     flush();
 
-                    // A "Stop" click aborts the browser's fetch(), but PHP itself keeps
-                    // running unless something checks for that — nothing did, so the
-                    // orchestrator kept generating (and paying for) a turn nobody was
-                    // reading. Breaking here lets the generator (and the Guzzle stream
-                    // it holds) fall out of scope and close, which is what actually
-                    // reaches the orchestrator as a client disconnect and cancels the
-                    // in-flight Ollama call and any running tool (MCP_ENGINES.md §Tools).
+                    // A "Stop" click cancels the turn explicitly now (cancel() above)
+                    // rather than relying on this disconnect — a turn survives a
+                    // dropped connection on purpose so it can be resumed, so breaking
+                    // here just stops *this* request from relaying it further, it no
+                    // longer reaches the orchestrator as a cancellation.
                     if (connection_aborted()) {
                         break;
                     }
@@ -124,7 +195,7 @@ class ChatController extends Controller
                     }
                 }
             } catch (\Throwable $e) {
-                Log::error('ChatController::send stream failed', ['error' => $e->getMessage()]);
+                Log::error('ChatController stream failed', ['error' => $e->getMessage()]);
                 echo json_encode(['error' => ['stage' => 'internal', 'message' => 'The chat connection was interrupted.']])."\n";
             } finally {
                 $assistantMessage->update([

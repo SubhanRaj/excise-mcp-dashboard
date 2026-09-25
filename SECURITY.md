@@ -379,8 +379,9 @@ in case a crash left one behind.
 The `excise-sandbox-*.scope` unit itself needs the same guarantee twice
 over. `systemd-run --scope` execs straight into the `timeout`/`bwrap` chain,
 so the awaiting `asyncio.subprocess.Process` is that scope's own main PID —
-but cancelling the coroutine that awaits it (a client disconnect, or the
-orchestrator shutting down) does not by itself kill the process, confirmed
+but cancelling the coroutine that awaits it (a `/query` client disconnect, an
+explicit `/chat` turn cancellation, or the orchestrator shutting down) does
+not by itself kill the process, confirmed
 live: a chart render left running past a `systemctl restart` kept its memory
 cgroup alive for several minutes until it happened to hit its own
 `MemoryMax`. `run_in_sandbox` now kills the process explicitly on

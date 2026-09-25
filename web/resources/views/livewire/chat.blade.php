@@ -215,7 +215,7 @@
                 <button type="button" x-show="streaming" x-cloak x-on:click="stopGenerating()"
                         class="bg-slate-600 hover:bg-slate-700 text-white text-sm font-semibold py-2.5 px-4 rounded-lg transition-colors flex-shrink-0"
                         title="Stop generating">
-                    <i class="ti ti-player-stop-filled"></i>
+                    <i class="ti ti-player-stop"></i>
                 </button>
             </form>
         </div>
@@ -243,9 +243,25 @@
             liveToolCalls: [],
             liveError: null,
             abortController: null,
+            currentConversationId: null,
+            currentTurnId: null,
 
             stopGenerating() {
                 this.abortController?.abort();
+                // The fetch dying no longer cancels the turn on its own (it now
+                // survives a dropped connection on purpose, so a Cloudflare-side
+                // drop can be resumed) — Stop has to say so to the orchestrator
+                // directly.
+                this.cancelTurn();
+            },
+
+            cancelTurn() {
+                if (this.currentConversationId && this.currentTurnId) {
+                    fetch(`/chat/${this.currentConversationId}/messages/${this.currentTurnId}/cancel`, {
+                        method: 'POST',
+                        headers: { 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content },
+                    }).catch(() => {});
+                }
             },
 
             toolLabel(name) {
@@ -281,48 +297,94 @@
             },
             async sendToOrchestrator({ conversationId, message, model, includeChart }) {
                 this.liveUserMessage = message;
-                this.abortController = new AbortController();
+                this.currentConversationId = conversationId;
+                this.currentTurnId = null;
                 try {
-                    const res = await fetch(`/chat/${conversationId}/send`, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'Accept': 'application/x-ndjson',
-                            'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
-                        },
-                        body: JSON.stringify({ message, model, includeChart }),
-                        signal: this.abortController.signal,
+                    await this.streamFrom(`/chat/${conversationId}/send`, { message, model, includeChart }, () => {
+                        history.replaceState(null, '', `/chat/${conversationId}`);
                     });
-                    history.replaceState(null, '', `/chat/${conversationId}`);
-
-                    const reader = res.body.getReader();
-                    const decoder = new TextDecoder();
-                    let buffer = '';
-                    while (true) {
-                        const { value, done } = await reader.read();
-                        if (done) break;
-                        buffer += decoder.decode(value, { stream: true });
-                        let nl;
-                        while ((nl = buffer.indexOf('\n')) !== -1) {
-                            const line = buffer.slice(0, nl).trim();
-                            buffer = buffer.slice(nl + 1);
-                            if (line) this.applyEvent(JSON.parse(line));
-                        }
-                    }
                 } catch (e) {
-                    // A user-initiated Stop click aborts the fetch on purpose — that is
-                    // not a connection failure, so it gets no error banner.
-                    if (e.name !== 'AbortError') {
-                        this.liveError = 'The connection was interrupted. Please try again.';
-                    }
+                    if (e.name !== 'AbortError') await this.reconnectAndStream();
                 } finally {
                     this.streaming = false;
                     this.abortController = null;
                     this.$wire.call('syncAfterStream');
                 }
             },
+
+            // A dead fetch() here can just be Cloudflare's own ~100s cap on total
+            // connection duration, not the turn actually failing — confirmed live on a
+            // compound question: the 15s heartbeat pings were still landing right up to
+            // the drop. The orchestrator keeps a turn running once started, so this
+            // reattaches to it by its turn_id and keeps reading from wherever it left
+            // off (MCP_ENGINES.md §Streamed events). Bounded at 5 attempts — each one is
+            // itself a full streaming connection that can run up to the same ~100s
+            // before needing another reconnect, so 5 covers a turn up to the
+            // orchestrator's own ~480s generation ceiling with room to spare.
+            async reconnectAndStream(attempt = 1) {
+                if (! this.currentTurnId || attempt > 5) {
+                    // Giving up has to say so to the orchestrator, not just to this tab —
+                    // a turn nobody will ever reattach to otherwise keeps running for
+                    // nothing, competing with every other turn (and everyone else's
+                    // questions) for the same CPU-only Ollama capacity until it finishes
+                    // on its own. Confirmed live: two abandoned turns left running this
+                    // way were still occupying Ollama minutes later, at a load average
+                    // over 10, degrading an otherwise-healthy turn's own timing enough to
+                    // make it miss its own connection window too.
+                    this.cancelTurn();
+                    this.liveError = 'The connection was interrupted. Please try again.';
+                    return;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 2000));
+                // A resume replays the turn's *full* history from its very first event
+                // (main.py's _tail_chat_turn always starts at index 0) — whatever the
+                // dead connection already applied here has to be cleared first, or the
+                // replay would double up on top of it.
+                this.liveAssistantText = '';
+                this.liveToolCalls = [];
+                try {
+                    await this.streamFrom(`/chat/${this.currentConversationId}/messages/${this.currentTurnId}/resume`, {});
+                } catch (e) {
+                    if (e.name !== 'AbortError') await this.reconnectAndStream(attempt + 1);
+                }
+            },
+
+            async streamFrom(url, body, onConnected) {
+                this.abortController = new AbortController();
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/x-ndjson',
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content,
+                    },
+                    body: JSON.stringify(body),
+                    signal: this.abortController.signal,
+                });
+                onConnected?.(res);
+
+                const reader = res.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                while (true) {
+                    const { value, done } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    let nl;
+                    while ((nl = buffer.indexOf('\n')) !== -1) {
+                        const line = buffer.slice(0, nl).trim();
+                        buffer = buffer.slice(nl + 1);
+                        if (line) this.applyEvent(JSON.parse(line));
+                    }
+                }
+            },
             applyEvent(event) {
-                if (event.token !== undefined) {
+                if (event.turn_id !== undefined) {
+                    // Sent as the very first line of every stream (ChatController's
+                    // streamTurn()) — the assistant message's own ULID, needed here so
+                    // Stop and a reconnect-after-drop both know which turn to reach.
+                    this.currentTurnId = event.turn_id;
+                } else if (event.token !== undefined) {
                     this.liveAssistantText += event.token;
                 } else if (event.tool_call) {
                     this.liveToolCalls.push({ name: event.tool_call.name, arguments: event.tool_call.arguments, result: null, chart: null });

@@ -99,7 +99,19 @@ async def _run_sql_query(
     _LAST_RESULT[conversation_id] = pd.DataFrame(rows)
     preview = _json_safe_rows(rows[:5])
     columns = ", ".join(rows[0].keys()) if rows else "(none)"
-    summary = f"{len(rows)} row(s), columns: {columns}. Preview: {preview}"
+    if rows and all(v is None for row in rows for v in row.values()):
+        # An aggregate with no GROUP BY (SUM, AVG, ...) always returns exactly one
+        # row even when nothing matched the WHERE clause — NULL, not zero rows, so
+        # the empty-rows case below never catches it. Left as a bare preview of
+        # null values, this reads to the chat model like real data worth
+        # narrating, or it gives up with nothing to say — the same NULL-aggregate
+        # gap pipeline.py's summarize guards against (MCP_ENGINES.md §Tools).
+        summary = (
+            f"{len(rows)} row(s), columns: {columns}, but every value is empty — "
+            "no matching data for this question, not a real zero or total."
+        )
+    else:
+        summary = f"{len(rows)} row(s), columns: {columns}. Preview: {preview}"
     return ToolResult(ok=True, summary=summary)
 
 

@@ -78,7 +78,8 @@ orchestrator/
 | `GET` | `/health` | — | `{status, ollama, postgres, engines, models, kb_docs, embeddings}` — no auth; `models` is the registry with a pulled/not-pulled flag each |
 | `POST` | `/query` | `QueryRequest` | streamed `Stage` lines then a final `QueryResponse` (chunked), or a typed error |
 | `GET` | `/query/{id}/status` | — | last `Stage` for a running query (poll fallback) |
-| `POST` | `/chat` | `ChatRequest` | streamed newline-delimited JSON (`application/x-ndjson`, matching `/query`) — `token` / `tool_call` / `tool_result` / `chart` / `done` / `error` lines |
+| `POST` | `/chat` | `ChatRequest` | streamed newline-delimited JSON (`application/x-ndjson`, matching `/query`) — `token` / `tool_call` / `tool_result` / `chart` / `done` / `error` lines. Starts the turn named by `turn_id` the first time it's seen, attaches to it (replaying from the start) on every later call for the same `turn_id` — see "Resuming a dropped turn" below |
+| `POST` | `/chat/turn/{turn_id}/cancel` | — | `{cancelled: bool}` — stops that turn's task outright; `false` if the turn is unknown or already finished |
 | `POST` | `/kb/search` | `{query: str, k: int}` | `{chunks: [...]}` — ranked FTS retrieval, no LLM (used by tests and the "cite sources" panel) |
 | `GET` | `/kb/documents` | — (paginated: `?page`) | `{documents: [...], total}` — unranked listing of `kb.documents` for the admin "browse the corpus" screen |
 | `POST` | `/chart/render` | `ChartRenderRequest` (`spec`: a Plotly figure dict, `format`: `png`/`svg`/`pdf`) | the rasterized bytes, correct `Content-Type` — rasterizes an already-produced figure through `get_static_renderer()` (`engines/static_render.py`), the same persistent-browser renderer the sandboxed render step uses; no LLM-authored code runs on this path |
@@ -196,7 +197,18 @@ flowchart TD
    `sandbox violation`.
 6. **summarize** — prompt Ollama (`llama3.1:8b`) for a 2–4 sentence reading of
    the numbers; plain text, `/general-english` tone rules apply on the Laravel
-   side when displayed.
+   side when displayed. Skipped in favor of a fixed "No rows matched this
+   question." whenever the result has nothing to narrate — either zero rows,
+   or every value in the result is empty. That second case is not the same
+   check: a bare `SUM()`/`AVG()` with no `GROUP BY` always returns exactly one
+   row, `NULL`, when nothing matches the `WHERE` clause, so `row_count == 0`
+   alone misses it. Confirmed live: a statewide beer-revenue question matched
+   nothing, came back as one row with `total_revenue = NULL`, and summarize —
+   with nothing to say `NULL` meant empty — wrote a complete, confident
+   answer with a fabricated urban/rural split nothing in the query asked for
+   (`DATA_PIPELINE.md` §Row visibility for the AI path). The chat
+   `run_sql_query` tool checks the same condition on its own raw result
+   before handing a preview to the chat model, for the same reason.
 
 Each transition appends a `Stage{name, status, started_at, ms}` and is flushed
 to the response stream so Laravel can relay it.
@@ -330,6 +342,7 @@ sandbox, the engine registry — no parallel implementation.
 ```python
 class ChatRequest(BaseModel):
     conversation_id: str            # ULID from Laravel
+    turn_id: str                    # web/'s own assistant Message ULID — see "Resuming a dropped turn" below
     message: str
     history: list[ChatTurn] = []    # prior user/assistant/tool turns, capped by Laravel
     model: str | None = None        # registry key from the chat model picker; None -> chat default
@@ -359,7 +372,7 @@ nothing to persist, so it passes straight through.
 A turn that ends with no `token` events at all and no tool call — every
 tool-calling degenerate case above is meant to fall back to some text before
 that happens, but a client disconnect mid-stream or an as-yet-undiscovered
-new shape of the same gap can still reach it — leaves `ChatController::send`'s
+new shape of the same gap can still reach it — leaves `ChatController::streamTurn()`'s
 `$assistantText` empty; its `finally` block persists that message regardless,
 since a turn that failed is still a turn the transcript needs a row for.
 `chat.blade.php`'s persisted-message rendering had no fallback for that case:
@@ -399,6 +412,84 @@ browser) it exists to protect even with genuinely streamed input.
 `deploy/apache-vhost.conf` sets `output_buffering 0` for this vhost so nothing
 sits waiting for a buffer to fill (`OPERATOR_SETUP.md` §Apache PHP execution
 timeout).
+
+### Resuming a dropped turn
+
+Cloudflare's own edge caps a connection's *total* duration at roughly 100
+seconds, separate from — and tighter than — the idle-timeout handling above.
+On the department's own demo question ("how many country liquor and
+composite shops in Lucknow"), cloudflared logs `"context canceled"` right
+around the 90-100s mark even with the 15s `ping` cadence still landing on
+schedule; no heartbeat can raise a cap that isn't about idleness. A SQL plan
+on this CPU-only box has taken over two minutes on a real question
+(`CLAUDE.md`), so a compound turn can outlast the connection regardless of
+how well-fed the wire is.
+
+A chat turn's own progress does not depend on any one HTTP request staying
+open. `app/main.py` keeps a `ChatTurnState` per `turn_id` in an in-memory
+registry (`AppContext.chat_turns`): `_run_chat_turn` appends every event to
+`state.buffered` as the turn produces it, independent of whether anything is
+currently reading it, and `_tail_chat_turn` replays that buffer from the
+start before polling for more — so any number of requests can attach to the
+same turn in sequence. `turn_id` is the assistant `Message`'s own ULID, known
+to `web/` before the stream opens. `POST /chat` starts a turn the first time
+its `turn_id` arrives and attaches to the existing one on every later call
+for the same id, which is what lets `ChatController::resume()` (`POST
+/chat/{conversation}/messages/{message}/resume`) reconnect a turn whose
+`fetch()` failed for a reason other than the user's own Stop click. Because
+the replay is authoritative from the turn's first event, `resume()` deletes
+any tool-call rows (and their chart artifacts) the message already carries
+before replaying, so the replay is not layered on top of them.
+`chat.blade.php`'s `reconnectAndStream()` makes up to 5 attempts, 2s apart;
+each attempt is itself a full streaming connection bounded by the same
+~100s cap, together covering a turn up to `OLLAMA_GENERATE_TIMEOUT_SECONDS`'s
+own 480s ceiling. `chat_turns` is memory-only, the same boundary
+`status_store` already has for Ask's polling — a resume against a `turn_id`
+an orchestrator restart has cleared gets a plain 404, and the browser shows
+"The connection was interrupted."
+
+Cancellation is explicit rather than a side effect of the connection
+dropping, since a turn worth resuming and a turn the user actually wants
+stopped otherwise look identical from the connection's own point of view.
+`stopGenerating()` aborts the browser's `fetch()` and calls `POST
+/chat/turn/{turn_id}/cancel` (`ChatController::cancel()`,
+`OrchestratorClient::cancelChatTurn()`), which cancels the turn's own
+`asyncio.Task` directly. `reconnectAndStream()` giving up — no `turn_id` was
+ever learned, or all 5 reconnect attempts are exhausted — calls the same
+`cancelTurn()` the Stop button uses. A turn nobody will ever reattach to
+otherwise keeps running for an answer nobody will see, competing for this
+box's one CPU-only Ollama instance with every other turn until it finishes
+on its own; confirmed live, a load average past 10 with two abandoned turns
+each still holding an Ollama `llama-server` process past 700% CPU minutes
+after the browser gave up on them, slowing a genuinely-watched turn's own
+timing enough to make it miss its own connection window too.
+
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant L as web/ (Laravel relay)
+    participant O as orchestrator /chat
+    participant R as chat_turns[turn_id]
+
+    B->>L: message
+    L->>O: POST /chat — turn_id = assistant Message ULID
+    O->>R: start _run_chat_turn, buffer events as they happen
+    O-->>L: ndjson stream (token / tool_call / ping / ...)
+    L-->>B: same lines, relayed live
+    Note over B,O: Cloudflare's own ~100s cap ends the connection here — R keeps running regardless
+    B--xL: fetch() throws (not a Stop click)
+    L--xO: (this request's own relay ends; the turn in R does not)
+    B->>L: POST /chat/{conversation}/messages/{message}/resume
+    L->>L: delete this message's own tool-call rows + chart artifacts
+    L->>O: POST /chat — same turn_id
+    O->>R: turn_id already known — attach, don't start a new one
+    O-->>L: replays R's buffer from the first event, then live events as they arrive
+    L-->>B: same ndjson lines, persisting messages + message_tool_calls as before
+```
+
+> Stop sends `POST /chat/turn/{turn_id}/cancel` directly rather than relying
+> on the dropped-connection path above — that path no longer cancels
+> anything on its own.
 
 ### Tools (`chat/tools.py`)
 
@@ -661,7 +752,7 @@ sequenceDiagram
     participant T as tools - run_sql_query, search_knowledge, make_chart
 
     B->>L: message
-    L->>O: POST /chat — bearer, capped history, model key
+    L->>O: POST /chat — bearer, turn_id, capped history, model key
     O->>O: reject the model key if it is not in the registry
     loop up to CHAT_MAX_TOOL_CALLS
         loop every 15s M produces no output
@@ -702,8 +793,6 @@ connection dropped with nothing streamed. `_generate_with_heartbeats` wraps
 `dispatch()` — a background task pumps chunks into a queue, and the loop
 yields a `HeartbeatEvent` on any 15s stretch with nothing new — at both the
 tool-aware attempt and the `tools=[]` retry.
-
-A client disconnect cancels the in-flight Ollama stream and any running tool.
 
 Another shape of the same tool-calling weakness turned up live: a reply
 answered normally, then trailed off mid-turn into a raw `{"name": "` — a

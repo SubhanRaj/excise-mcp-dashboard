@@ -48,7 +48,7 @@ class _FakeOllama:
 
 
 def _request(message: str = "hello") -> ChatRequest:
-    return ChatRequest(conversation_id="c1", message=message)
+    return ChatRequest(conversation_id="c1", turn_id="t1", message=message)
 
 
 async def _events(ollama: _FakeOllama) -> list[object]:

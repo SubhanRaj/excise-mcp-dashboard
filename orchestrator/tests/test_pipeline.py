@@ -66,6 +66,52 @@ async def test_a_zero_row_result_skips_the_narration_call(monkeypatch: pytest.Mo
     assert response.row_count == 0
 
 
+async def test_a_null_aggregate_result_skips_the_narration_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A bare SUM()/AVG() with no GROUP BY always returns exactly one row, even when
+    # nothing matched the WHERE clause — NULL, not zero rows, so row_count alone (above)
+    # never catches it. Confirmed live: asked for statewide beer revenue, the SQL matched
+    # nothing, came back as one row with total_revenue = NULL, and the narration call —
+    # with nothing to say NULL meant empty — invented a full answer, fabricated urban/
+    # rural split included.
+    sql_plan = json.dumps(
+        {"sql": "SELECT SUM(x) AS total_revenue", "rationale": "x", "expected_columns": ["x"]}
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"response": sql_plan})
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    ollama = OllamaClient("http://fake-ollama", http_client)
+
+    async def fake_run_sql(sql: str, row_limit: int) -> list[dict[str, object]]:
+        return [{"total_revenue": None}]
+
+    monkeypatch.setattr(pipeline, "run_sql", fake_run_sql)
+
+    called_generate_text = False
+
+    async def fail_if_called(*args: object, **kwargs: object) -> str:
+        nonlocal called_generate_text
+        called_generate_text = True
+        return "hallucinated narration"
+
+    monkeypatch.setattr(ollama, "generate_text", fail_if_called)
+
+    response = await pipeline.run_query(
+        QueryRequest(conversation_id="c1", question="how much beer revenue statewide"),
+        request_id="r1",
+        pool=None,  # type: ignore[arg-type] — unused: run_sql is monkeypatched above
+        ollama=ollama,
+        schema_card="(schema)",
+    )
+
+    assert called_generate_text is False
+    assert response.summary == "No rows matched this question."
+    assert response.row_count == 1
+
+
 async def test_a_run_sql_failure_retries_plan_sql_once(monkeypatch: pytest.MonkeyPatch) -> None:
     # guard_sql only proves the statement is a single read-only SELECT — a
     # hallucinated table (relation "beer_shops" does not exist) or an

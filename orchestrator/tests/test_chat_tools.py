@@ -76,6 +76,37 @@ async def test_run_sql_query_with_a_bad_plan_returns_a_failed_tool_result() -> N
     assert result.ok is False
 
 
+async def test_run_sql_query_with_a_null_aggregate_says_so_explicitly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A bare SUM()/AVG() with no GROUP BY always returns exactly one row, even when
+    # nothing matched the WHERE clause — NULL, not zero rows. Left as a bare preview of
+    # null values, this used to read to the chat model like real data worth narrating
+    # (confirmed live: a fabricated crore figure with an invented urban/rural split) or
+    # leave it with nothing to say at all.
+    plan = json.dumps(
+        {
+            "sql": "SELECT SUM(x) AS total_revenue FROM analytics.sro_shops",
+            "rationale": "x",
+            "expected_columns": ["total_revenue"],
+        }
+    )
+
+    async def fake_run_sql(sql: str, row_limit: int) -> list[dict[str, object]]:
+        return [{"total_revenue": None}]
+
+    monkeypatch.setattr(chat_tools, "run_sql", fake_run_sql)
+
+    call = ToolCall(name="run_sql_query", arguments={"question": "how much beer revenue"})
+    result = await dispatch(
+        call, ollama=_ollama_returning(plan), schema_card="(schema)", conversation_id="c1"
+    )
+
+    assert result.ok is True
+    assert "no matching data" in result.summary
+    assert "None" not in result.summary
+
+
 async def test_make_chart_uses_the_conversations_own_last_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

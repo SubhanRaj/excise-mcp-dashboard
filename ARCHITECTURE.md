@@ -66,19 +66,29 @@ polling badly.
    native `EventSource`, which only issues `GET` and would put the message in
    a query string.
 2. That route calls `POST http://127.0.0.1:8085/chat` (bearer token) with the
-   message and the trimmed conversation history, and pipes the orchestrator's
-   response straight through as it arrives.
+   message, the trimmed conversation history, and a `turn_id` (the assistant
+   message's own ULID), and pipes the orchestrator's response straight through
+   as it arrives.
 3. The orchestrator runs the tool loop (`MCP_ENGINES.md` §Chat and retrieval):
    the model streams text; when it needs data it calls `run_sql_query` (same
    guard + read-only run as the one-shot path), for the law it calls
    `search_knowledge` (FTS over `kb.chunks`, optionally vector), for a picture
    it calls `make_chart` (same `bwrap` sandbox). Each tool call and result is
    one line of the streamed newline-delimited JSON response (the same
-   `application/x-ndjson` format `/query` already uses).
+   `application/x-ndjson` format `/query` already uses). The turn itself runs
+   independently of this one HTTP request, keyed by `turn_id`, so it keeps
+   going even if this connection ends before the turn does.
 4. `web/` persists `messages` + `message_tool_calls` as lines arrive; a chart
    is stored as a `chart_artifacts` row.
 5. Cited knowledge chunks render with a link to `docsrepo.exciseup.in`; SQL
    the model ran renders as an inline, copyable card.
+6. If step 2's connection ends before the turn does — Cloudflare's edge caps
+   a connection's total duration at roughly 100 seconds, tighter than a slow
+   compound question can always finish inside — the browser reconnects by the
+   same `turn_id` (`POST /chat/{conversation}/messages/{message}/resume`) and
+   replays the turn's full history from the orchestrator's own record of it,
+   rather than losing the turn's progress. `MCP_ENGINES.md` §Resuming a
+   dropped turn.
 
 ### Output artifact lifecycle
 
@@ -130,7 +140,12 @@ needed" on the admin screen. `SECURITY.md` §Google OAuth.
 - **Tunnel -> Apache (8084)**: the only inbound path; no firewall port opened
   (`cloudflared` dials out over `lo`).
 - **Laravel -> orchestrator (8085)**: loopback only, bearer token, request-id
-  correlation. The orchestrator refuses any request without the token.
+  correlation. The orchestrator refuses any request without the token. A chat
+  turn's identity on this boundary is its `turn_id`, which stays valid past
+  the HTTP connection that started it — `web/` reattaches to a turn already
+  in progress by sending its known `turn_id` on a fresh `POST /chat`, and
+  cancels one outright with `POST /chat/turn/{turn_id}/cancel`.
+  `MCP_ENGINES.md` §Resuming a dropped turn.
 - **Orchestrator -> Laravel (8084)**: the one call running the opposite
   direction — `GET /api/schema-notes`, the orchestrator reading the data
   dictionary's admin-edited schema notes. Loopback only, gated by

@@ -217,8 +217,17 @@ async def run_query(
 
     t0 = time.monotonic()
     await emit(Stage(name="summarize", status="running"))
-    if row_count == 0:
-        # Asking the model to narrate zero rows invites exactly what an LLM does with
+    # An aggregate with no GROUP BY (SUM, AVG, ...) always returns exactly one row,
+    # even when nothing in analytics matched the WHERE clause — NULL, not zero rows,
+    # so row_count alone misses it. Confirmed live: "how much revenue from beer sale
+    # in FY2025-26" matched nothing (the license-category filter it guessed at
+    # doesn't isolate beer revenue), came back as one row with total_revenue = NULL,
+    # and summarize — with nothing to say NULL means empty rather than a real
+    # reading — invented a full answer, complete with a fabricated urban/rural split
+    # nothing in the query even asked for.
+    no_data = row_count == 0 or bool(df.isna().all().all())
+    if no_data:
+        # Asking the model to narrate this invites exactly what an LLM does with
         # nothing to work from: an invented trend. Same no-hallucination rule kb/retrieve.py
         # already follows for an empty corpus — say so, don't summarize.
         summary = "No rows matched this question."

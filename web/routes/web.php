@@ -78,6 +78,16 @@ Route::middleware('auth')->group(function () {
     Route::post('/chat/{conversation}/send', [ChatController::class, 'send'])
         ->middleware('throttle:chat')
         ->name('chat.send');
+    // A dropped connection can just be Cloudflare's own ~100s duration cap, not the
+    // turn actually failing (MCP_ENGINES.md §Streamed events) — resume attaches to
+    // the same still-running (or just-finished) turn instead of losing it; cancel is
+    // the Stop button's own explicit stop, now that a disconnect alone no longer
+    // cancels a turn.
+    Route::post('/chat/{conversation}/messages/{message}/resume', [ChatController::class, 'resume'])
+        ->middleware('throttle:chat')
+        ->name('chat.resume');
+    Route::post('/chat/{conversation}/messages/{message}/cancel', [ChatController::class, 'cancel'])
+        ->name('chat.cancel');
     Route::get('/chat/{conversation}/export', [ChatExportController::class, 'export'])->name('chat.export');
 
     // Every past /query — Analyst sees own, Admin sees all (QueryLedger::render()).
