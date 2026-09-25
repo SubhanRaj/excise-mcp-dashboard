@@ -1627,6 +1627,44 @@ enforcement-raids example filtered on `metric = 'raids'` (corrected to
 33.4M BL in FY2014-15 to 78.3M BL in FY2025-26; raids: 242,857 to 836,717
 over the same span).
 
+A live report on the beer-revenue question — the correct real total, but
+narrated as ₹71,428.78 crore, a full order of magnitude too large — traced
+`format_inr`/`money_annotations`'s own fix (above) back to a bug in the
+fix itself. `money_annotations` only recognized a raw Python `int` or
+`float` as a convertible value; a `SUM()` over a Postgres `NUMERIC` column —
+exactly what a revenue total always is — comes back from `asyncpg` as
+`decimal.Decimal`, which that check silently excluded. The pre-converted
+line the model is told to copy verbatim was never generated for a single
+real revenue aggregate, so the model always fell back to doing the
+lakh/crore division itself, wrong, every time — confirmed live before the
+fix, and confirmed fixed after: the same question's tool result now carries
+`total_beer_revenue = ₹7,142.87 crore` correctly. `CHAT_SYSTEM_PROMPT` also
+told the model the lakh/crore formula directly ("one crore is
+₹1,00,00,000") with nothing steering it toward the pre-converted line
+instead — it now says explicitly to use that line verbatim and never
+divide the raw number itself.
+
+The same report's chart also failed differently than any earlier
+`make_chart` shape: the reply claimed a chart, then a fenced code block
+holding ordinary Python (matplotlib, not the Plotly contract this tool
+actually reads), then literal text — `{"name": "make_chart", "parameters":
+{"spec": "..."}}` — narrating the tool call itself rather than issuing a
+real one, with unescaped quotes inside its own `spec` string making even
+that fake call invalid Python. This is exactly the shape `_needs_retry`'s
+`'{"name"' in text` check exists to catch, but the retry that follows a
+chart claim (`_claims_unmade_chart`) checked only `_is_degenerate` on its
+own completion, never `_needs_retry` — so a chart-claim retry that itself
+degenerated into a narrated fake call streamed straight through with
+nothing to catch it. The completion check now calls `_needs_retry` (a
+superset of `_is_degenerate` already) instead, closing the gap for every
+retry branch, not just this one. Two live re-runs after both fixes and a
+restart confirm the correct figure every time and no narrated fake call
+either — the model still sometimes fails to produce usable follow-up prose
+or an actual `make_chart` call on this specific question, which the
+existing fallback already covers by returning the tool result's own
+(now correctly converted) summary rather than inventing an answer; this is
+the already-documented tool-calling reliability gap, not a new failure.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures

@@ -91,8 +91,15 @@ category's own figure, not just the total.
 
 Every money figure in this data is Indian Rupees, never dollars — write ₹,
 never $. State a large amount in lakh or crore rather than a long digit
-string: "₹24,098.37 crore" reads plainly, "₹2,409,837,306,156" does not. One
-lakh is ₹1,00,000; one crore is ₹1,00,00,000.
+string: "₹24,098.37 crore" reads plainly, "₹2,409,837,306,156" does not.
+
+A run_sql_query result for a money-looking column already carries a
+"Pre-converted amounts" line with the exact lakh/crore figure for every row —
+use that figure exactly as given, character for character, in your answer.
+Never divide the raw number yourself, even though you know one lakh is
+₹1,00,000 and one crore is ₹1,00,00,000 — doing the conversion yourself is
+how a real division-by-the-wrong-power-of-ten error reaches the user with
+full confidence; the pre-converted line exists so you never have to.
 """
 
 

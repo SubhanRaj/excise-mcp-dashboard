@@ -1,5 +1,7 @@
 """llm/prompts.py's money pre-conversion — MCP_ENGINES.md §Pipeline stages."""
 
+from decimal import Decimal
+
 from app.llm.prompts import format_inr, money_annotations
 
 
@@ -21,3 +23,15 @@ def test_money_annotations_only_covers_money_looking_columns() -> None:
 
 def test_money_annotations_is_empty_with_no_money_columns() -> None:
     assert money_annotations(["shop_count"], [{"shop_count": 9362}]) == ""
+
+
+def test_money_annotations_covers_a_decimal_value() -> None:
+    # asyncpg returns a Postgres NUMERIC (every SUM/AVG over a money column) as
+    # decimal.Decimal, not float — confirmed live against a real beer-revenue
+    # question, a plain `int | float` check silently skipped the annotation for
+    # every real aggregate, leaving the model to redo the lakh/crore conversion
+    # itself and get it wrong by a factor of ten.
+    text = money_annotations(
+        ["total_beer_revenue"], [{"total_beer_revenue": Decimal("71428717508.8")}]
+    )
+    assert "total_beer_revenue = ₹7,142.87 crore" in text

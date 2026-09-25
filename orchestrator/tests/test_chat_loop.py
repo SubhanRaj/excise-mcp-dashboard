@@ -553,6 +553,36 @@ async def test_a_chart_claim_retry_keeps_tools_and_can_call_make_chart(
     assert any(isinstance(e, ToolCallEvent) and e.name == "make_chart" for e in events)
 
 
+async def test_a_chart_claim_retry_that_narrates_a_fake_make_chart_call_falls_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Confirmed live: a chart-claim retry (tools attached, per the test above) can
+    # itself degenerate into narrating make_chart's own call as literal `{"name":
+    # "make_chart", ...}` text instead of issuing a real tool call. This shape isn't a
+    # chart-claim phrase, a wrong refusal, or a narrated tool-decision -- only
+    # `_needs_retry`'s own `{"name"` check catches it, so the retry's completion gate
+    # has to check that too, not just `_is_degenerate`.
+    sql_call = ToolCall(name="run_sql_query", arguments={"question": "x"})
+    ollama = _FakeOllama(
+        [
+            [_FakeChunk(content="", tool_calls=[sql_call])],
+            [_FakeChunk(content="The total is fine. Here is a chart to visualize it.")],
+            [_FakeChunk(content='The total is fine. {"name": "make_chart", "parameters": {}}')],
+        ]
+    )
+
+    async def fake_dispatch(call: ToolCall, **kwargs: object) -> ToolResult:
+        return ToolResult(ok=True, summary="5 row(s), columns: category, total_bl")
+
+    monkeypatch.setattr(chat_loop, "dispatch", fake_dispatch)
+
+    events = await _events(ollama)
+    tokens = "".join(e.delta for e in events if isinstance(e, TokenEvent))
+    assert tokens.endswith("5 row(s), columns: category, total_bl")
+    assert not any(isinstance(e, ChartEvent) for e in events)
+    assert isinstance(events[-1], DoneEvent)
+
+
 async def test_a_chart_claim_retry_that_still_claims_falls_back_to_the_tool_summary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

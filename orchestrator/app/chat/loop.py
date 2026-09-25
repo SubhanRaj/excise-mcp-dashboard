@@ -440,7 +440,7 @@ async def run_chat(
                         held = ""
                 pending_calls.extend(chunk.tool_calls)
             if not pending_calls and (
-                _is_degenerate(assistant_text)
+                _needs_retry(assistant_text)
                 or _claims_unmade_chart(assistant_text, chart_made_this_turn)
                 or _wrongly_refuses_after_a_successful_tool_call(assistant_text, last_tool_result)
                 or _narrates_tool_decision(assistant_text)
@@ -449,15 +449,20 @@ async def run_chat(
                 # model can fail to produce any follow-up text at all, with or without
                 # a prior tool call), still narrating a fake call, still wrongly
                 # declining a question a tool call already answered, or still
-                # narrating the tool-call decision itself. The per-chunk
-                # holdback above kept every degenerate attempt off the wire, so
-                # nothing has been shown to the user yet; this is the turn's first and
-                # only answer. With a tool result to reference, state its failure in
-                # plain terms (or, for a successful call the model still won't use,
-                # its own summary stands fine on its own); with none (the model never
-                # called a tool at all, e.g. a knowledge question it tried to answer
-                # directly), a plain retry prompt is the only honest fallback — there's
-                # no tool error to show.
+                # narrating the tool-call decision itself. Confirmed live: a chart-claim
+                # retry can degenerate into narrating make_chart's own call as literal
+                # `{"name": "make_chart", ...}` text instead of a real tool call — this
+                # used only `_is_degenerate` before, which doesn't catch that shape (only
+                # `_needs_retry` does), so the fake call streamed to the user with nothing
+                # to correct it. `_needs_retry` also isn't held back per chunk, by design
+                # (see its own docstring), so this retry's garbage may already be on the
+                # wire; this is what stops it from standing as the turn's real answer.
+                # With a tool result to reference, state its failure in plain terms (or,
+                # for a successful call the model still won't use, its own summary
+                # stands fine on its own); with none (the model never called a tool at
+                # all, e.g. a knowledge question it tried to answer directly), a plain
+                # retry prompt is the only honest fallback — there's no tool error to
+                # show.
                 assistant_text = (
                     _tool_failure_fallback(last_tool_result)
                     if last_tool_result is not None

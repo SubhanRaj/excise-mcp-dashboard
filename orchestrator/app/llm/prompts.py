@@ -7,6 +7,8 @@ below are the ones that return real rows today; the rest teach the model the
 shape of the other views for when data is present.
 """
 
+from decimal import Decimal
+
 from app.schemas import Turn
 
 SQL_SYSTEM_PROMPT = """You are a PostgreSQL analyst for the UP Excise department.
@@ -315,7 +317,13 @@ def money_annotations(columns: list[str], rows: list[dict[str, object]]) -> str:
         parts = []
         for c in money_cols:
             value = row.get(c)
-            if isinstance(value, int | float) and not isinstance(value, bool):
+            # asyncpg returns a Postgres NUMERIC (every SUM/AVG over a money column,
+            # which is exactly what a revenue-by-district or -by-year question runs)
+            # as decimal.Decimal, not float — confirmed live, this check used to be
+            # `int | float` only, so a real aggregate silently got no annotation at
+            # all and the model was left to redo the lakh/crore division itself,
+            # tenfold too large, the exact failure this annotation exists to prevent.
+            if isinstance(value, int | float | Decimal) and not isinstance(value, bool):
                 parts.append(f"{c} = {format_inr(float(value))}")
         if parts:
             lines.append("; ".join(parts))
