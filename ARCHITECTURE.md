@@ -100,7 +100,8 @@ charts, table previews, summaries, the generated SQL — is an app artifact in
 `web/`'s MariaDB plus files on the `local` disk, never written back to
 Postgres.
 
-1. A `/query` or chat `make_chart` run writes a `queries` / `message` row and
+1. A `/query` run, or a chat turn's own deterministic chart step, writes a
+   `queries` / `message` row and
    `chart.{plotly.json,png,svg,pdf}` under
    `web/storage/app/artifacts/<query-ulid>/`.
 2. An unsaved run's files are swept after `ARTIFACT_TTL_DAYS`.
@@ -478,8 +479,8 @@ flowchart TD
     subgraph Tools["Tools the model calls"]
         T1["search_knowledge"]:::app
         T2["run_sql_query<br/>same guard + read-only role"]:::app
-        T3["make_chart<br/>same bwrap sandbox"]:::app
     end
+    T3["chart step<br/>Qwen-authored, same bwrap sandbox —<br/>deterministic after run_sql_query, not model-chosen"]:::app
 
     subgraph Bank["PostgreSQL data bank"]
         AN[("analytics.* views<br/>published rows")]:::db
@@ -530,7 +531,7 @@ flowchart TD
     classDef store fill:#0284c7,stroke:#0369a1,stroke-width:2px,color:#fff
     classDef off fill:#94a3b8,stroke:#64748b,stroke-width:1px,color:#fff,stroke-dasharray:4 3
 
-    Run["/query or chat make_chart"]:::app
+    Run["/query, or a chat turn's<br/>own chart step"]:::app
     Q[("queries / messages + chart_artifacts<br/>SQL, engine, model, tables_used, timings,<br/>rows_preview, spec (Plotly JSON) — all MariaDB")]:::db
     Files[["local disk<br/>chart.png / svg / pdf (rendered blobs)"]]:::store
     Sweep["sweeper timer<br/>unsaved runs &gt; ARTIFACT_TTL_DAYS"]:::off

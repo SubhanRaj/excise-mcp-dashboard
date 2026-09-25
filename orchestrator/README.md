@@ -16,7 +16,8 @@ orchestrator/
     pipeline.py           the six /query stages: plan_sql -> guard_sql -> run_sql -> plan_plot -> render -> summarize
     chat/
       loop.py              the bounded /chat tool loop (run_chat)
-      tools.py             search_knowledge / run_sql_query / make_chart dispatch
+      tools.py             search_knowledge / run_sql_query dispatch, plus auto_chart —
+                           the deterministic post-run_sql_query chart step, not a tool call
       prompts.py           the chat system prompt + Ollama tool schemas
     llm/
       client.py           Ollama async client — structured-output retry loop, streaming chat

@@ -1079,7 +1079,7 @@ write.
 
 ### What a run produces
 
-One `/query` or chat `make_chart` call yields:
+One `/query` call, or a chat turn's own deterministic chart step, yields:
 
 | Piece | Stored as |
 |---|---|

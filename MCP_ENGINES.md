@@ -56,7 +56,8 @@ orchestrator/
       embed.py         local Ollama embed model client (only when KB_EMBEDDINGS_ENABLED)
     chat/
       loop.py          agentic tool-calling loop, streams ndjson events
-      tools.py         tool defs: run_sql_query, search_knowledge, make_chart
+      tools.py         tool defs: run_sql_query, search_knowledge; auto_chart,
+                       the deterministic post-run_sql_query chart step (no tool)
       prompts.py       chat system prompt, tool JSON schemas for Ollama's `tools=`
     engines/
       base.py          IVisualizationEngine protocol + registry + errors
@@ -773,11 +774,16 @@ for step in range(CHAT_MAX_TOOL_CALLS + 1):
     stream a model turn                      # emit `token` events as text arrives
     if the turn made no tool call:
         emit `done`; return
-    for call in tool_calls:
+    for call in tool_calls:                  # search_knowledge or run_sql_query only
         emit `tool_call`
         result = dispatch(call)              # guarded exactly as above
-        emit `tool_result` (+ `chart` if make_chart)
+        emit `tool_result`
         append result to messages
+        if call was run_sql_query and it succeeded and want_chart:
+            emit `tool_call` {name: "make_chart"}   # synthesized, not model-issued
+            chart_result = auto_chart(...)          # Qwen plans + renders, no model choice
+            emit `tool_result` (+ `chart` if it rendered)
+            append chart_result to messages
 # fell through the cap:
 emit `error` {stage: "tool_loop", message: "too many tool calls"}
 ```
@@ -788,10 +794,11 @@ sequenceDiagram
     participant L as web/ (Laravel relay)
     participant O as orchestrator /chat
     participant M as Ollama (chat model)
-    participant T as tools - run_sql_query, search_knowledge, make_chart
+    participant T as tools - run_sql_query, search_knowledge
+    participant C as auto_chart (Qwen, deterministic)
 
-    B->>L: message
-    L->>O: POST /chat — bearer, turn_id, capped history, model key
+    B->>L: message (want_chart from the composer's toggle)
+    L->>O: POST /chat — bearer, turn_id, capped history, model key, want_chart
     O->>O: reject the model key if it is not in the registry
     loop up to CHAT_MAX_TOOL_CALLS
         loop every 15s M produces no output
@@ -810,8 +817,14 @@ sequenceDiagram
                 L-->>B: (keeps the connection alive; nothing shown)
             end
             T-->>O: result (preview only, never the full row set)
-            O-->>L: ndjson line: {"tool_result": ...} (+ {"chart": ...} if make_chart)
-            O->>M: append the tool result and continue
+            O-->>L: ndjson line: {"tool_result": ...}
+            alt run_sql_query succeeded and want_chart
+                O->>C: plan + render a chart script (no model decision involved)
+                O-->>L: ndjson line: {"tool_call": {"name": "make_chart"}} (synthesized)
+                C-->>O: chart, or a failed render
+                O-->>L: ndjson line: {"tool_result": ...} (+ {"chart": ...} on success)
+            end
+            O->>M: append the tool result(s) and continue
         else no tool call
             O-->>L: ndjson line: {"done": ...}
         end
@@ -928,12 +941,15 @@ also now says directly not to backslash-escape quotes in `spec`.
 
 ### Routing (knowledge / data / hybrid / general)
 
-There is no separate classifier. The system prompt describes the three tools
-and when each applies; the model calls what it needs:
+There is no separate classifier. The system prompt describes the two tools
+and when each applies; the model calls what it needs. A chart is never part
+of this choice — it is `chat/loop.py`'s own deterministic step after a
+successful `run_sql_query`, gated on `ChatRequest.want_chart`, not something
+the system prompt asks the model to decide.
 
 - "What does the 2016 excise policy say about MGQ?" -> `search_knowledge` only.
-- "Revenue trend for Lucknow since FY2018-19" -> `run_sql_query` (+ maybe
-  `make_chart`).
+- "Revenue trend for Lucknow since FY2018-19" -> `run_sql_query` (+ a chart,
+  if `want_chart` was set).
 - "How does actual Lucknow revenue compare to what the 2019 policy targeted?"
   -> `search_knowledge` for the target, `run_sql_query` for the actuals, then
   a text answer tying them together.
@@ -998,12 +1014,13 @@ orchestrator.
 
 ### Model roles, restated
 
-`qwen2.5-coder:7b` for `run_sql_query` planning and `make_chart` scripting;
-`llama3.1:8b` for the conversational turns and `summarize`. `nomic-embed-text`
-only if embeddings are enabled. `OLLAMA_MAX_LOADED_MODELS=1` still holds — the
-chat model and the coder model swap between a tool call and the reply. At this
-concurrency the reload cost is acceptable; if it is not, raise it to 2 and
-accept ~13 GB resident (`EVALUATION.md` §2 has the headroom math).
+`qwen2.5-coder:7b` for `run_sql_query` planning and the chart step's own
+scripting (`auto_chart`, not a tool call — above); `llama3.1:8b` for the
+conversational turns and `summarize`. `nomic-embed-text` only if embeddings
+are enabled. `OLLAMA_MAX_LOADED_MODELS=2` keeps both the chat and coder model
+resident at once (`EVALUATION.md` §2 has the headroom math, ~13 GB) — a real
+turn regularly needs both within the same request, and evicting one to load
+the other on every swap was measured costing 1–3 minutes per turn.
 
 That mapping is the default. A `model` on `ChatRequest` / `QueryRequest`
 (from the chat picker or the one-shot form's advanced control) overrides it

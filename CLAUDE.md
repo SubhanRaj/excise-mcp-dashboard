@@ -1794,9 +1794,11 @@ Two more capabilities sit on the same LLM and UI:
   `DATA_PIPELINE.md` §Knowledge base and `MCP_ENGINES.md` §Chat and retrieval.
 - **A general chat window**, OpenWebUI-style: streaming conversation with the
   local model, conversation history, markdown/code rendering. The model calls
-  tools from inside the chat — `search_knowledge`, `run_sql_query`,
-  `make_chart` — so the same data-lake and knowledge access is available
-  conversationally, not only through the one-shot analytical form. Built
+  tools from inside the chat — `search_knowledge`, `run_sql_query` — so the
+  same data-lake and knowledge access is available conversationally, not only
+  through the one-shot analytical form. A chart is a deterministic step after
+  a successful `run_sql_query`, not a third tool the model calls or writes the
+  script for (`MCP_ENGINES.md` §Tools). Built
   natively in Livewire against the orchestrator's streaming endpoint; no
   Docker, no embedded OpenWebUI (`EVALUATION.md` §Chat integration).
 
@@ -2031,9 +2033,11 @@ the 11/12 + Livewire 3 named in the original brief.
   query string) parsing the orchestrator's ndjson lines and appending
   assistant token deltas. Markdown + fenced code render client-side
   (`marked` + a highlighter from jsDelivr, on the CSP allowlist). Tool calls
-  the model makes (`run_sql_query`, `search_knowledge`, `make_chart`) render
-  as inline cards — the SQL, the retrieved snippets with links to
-  `docsrepo.exciseup.in`, the chart. History persists in `conversations` /
+  the model makes (`run_sql_query`, `search_knowledge`) render as inline
+  cards — the SQL, the retrieved snippets with links to
+  `docsrepo.exciseup.in` — and a chart, when `want_chart` asked for one and
+  `run_sql_query` returned more than one row, renders the same way despite
+  never being a tool call itself. History persists in `conversations` /
   `messages` / `message_tool_calls`. No streaming LLM logic in PHP — `web/`
   reads the orchestrator's `/chat` ndjson stream and pipes it through.
 - **Model picker**: a `config/models.php` registry (`key`, `label`, `role`,
@@ -2210,9 +2214,10 @@ End with the co-author trailer the session is configured for.
   and a ledger entry; an orchestrator error renders the failed stage and still
   writes a ledger row.
 - Chat flow: a message streams assistant tokens from a mocked orchestrator;
-  a tool call in the stream (`run_sql_query`, `search_knowledge`,
-  `make_chart`) is persisted and rendered; conversation history loads and
-  resumes.
+  a tool call in the stream (`run_sql_query`, `search_knowledge`) is
+  persisted and rendered; a chart attached after `run_sql_query` (the
+  `want_chart` toggle) is persisted and rendered the same way; conversation
+  history loads and resumes.
 - Model picker: the dropdown lists only registry models the mocked `/health`
   reports pulled; a chosen model rides on the `/chat` call as `model`; a value
   outside the registry is refused.
