@@ -1896,7 +1896,25 @@ columns, and `auto_chart` only fires on more than one row. The new example
 returns one row per type via `UNION ALL` instead of named columns, both
 answering "what type" directly and making the result chartable — the
 five-example beer-only question on Ask's and Chat's empty states is now this
-fuller question instead.
+fuller question instead. The beer-only question stayed useful in its own
+right, so both lists now carry six examples rather than a straight swap.
+
+A live render of that fuller question surfaced two more gaps past the SQL
+fix itself. The chart rendered squeezed into the chat bubble's own
+`max-w-lg` width, the same constraint every chart card sits inside
+regardless of size — `chat.blade.php`'s persisted and live-streaming message
+bubbles now widen to `lg:max-w-2xl` when the message carries a chart, and
+both `chat.blade.php`'s inline live chart and `tool-call-card.blade.php`'s
+persisted one gained a taller `min-height` (380px, up from 280px). Second,
+the result's own `pct_of_total` column plotted flat at zero next to
+`revenue_inr` on the same y-axis — not a data bug, the tool result's own
+preview showed correct non-zero percentages; a raw amount in the billions
+and its own percentage-of-total share the same figures at two different
+scales, and one axis can't show both without the smaller series
+disappearing. `PLOT_SYSTEM_PROMPT` now says to chart only the column the
+question is actually asking about, leaving a derived percentage column for
+the table and the summary text rather than a second series on the same
+axis.
 
 ## What this project is
 

@@ -258,6 +258,14 @@ financial years, a bar for a comparison across districts/categories.
 Give the chart human-readable axis titles — a raw column name like
 "retail_license_category" or "total_bl" means nothing to someone reading the
 chart, only to the query that produced it.
+
+A result with a raw amount column and a percentage-of-total column derived
+from it (e.g. revenue_inr and pct_of_total for the same row) is the same
+information at two different scales — plotting both as bars or lines on one
+y-axis makes the percentage one (0-100) flat and invisible next to an amount
+in the billions. Chart only the column the question is actually asking
+about; a derived percentage column is for the table and the summary text to
+state, not a second series on the same axis.
 """
 
 # MCP_ENGINES.md §Routing — one line per engine, no heuristic beyond this: the

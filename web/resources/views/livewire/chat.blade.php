@@ -126,7 +126,7 @@
                         $detailCalls = $m->toolCalls->where('tool_name', '!=', 'make_chart');
                     @endphp
                     <div wire:key="message-{{ $m->id }}" class="flex flex-col items-start" x-data="{ copied: false }">
-                        <div class="bg-slate-100 dark:bg-slate-900 rounded-2xl rounded-bl-sm px-4 py-2 max-w-lg space-y-3">
+                        <div class="bg-slate-100 dark:bg-slate-900 rounded-2xl rounded-bl-sm px-4 py-2 max-w-lg {{ $chartCalls->isNotEmpty() ? 'lg:max-w-2xl' : '' }} space-y-3">
                             @if($m->content)
                             <div class="chat-markdown text-sm text-slate-700 dark:text-slate-200" x-init="$el.innerHTML = renderMarkdown(@js($m->content))"></div>
                             @elseif($m->toolCalls->isEmpty())
@@ -170,7 +170,8 @@
                         <div class="bg-govviolet-600 text-white rounded-2xl rounded-br-sm px-4 py-2 max-w-lg text-sm whitespace-pre-wrap" x-text="liveUserMessage"></div>
                     </div>
                     <div class="flex justify-start">
-                        <div class="bg-slate-100 dark:bg-slate-900 rounded-2xl rounded-bl-sm px-4 py-2 max-w-lg space-y-3">
+                        <div class="bg-slate-100 dark:bg-slate-900 rounded-2xl rounded-bl-sm px-4 py-2 max-w-lg space-y-3"
+                             :class="{ 'lg:max-w-2xl': liveToolCalls.some(tc => tc.chart) }">
                             <div class="flex gap-1 py-1" x-show="streaming && ! liveAssistantText && ! liveToolCalls.length">
                                 <span class="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style="animation-delay:0ms"></span>
                                 <span class="w-1.5 h-1.5 rounded-full bg-slate-400 animate-bounce" style="animation-delay:150ms"></span>
@@ -191,7 +192,7 @@
                                         <span class="text-slate-400 font-normal" x-show="!tc.result && tc.pings" x-text="'· still working (' + (tc.pings * 15) + 's)'"></span>
                                     </p>
                                     <p class="text-slate-500 mt-1" x-show="tc.result" x-text="tc.result?.summary"></p>
-                                    <div x-show="tc.chart" wire:ignore x-init="$watch('tc.chart', (v) => v && Plotly.newPlot($refs['livechart' + i], JSON.parse(v.plotly_json ?? '{}').data ?? [], JSON.parse(v.plotly_json ?? '{}').layout ?? [], {responsive: true}))" :x-ref="'livechart' + i" style="min-height:280px;"></div>
+                                    <div x-show="tc.chart" wire:ignore x-init="$watch('tc.chart', (v) => v && Plotly.newPlot($refs['livechart' + i], JSON.parse(v.plotly_json ?? '{}').data ?? [], JSON.parse(v.plotly_json ?? '{}').layout ?? [], {responsive: true}))" :x-ref="'livechart' + i" style="width:100%;min-height:380px;"></div>
                                 </div>
                             </template>
                             <p class="text-xs text-red-600 dark:text-red-400" x-show="liveError" x-text="liveError"></p>

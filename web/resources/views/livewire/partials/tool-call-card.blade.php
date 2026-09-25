@@ -17,6 +17,6 @@
         <a href="{{ route('chart-artifacts.export', ['chartArtifact' => $toolCall->chartArtifact->id, 'format' => $format]) }}" class="text-govviolet-600 hover:underline uppercase">{{ $format }}</a>
         @endforeach
     </div>
-    <div wire:ignore.self x-init="Plotly.newPlot($el, @js(json_decode($toolCall->chartArtifact->spec['plotly_json'], true)['data'] ?? []), @js(json_decode($toolCall->chartArtifact->spec['plotly_json'], true)['layout'] ?? []), {responsive: true})" style="width:100%;min-height:280px;" class="mt-2"></div>
+    <div wire:ignore.self x-init="Plotly.newPlot($el, @js(json_decode($toolCall->chartArtifact->spec['plotly_json'], true)['data'] ?? []), @js(json_decode($toolCall->chartArtifact->spec['plotly_json'], true)['layout'] ?? []), {responsive: true})" style="width:100%;min-height:380px;" class="mt-2"></div>
     @endif
 </div>
