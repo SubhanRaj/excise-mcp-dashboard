@@ -29,7 +29,7 @@ class Chat extends Component
         ['question' => 'How many country liquor and composite shops are in Lucknow in August 2026?', 'chart' => false],
         ['question' => 'Compare dispatched volume by shop category in Lucknow for August 2026.', 'chart' => true],
         ['question' => 'What does the excise policy say about MGQ?', 'chart' => false],
-        ['question' => 'How much revenue was generated from beer sale across Uttar Pradesh in FY 2025-26?', 'chart' => false],
+        ['question' => 'What was the revenue of Lucknow district in FY2025-26 and what percentage of it came from each type of liquor sale?', 'chart' => true],
         ['question' => 'Which district generated the highest revenue in FY2025-26?', 'chart' => false],
     ];
 

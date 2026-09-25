@@ -28,7 +28,7 @@ class Ask extends Component
         'How many country liquor and composite shops are in Lucknow in August 2026?',
         'What was the total dispatch amount and volume for Lucknow in August 2026?',
         'How many CL5C shops are there in Lucknow?',
-        'How much revenue was generated from beer sale across Uttar Pradesh in FY 2025-26?',
+        'What was the revenue of Lucknow district in FY2025-26 and what percentage of it came from each type of liquor sale?',
         'Which district generated the highest revenue in FY2025-26?',
     ];
 

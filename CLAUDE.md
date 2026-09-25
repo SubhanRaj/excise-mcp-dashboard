@@ -1852,6 +1852,52 @@ made. `_claims_unmade_chart`'s own phrase list only ever matched "chart
 showing"/"here is a chart"-shaped wording, not "we have created a pie
 chart" — a real gap in phrasing coverage, now covered alongside it.
 
+A compound question asking for a district's revenue and a liquor-type
+percentage breakdown in one turn failed with `ReadTimeout calling Ollama` at
+`plan_sql`, past every existing timeout margin. `journalctl -u ollama` showed
+both models being fully reloaded three times within that single turn — not
+staying resident the way raising `OLLAMA_MAX_LOADED_MODELS` to 2 was already
+meant to guarantee (above). The actual cause was a setting that raise never
+touched: `OLLAMA_KEEP_ALIVE=30s`, sized back when only one model slot
+existed, still evicts either model individually 30 seconds after its own
+last request regardless of a free second slot — and a compound turn's own
+gaps between calls (Postgres execution, tool-result handling, a heartbeat
+interval) routinely run longer than that. Each reload mid-turn stacked
+enough wall-clock time to cross `ollama_generate_timeout_seconds`.
+`OLLAMA_KEEP_ALIVE=-1` (never unload) replaces it — the RAM commitment
+`MAX_LOADED_MODELS=2` already makes rather than another fixed window the
+same race would eventually cross again (`EVALUATION.md` §2,
+`OPERATOR_SETUP.md` §Ollama runtime settings — keep-alive outlives a
+compound turn). Live: `systemctl show ollama.service -p Environment`
+confirms `OLLAMA_KEEP_ALIVE=-1` on the running service.
+
+A retest of that same compound question, past the timeout, surfaced two more
+real bugs on its own answer. First, the liquor-type breakdown only ever
+named beer and "country liquor" — the second bucket wrong by a factor of
+nearly 2.5x — because `FEW_SHOT_SQL_EXAMPLES` had one worked example for
+statewide beer revenue and nothing else, so the model invented a second
+CASE branch lumping every other shop_type into "country liquor" rather than
+breaking each one out. `analytics.sro_shops` has no liquor-type column at
+all — `shop_type` (COUNTRY_LIQUOR, COMPOSITE_SHOP, MODEL_SHOP, PRV,
+BHANG_SHOP, HBR) is the only category every row carries, and only
+COMPOSITE_SHOP and a `has_cl5cc` COUNTRY_LIQUOR shop split further into
+beer vs. their own other component — confirmed live for Lucknow FY2025-26,
+where `composite_lf_beer + composite_mgr_beer` and
+`composite_lf_fl + composite_mgr_fl` sum to exactly that shop_type's
+`total_revenue` with nothing left over, and the same holds for a
+`has_cl5cc` shop's `special_beer_lf + special_beer_mgr` against the rest of
+its own total. `schema_card.py`'s `sro_shops` note and a new worked example
+now cover the full seven-bucket breakdown (Beer, Foreign Liquor, Country
+Liquor, Model Shop, PRV, Bhang Shop, HBR) rather than beer alone, confirmed
+against the real database: ₹2,860.80 crore total for Lucknow FY2025-26,
+36.3% Country Liquor down to 0.1% Bhang Shop. Second, no chart followed even
+with the toggle on: the old example returned one row with two named
+columns, and `auto_chart` only fires on more than one row. The new example
+returns one row per type via `UNION ALL` instead of named columns, both
+answering "what type" directly and making the result chartable — the
+five-example beer-only question on Ask's and Chat's empty states is now this
+fuller question instead.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures

@@ -153,6 +153,47 @@ ollama ps
 
 ---
 
+## §Ollama runtime settings — keep-alive outlives a compound turn (found live)
+
+A live compound chat question ("revenue and a liquor-type breakdown for one
+district") failed with a `ReadTimeout calling Ollama` at the `plan_sql`
+stage after several minutes. `journalctl -u ollama` showed both models being
+fully reloaded three separate times within that one turn (`"disabling mmap
+for llama-server load"`, a 3-7s reload each), not staying resident the way
+`OLLAMA_MAX_LOADED_MODELS=2` (above) was meant to guarantee.
+`OLLAMA_KEEP_ALIVE=30s` is why: it evicts *each* model individually 30s
+after its own last request regardless of how many of the 2 slots are free,
+and a compound turn's own gaps between calls (Postgres execution, the
+Python-side tool-result handling, a heartbeat interval) routinely exceed
+30s. `MAX_LOADED_MODELS=2` was raised specifically so both models stay
+resident for a whole turn (above) — a short keep-alive defeats that on every
+gap, and the reload time stacking up mid-turn is what pushed this question
+past `ollama_generate_timeout_seconds` (480s).
+
+```bash
+sudo sed -i 's/OLLAMA_KEEP_ALIVE=30s/OLLAMA_KEEP_ALIVE=-1/' /etc/systemd/system/ollama.service
+sudo systemctl daemon-reload
+sudo systemctl restart ollama
+```
+
+`-1` means never unload — consistent with `MAX_LOADED_MODELS=2` already
+committing this box's RAM to keeping both models resident permanently
+(`EVALUATION.md` §RAM budget), rather than picking another fixed duration
+that would just move the same race to a longer window.
+
+Verify both models survive an idle gap longer than the old 30s:
+
+```bash
+systemctl show ollama.service -p Environment
+# Environment=... OLLAMA_KEEP_ALIVE=-1 OLLAMA_NUM_PARALLEL=1 OLLAMA_MAX_LOADED_MODELS=2
+curl -s http://127.0.0.1:11434/api/generate -d '{"model":"qwen2.5-coder:7b-instruct-q4_K_M","prompt":"hi","stream":false}' >/dev/null
+sleep 45
+ollama ps
+# both models still listed with no reload in between
+```
+
+---
+
 ## §Data bank (Milestone 1)
 
 **Create the database and apply the SQL scripts** (they are written in `db/`

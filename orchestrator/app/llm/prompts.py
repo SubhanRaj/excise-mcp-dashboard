@@ -142,8 +142,7 @@ FEW_SHOT_SQL_EXAMPLES: list[dict[str, str]] = [
         # other shop_types' own totals on analytics.sro_shops, not a filterable category
         # anywhere: composite_lf_beer + composite_mgr_beer for a COMPOSITE_SHOP, and
         # special_beer_lf + special_beer_mgr for a COUNTRY_LIQUOR shop with
-        # has_cl5cc = true. This example sums both (schema_card.py's sro_shops note has
-        # the same reasoning).
+        # has_cl5cc = true.
         "question": (
             "How much revenue was generated from beer sale across Uttar Pradesh in FY 2025-26?"
         ),
@@ -154,6 +153,55 @@ FEW_SHOT_SQL_EXAMPLES: list[dict[str, str]] = [
         "THEN COALESCE(special_beer_lf, 0) + COALESCE(special_beer_mgr, 0) ELSE 0 END) "
         "AS total_beer_revenue "
         "FROM analytics.sro_shops WHERE financial_year = 'FY2025-26' LIMIT 100;",
+    },
+    {
+        # Confirmed live: a compound question asking for a district's total revenue and
+        # its liquor-type percentage breakdown got back only two hand-picked types (beer
+        # and "country liquor"), the second one wrong by a factor of nearly 2.5x — the
+        # model had copied the beer-only example above and invented a second CASE branch
+        # for "everything else", rather than covering every shop_type this view actually
+        # has. That also returned one row with two named columns (not one row per type),
+        # so auto_chart's own more-than-one-row check never fired and no chart followed
+        # even with the toggle on.
+        #
+        # sro_shops has no liquor-type column: shop_type (COUNTRY_LIQUOR, COMPOSITE_SHOP,
+        # MODEL_SHOP, PRV, BHANG_SHOP, HBR) is the only category every row carries, and
+        # only COMPOSITE_SHOP and a has_cl5cc COUNTRY_LIQUOR shop split further into beer
+        # vs. their own other component — confirmed live for Lucknow FY2025-26:
+        # composite_lf_beer+composite_mgr_beer and composite_lf_fl+composite_mgr_fl sum
+        # to exactly that shop_type's total_revenue with nothing left over, and the same
+        # holds for a has_cl5cc COUNTRY_LIQUOR shop's special_beer_lf+special_beer_mgr
+        # against the rest of its own total_revenue. Model Shop, PRV, Bhang Shop, and HBR
+        # have no further liquor-type split in this schema — their own total_revenue is
+        # the whole bucket. Long format (one row per type via UNION ALL, not named
+        # columns) both answers "what type" directly and makes the result chartable;
+        # window-function percentages avoid asking the summarizing model to divide.
+        "question": (
+            "What was the revenue of Lucknow district in FY2025-26 and what percentage of "
+            "it came from each type of liquor sale?"
+        ),
+        "sql": "WITH by_type AS ("
+        "SELECT 'Beer' AS liquor_type, SUM(CASE WHEN shop_type = 'COMPOSITE_SHOP' "
+        "THEN composite_lf_beer + composite_mgr_beer "
+        "WHEN has_cl5cc THEN special_beer_lf + special_beer_mgr ELSE 0 END) AS revenue_inr "
+        "FROM analytics.sro_shops WHERE district = 'Lucknow' AND financial_year = 'FY2025-26' "
+        "UNION ALL "
+        "SELECT 'Foreign Liquor', SUM(CASE WHEN shop_type = 'COMPOSITE_SHOP' "
+        "THEN composite_lf_fl + composite_mgr_fl ELSE 0 END) "
+        "FROM analytics.sro_shops WHERE district = 'Lucknow' AND financial_year = 'FY2025-26' "
+        "UNION ALL "
+        "SELECT 'Country Liquor', SUM(CASE WHEN shop_type = 'COUNTRY_LIQUOR' AND has_cl5cc "
+        "THEN total_revenue - special_beer_lf - special_beer_mgr "
+        "WHEN shop_type = 'COUNTRY_LIQUOR' THEN total_revenue ELSE 0 END) "
+        "FROM analytics.sro_shops WHERE district = 'Lucknow' AND financial_year = 'FY2025-26' "
+        "UNION ALL "
+        "SELECT CASE WHEN shop_type IN ('PRV', 'HBR') THEN shop_type "
+        "ELSE INITCAP(REPLACE(shop_type, '_', ' ')) END, SUM(total_revenue) "
+        "FROM analytics.sro_shops WHERE district = 'Lucknow' AND financial_year = 'FY2025-26' "
+        "AND shop_type NOT IN ('COMPOSITE_SHOP', 'COUNTRY_LIQUOR') GROUP BY shop_type) "
+        "SELECT liquor_type, revenue_inr, "
+        "ROUND(100.0 * revenue_inr / SUM(revenue_inr) OVER (), 1) AS pct_of_total "
+        "FROM by_type ORDER BY revenue_inr DESC LIMIT 100;",
     },
     {
         # A bare code (CL5C, FL4A, FL5DB, ...) means nothing to a reader who hasn't

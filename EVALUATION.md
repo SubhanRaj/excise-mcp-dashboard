@@ -171,9 +171,18 @@ Sources: [Qwen2.5-LLM blog](https://qwenlm.github.io/blog/qwen2.5-llm/),
 
 ### Runtime settings
 
-- `OLLAMA_KEEP_ALIVE=30s` — unload the model between queries so the RAM returns
-  to the sandboxed plot process and PostgreSQL. Low concurrency makes the
-  reload cost acceptable.
+- `OLLAMA_KEEP_ALIVE=-1` — never unload a resident model. `30s` was the
+  original value, sized for `OLLAMA_MAX_LOADED_MODELS=1`'s single-model era;
+  once that was raised to 2 specifically to keep both models resident for a
+  whole chat turn (below), a 30s keep-alive still evicted either one on any
+  gap between calls longer than that — Postgres execution time, tool-result
+  handling, a heartbeat interval — reloading it mid-turn regardless of a free
+  slot being available. A live compound question hit three such reloads in
+  one turn and ran past `ollama_generate_timeout_seconds` as a result
+  (`OPERATOR_SETUP.md` §Ollama runtime settings — keep-alive outlives a
+  compound turn). `-1` matches the RAM commitment `MAX_LOADED_MODELS=2`
+  already makes rather than picking another fixed window the same race would
+  eventually cross again.
 - `OLLAMA_NUM_PARALLEL=1` — one decode at a time; the box cannot run two 7B
   decodes plus a plot process plus Postgres at once.
 - `OLLAMA_MAX_LOADED_MODELS=2` — `qwen2.5-coder:7b` and `llama3.1:8b` stay
