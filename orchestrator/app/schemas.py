@@ -37,6 +37,13 @@ class ChatRequest(BaseModel):
     message: str
     history: list[ChatTurn] = Field(default_factory=list)
     model: str | None = None
+    # web/'s composer chart toggle, forwarded as a real field rather than left for
+    # the chat model to notice in the message text and decide on its own whether to
+    # act on — confirmed live, asking the model to both decide whether a chart is
+    # wanted and author the chart's own script is exactly the kind of judgment call
+    # it gets wrong; a chart is now a deterministic step in chat/loop.py triggered
+    # by this flag, never a tool the model calls itself (MCP_ENGINES.md §Tools).
+    want_chart: bool = False
 
 
 class Stage(BaseModel):
@@ -65,7 +72,11 @@ class ChartArtifact(BaseModel):
 
 
 class ToolCall(BaseModel):
-    name: Literal["search_knowledge", "run_sql_query", "make_chart"]
+    # make_chart is deliberately not a name the chat model can call — a chart is a
+    # deterministic step chat/loop.py takes itself after a successful run_sql_query,
+    # not a tool call the model decides on or writes the script for (MCP_ENGINES.md
+    # §Tools).
+    name: Literal["search_knowledge", "run_sql_query"]
     arguments: dict[str, object]
 
 

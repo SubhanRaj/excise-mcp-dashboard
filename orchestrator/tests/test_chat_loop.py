@@ -47,15 +47,15 @@ class _FakeOllama:
             yield chunk
 
 
-def _request(message: str = "hello") -> ChatRequest:
-    return ChatRequest(conversation_id="c1", turn_id="t1", message=message)
+def _request(message: str = "hello", *, want_chart: bool = False) -> ChatRequest:
+    return ChatRequest(conversation_id="c1", turn_id="t1", message=message, want_chart=want_chart)
 
 
-async def _events(ollama: _FakeOllama) -> list[object]:
+async def _events(ollama: _FakeOllama, *, want_chart: bool = False) -> list[object]:
     return [
         e
         async for e in run_chat(
-            _request(),
+            _request(want_chart=want_chart),
             pool=object(),  # type: ignore[arg-type]
             ollama=ollama,  # type: ignore[arg-type]
             schema_card="(s)",
@@ -227,21 +227,75 @@ async def test_a_turn_with_one_tool_call_dispatches_and_continues(
     assert events[-1].tool_calls_count == 1
 
 
-async def test_a_tool_result_with_a_chart_emits_a_chart_event(
+async def test_a_successful_run_sql_query_triggers_a_chart_when_wanted(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    call = ToolCall(name="make_chart", arguments={"spec": "x"})
+    # A chart is a deterministic step after a successful run_sql_query now, never
+    # something the model calls or decides on itself — triggered here by
+    # ChatRequest.want_chart, the composer toggle's own field, not a tool call.
+    call = ToolCall(name="run_sql_query", arguments={"question": "x"})
     ollama = _FakeOllama(
         [[_FakeChunk(content="", tool_calls=[call])], [_FakeChunk(content="Done.")]]
     )
 
     async def fake_dispatch(call: ToolCall, **kwargs: object) -> ToolResult:
-        return ToolResult(ok=True, summary="chart made", chart=ChartArtifact(plotly_json="{}"))
+        return ToolResult(ok=True, summary="5 row(s)")
+
+    async def fake_auto_chart(conversation_id: str, question: str, **kwargs: object) -> ToolResult:
+        return ToolResult(ok=True, summary="Chart rendered.", chart=ChartArtifact(plotly_json="{}"))
 
     monkeypatch.setattr(chat_loop, "dispatch", fake_dispatch)
+    monkeypatch.setattr(chat_loop, "auto_chart", fake_auto_chart)
 
-    events = await _events(ollama)
+    events = await _events(ollama, want_chart=True)
     assert any(isinstance(e, ChartEvent) for e in events)
+    assert any(isinstance(e, ToolCallEvent) and e.name == "make_chart" for e in events)
+
+
+async def test_a_successful_run_sql_query_skips_the_chart_when_not_wanted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    call = ToolCall(name="run_sql_query", arguments={"question": "x"})
+    ollama = _FakeOllama(
+        [[_FakeChunk(content="", tool_calls=[call])], [_FakeChunk(content="Done.")]]
+    )
+
+    async def fake_dispatch(call: ToolCall, **kwargs: object) -> ToolResult:
+        return ToolResult(ok=True, summary="5 row(s)")
+
+    async def fake_auto_chart(conversation_id: str, question: str, **kwargs: object) -> ToolResult:
+        raise AssertionError("auto_chart must not run when want_chart is False")
+
+    monkeypatch.setattr(chat_loop, "dispatch", fake_dispatch)
+    monkeypatch.setattr(chat_loop, "auto_chart", fake_auto_chart)
+
+    events = await _events(ollama, want_chart=False)
+    assert not any(isinstance(e, ChartEvent) for e in events)
+    assert not any(isinstance(e, ToolCallEvent) and e.name == "make_chart" for e in events)
+
+
+async def test_auto_chart_returning_none_is_a_silent_skip(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A single-row run_sql_query result has nothing to chart — auto_chart returns
+    # None for exactly this, and the turn shows no chart card at all, not a failed one.
+    call = ToolCall(name="run_sql_query", arguments={"question": "x"})
+    ollama = _FakeOllama(
+        [[_FakeChunk(content="", tool_calls=[call])], [_FakeChunk(content="Done.")]]
+    )
+
+    async def fake_dispatch(call: ToolCall, **kwargs: object) -> ToolResult:
+        return ToolResult(ok=True, summary="1 row(s)")
+
+    async def fake_auto_chart(conversation_id: str, question: str, **kwargs: object) -> None:
+        return None
+
+    monkeypatch.setattr(chat_loop, "dispatch", fake_dispatch)
+    monkeypatch.setattr(chat_loop, "auto_chart", fake_auto_chart)
+
+    events = await _events(ollama, want_chart=True)
+    assert not any(isinstance(e, ChartEvent) for e in events)
+    assert not any(isinstance(e, ToolCallEvent) and e.name == "make_chart" for e in events)
 
 
 async def test_a_bad_tool_call_argument_is_fed_back_instead_of_ending_the_turn(
@@ -364,32 +418,33 @@ async def test_a_slow_tool_call_emits_heartbeats_before_its_result(
     assert heartbeat_index < result_index
 
 
-async def test_make_chart_dispatches_after_run_sql_query_in_the_same_turn(
+async def test_the_chart_step_always_runs_right_after_its_own_run_sql_query(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Confirmed live: llama3.1 sometimes emits both calls for one turn at once, and
-    # not always in query-then-chart order. A make_chart dispatched before its
-    # run_sql_query always fails (chat/tools.py's _LAST_RESULT isn't set yet), so the
-    # loop must dispatch run_sql_query first regardless of the order the model listed
-    # them in.
+    # A chart is code triggered immediately after a successful run_sql_query
+    # dispatch, not a second tool call the model has to sequence correctly itself —
+    # there is no ordering for the model to get wrong anymore (the failure mode
+    # this test used to guard against, confirmed live on llama3.1 emitting both
+    # calls for one turn with no guaranteed order).
     sql_call = ToolCall(name="run_sql_query", arguments={"question": "x"})
-    chart_call = ToolCall(name="make_chart", arguments={"spec": "x"})
     ollama = _FakeOllama(
-        [
-            [_FakeChunk(content="", tool_calls=[chart_call, sql_call])],
-            [_FakeChunk(content="Here it is.")],
-        ]
+        [[_FakeChunk(content="", tool_calls=[sql_call])], [_FakeChunk(content="Here it is.")]]
     )
 
     dispatched_order: list[str] = []
 
     async def fake_dispatch(call: ToolCall, **kwargs: object) -> ToolResult:
         dispatched_order.append(call.name)
-        return ToolResult(ok=True, summary="ok")
+        return ToolResult(ok=True, summary="5 row(s)")
+
+    async def fake_auto_chart(conversation_id: str, question: str, **kwargs: object) -> ToolResult:
+        dispatched_order.append("make_chart")
+        return ToolResult(ok=True, summary="Chart rendered.", chart=ChartArtifact(plotly_json="{}"))
 
     monkeypatch.setattr(chat_loop, "dispatch", fake_dispatch)
+    monkeypatch.setattr(chat_loop, "auto_chart", fake_auto_chart)
 
-    await _events(ollama)
+    await _events(ollama, want_chart=True)
     assert dispatched_order == ["run_sql_query", "make_chart"]
 
 
@@ -527,30 +582,24 @@ async def test_narrating_the_tool_decision_retries_and_answers(
     assert "Composite Shop" in tokens
 
 
-async def test_a_chart_claim_retry_keeps_tools_and_can_call_make_chart(
+async def test_a_chart_claim_retry_drops_the_claim_since_theres_no_tool_to_fix_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Confirmed live: retrying a chart claim with tools=[] (the same retry a bare "{}"
-    # or a guessed-SQL reply gets) can never fix it, since the one thing that would fix
-    # it -- an actual make_chart call -- needs tools attached. The retry that follows a
-    # chart claim keeps CHAT_TOOL_SCHEMAS and gets a one-line nudge instead.
-    chart_call = ToolCall(name="make_chart", arguments={"spec": "x"})
+    # There is no make_chart tool the model can call anymore — a chart claim retry
+    # can only ever be fixed by the model dropping the claim, never by making a real
+    # tool call (chat/tools.py's auto_chart docstring has the full history).
     ollama = _FakeOllama(
         [
             [_FakeChunk(content="Here is a chart showing the volumes.")],
-            [_FakeChunk(content="", tool_calls=[chart_call])],
-            [_FakeChunk(content="Chart rendered above.")],
+            [_FakeChunk(content="The total volume was 500 BL.")],
         ]
     )
 
-    async def fake_dispatch(call: ToolCall, **kwargs: object) -> ToolResult:
-        return ToolResult(ok=True, summary="chart made", chart=ChartArtifact(plotly_json="{}"))
-
-    monkeypatch.setattr(chat_loop, "dispatch", fake_dispatch)
-
-    events = await _events(ollama)
-    assert any(isinstance(e, ChartEvent) for e in events)
-    assert any(isinstance(e, ToolCallEvent) and e.name == "make_chart" for e in events)
+    events = await _events(ollama, want_chart=False)
+    tokens = "".join(e.delta for e in events if isinstance(e, TokenEvent))
+    assert "The total volume was 500 BL." in tokens
+    assert not any(isinstance(e, ChartEvent) for e in events)
+    assert not any(isinstance(e, ToolCallEvent) and e.name == "make_chart" for e in events)
 
 
 async def test_a_chart_claim_retry_that_narrates_a_fake_make_chart_call_falls_back(

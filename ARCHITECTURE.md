@@ -8,7 +8,7 @@ Cloudflare Tunnel, sharing one PostgreSQL data bank.
 | Unit | Runtime | Port | Exposure | Job |
 |---|---|---|---|---|
 | `web/` | Laravel 13 + Livewire 4, PHP 8.5, Apache vhost | 8084 | via Cloudflare Tunnel; app email-OTP login is the gate | Analytical form + OpenWebUI-style chat window + admin (users, connected Google sources, knowledge base); auth; query ledger; exports; background jobs |
-| `orchestrator/` | Python 3.12 + FastAPI, uvicorn | 8085 | `127.0.0.1` only | MCP client to Ollama; one-shot SQL pipeline; streaming chat with a tool loop (`run_sql_query`, `search_knowledge`, `make_chart`); knowledge retrieval; engine router; sandbox launcher |
+| `orchestrator/` | Python 3.12 + FastAPI, uvicorn | 8085 | `127.0.0.1` only | MCP client to Ollama; one-shot SQL pipeline; streaming chat with a bounded tool loop (`run_sql_query`, `search_knowledge`) plus a deterministic chart step after a successful query; knowledge retrieval; engine router; sandbox launcher |
 | `etl/` | Python 3.12 CLI, run by cron / systemd timers | — | Google API (ingestion only) | Sheets / Drive / Docs / Excel / CSV -> Postgres data tables; pdf-markdown-pipeline verified docs + admin `.md` uploads + Google Docs -> `kb.*` |
 | PostgreSQL 18 | system service | 5432 | `127.0.0.1` (+ Tailscale later if needed) | The excise data bank (`analytics.*`) and the knowledge base (`kb.*`) — read-only for the AI path |
 | Ollama | system service | 11434 | `127.0.0.1` | Local LLM inference + embeddings, CPU-only |
@@ -72,12 +72,15 @@ polling badly.
 3. The orchestrator runs the tool loop (`MCP_ENGINES.md` §Chat and retrieval):
    the model streams text; when it needs data it calls `run_sql_query` (same
    guard + read-only run as the one-shot path), for the law it calls
-   `search_knowledge` (FTS over `kb.chunks`, optionally vector), for a picture
-   it calls `make_chart` (same `bwrap` sandbox). Each tool call and result is
-   one line of the streamed newline-delimited JSON response (the same
-   `application/x-ndjson` format `/query` already uses). The turn itself runs
-   independently of this one HTTP request, keyed by `turn_id`, so it keeps
-   going even if this connection ends before the turn does.
+   `search_knowledge` (FTS over `kb.chunks`, optionally vector). A chart is
+   not a tool the model calls — `chat/loop.py` renders one itself (same
+   `bwrap` sandbox, Qwen writing the script) right after a `run_sql_query`
+   call succeeds with more than one row, whenever the composer's chart
+   toggle asked for one. Each tool call and result is one line of the
+   streamed newline-delimited JSON response (the same `application/x-ndjson`
+   format `/query` already uses). The turn itself runs independently of this
+   one HTTP request, keyed by `turn_id`, so it keeps going even if this
+   connection ends before the turn does.
 4. `web/` persists `messages` + `message_tool_calls` as lines arrive; a chart
    is stored as a `chart_artifacts` row.
 5. Cited knowledge chunks render with a link to `docsrepo.exciseup.in`; SQL

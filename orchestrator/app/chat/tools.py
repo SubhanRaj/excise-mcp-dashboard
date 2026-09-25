@@ -11,14 +11,16 @@ from pydantic import BaseModel, ValidationError, field_validator
 
 from app.config import settings
 from app.engines.base import RenderRequest
+from app.engines.base import available as available_engines
 from app.engines.base import get as get_engine
 from app.kb.retrieve import retrieve as kb_retrieve
 from app.llm.client import OllamaClient, TokenUsage
-from app.llm.prompts import build_sql_prompt, money_annotations
-from app.pipeline import _json_safe_rows, _write_parquet
+from app.llm.prompts import build_plot_prompt, build_sql_prompt, money_annotations
+from app.pipeline import _json_safe_rows, _resolve_outputs, _write_parquet
 from app.schemas import (
     ChartArtifact,
     ChatToolArgumentError,
+    PlotPlan,
     RenderEmptyError,
     SandboxViolationError,
     SqlExecutionError,
@@ -73,34 +75,6 @@ class RunSqlQueryArgs(BaseModel):
     # a made-up "excise_data" table). Routing every call through `question` means the
     # SQL always comes from the schema-aware planner /query's own pipeline already uses.
     question: str
-
-
-class MakeChartArgs(BaseModel):
-    spec: str
-
-    @field_validator("spec", mode="before")
-    @classmethod
-    def _unescape_over_escaped_quotes(cls, v: object) -> object:
-        # Confirmed live: Llama's tool-calling sometimes sends spec's string
-        # value with every quote backslash-escaped (`x=\"category_name\"`
-        # instead of `x="category_name"`) — invalid Python wherever it lands
-        # outside an actual string literal, and the cause of a real make_chart
-        # failure ("unexpected character after line continuation character").
-        # Only applied when the script as given doesn't compile and the naive
-        # unescape does, so a spec that already runs is never touched.
-        if not isinstance(v, str):
-            return v
-        try:
-            compile(v, "<make_chart>", "exec")
-            return v
-        except SyntaxError:
-            pass
-        unescaped = v.replace('\\"', '"').replace("\\'", "'")
-        try:
-            compile(unescaped, "<make_chart>", "exec")
-            return unescaped
-        except SyntaxError:
-            return v
 
 
 async def _search_knowledge(args: SearchKnowledgeArgs) -> ToolResult:
@@ -166,35 +140,82 @@ async def _run_sql_query(
     return ToolResult(ok=True, summary=summary)
 
 
-async def _make_chart(args: MakeChartArgs, *, conversation_id: str) -> ToolResult:
-    # The last run_sql_query result is already scoped by conversation_id — a trusted
-    # value dispatch() passes in from the request, never from the model's own tool
-    # arguments. An earlier data_ref argument asked the model to also state the
-    # conversation_id itself as a match check, but the model is never told that id
-    # anywhere (not in CHAT_SYSTEM_PROMPT, not in the message history), so it could
-    # never supply the one value that would pass — every make_chart call failed.
-    df = _LAST_RESULT.get(conversation_id)
-    if df is None:
-        raise ChatToolArgumentError(
-            "make_chart", "no run_sql_query result yet in this conversation"
-        )
+async def auto_chart(
+    conversation_id: str,
+    question: str,
+    *,
+    ollama: OllamaClient,
+    usage: TokenUsage | None,
+) -> ToolResult | None:
+    """A chart is a deterministic step after a successful run_sql_query, not a tool
+    the chat model decides to call or writes the script for — confirmed live, asking
+    the chat model (Llama) to both judge whether a chart would help and author the
+    chart's own Python via a make_chart tool argument produced matplotlib instead of
+    the required Plotly contract, broken quote-escaping, and the call narrated as
+    literal text instead of a real tool call. `/query`'s own plan_plot stage already
+    solves exactly this through the coder-role model (settings.ollama_sql_model) —
+    reused here instead of a parallel implementation, matching the Qwen-writes-code,
+    Llama-converses split (`CLAUDE.md`'s own Decisions section).
 
-    engine = get_engine("python")
+    Returns None when there is nothing to chart (a single-row result has no
+    dimension to plot — same reasoning as pipeline.py's own row_count > 1 gate).
+    """
+    df = _LAST_RESULT.get(conversation_id)
+    if df is None or len(df) <= 1:
+        return None
+
+    avail = available_engines()
+    plot_prompt = build_plot_prompt(
+        question, list(df.columns), [str(t) for t in df.dtypes], len(df), avail
+    )
     data_path = _write_parquet(df, conversation_id)
     try:
-        render_result = await engine.render(
-            RenderRequest(
-                script=args.spec,
-                data_path=data_path,
-                outputs=["plotly_json"],
-                title="",
-                scratch_dir=data_path.parent,
-            )
+        plot_plan = await ollama.generate_structured(
+            model=settings.ollama_sql_model,
+            prompt=plot_prompt,
+            response_model=PlotPlan,
+            stage="tool_call",
+            usage=usage,
         )
+        engine = get_engine(plot_plan.engine if plot_plan.engine in avail else "python")
+        outputs = _resolve_outputs([str(o) for o in plot_plan.outputs], engine.supported_outputs)
+        try:
+            render_result = await engine.render(
+                RenderRequest(
+                    script=plot_plan.script,
+                    data_path=data_path,
+                    outputs=outputs,
+                    title=plot_plan.title,
+                    scratch_dir=data_path.parent,
+                )
+            )
+        except (SandboxViolationError, RenderEmptyError) as first_failure:
+            # Same reprompt-and-retry-once shape as /query's own plan_plot stage —
+            # the model sees why its script failed and gets one corrected attempt.
+            reprompt = (
+                f"{plot_prompt}\n\nThe previous script failed:\n{first_failure.message}\n"
+                f"Previous script:\n{plot_plan.script}\n\nWrite a corrected script."
+            )
+            plot_plan = await ollama.generate_structured(
+                model=settings.ollama_sql_model,
+                prompt=reprompt,
+                response_model=PlotPlan,
+                stage="tool_call",
+                usage=usage,
+            )
+            outputs = _resolve_outputs(
+                [str(o) for o in plot_plan.outputs], engine.supported_outputs
+            )
+            render_result = await engine.render(  # a second failure propagates
+                RenderRequest(
+                    script=plot_plan.script,
+                    data_path=data_path,
+                    outputs=outputs,
+                    title=plot_plan.title,
+                    scratch_dir=data_path.parent,
+                )
+            )
     except (SandboxViolationError, RenderEmptyError) as e:
-        # Fed back as a failed tool result, not raised: the chat loop's own
-        # tool-call budget is the retry mechanism here — the model sees why its
-        # script failed and can call make_chart again with a corrected one.
         return ToolResult(ok=False, summary=e.message)
     finally:
         data_path.unlink(missing_ok=True)
@@ -217,16 +238,12 @@ async def dispatch(
     try:
         if call.name == "search_knowledge":
             return await _search_knowledge(SearchKnowledgeArgs.model_validate(call.arguments))
-        if call.name == "run_sql_query":
-            return await _run_sql_query(
-                RunSqlQueryArgs.model_validate(call.arguments),
-                conversation_id=conversation_id,
-                ollama=ollama,
-                schema_card=schema_card,
-                usage=usage,
-            )
-        return await _make_chart(
-            MakeChartArgs.model_validate(call.arguments), conversation_id=conversation_id
+        return await _run_sql_query(
+            RunSqlQueryArgs.model_validate(call.arguments),
+            conversation_id=conversation_id,
+            ollama=ollama,
+            schema_card=schema_card,
+            usage=usage,
         )
     except ValidationError as e:
         raise ChatToolArgumentError(call.name, str(e)) from e

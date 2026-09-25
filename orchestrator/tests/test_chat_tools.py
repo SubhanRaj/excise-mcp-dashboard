@@ -9,7 +9,7 @@ import pandas as pd
 import pytest
 
 from app.chat import tools as chat_tools
-from app.chat.tools import MakeChartArgs, RunSqlQueryArgs, SearchKnowledgeArgs, dispatch
+from app.chat.tools import RunSqlQueryArgs, SearchKnowledgeArgs, auto_chart, dispatch
 from app.engines.base import RenderRequest, RenderResult
 from app.llm.client import OllamaClient
 from app.schemas import ChatToolArgumentError, KbChunk, SandboxViolationError, ToolCall
@@ -28,7 +28,6 @@ def _ollama_returning(response_text: str) -> OllamaClient:
     [
         (SearchKnowledgeArgs, {"query": "MGQ policy"}),
         (RunSqlQueryArgs, {"question": "how many districts?"}),
-        (MakeChartArgs, {"spec": "fig.write_json(...)"}),
     ],
 )
 def test_tool_args_schema_round_trips(model: type, payload: dict[str, object]) -> None:
@@ -68,35 +67,6 @@ def test_search_knowledge_args_accepts_the_literal_string_null_too() -> None:
     assert SearchKnowledgeArgs.model_validate({"query": "shop types", "k": "null"}).k is None
     assert SearchKnowledgeArgs.model_validate({"query": "shop types", "k": "NULL"}).k is None
     assert SearchKnowledgeArgs.model_validate({"query": "shop types", "k": "3"}).k == 3
-
-
-def test_make_chart_args_unescapes_over_escaped_quotes() -> None:
-    # Confirmed live: a make_chart call failed twice with a SyntaxError on a spec
-    # whose every quote was backslash-escaped (`x=\"category_name\"`), a real
-    # Llama tool-calling artifact, not a placeholder-text or narrated-call shape.
-    # Unescaping once is exactly what would have made the original call compile.
-    escaped = (
-        'fig = px.bar(df, x=\\"category_name\\", y=\\"total_bl\\", '
-        'labels={\\"category_name\\": \\"Shop category\\"}); '
-        'fig.write_json(f\\"{OUT}/chart.plotly.json\\")'
-    )
-    fixed = MakeChartArgs.model_validate({"spec": escaped}).spec
-    assert "\\" not in fixed
-    compile(fixed, "<test>", "exec")
-
-
-def test_make_chart_args_leaves_a_script_that_already_compiles_untouched() -> None:
-    spec = 'fig = px.bar(df, x="category_name"); fig.write_json(f"{OUT}/chart.plotly.json")'
-    assert MakeChartArgs.model_validate({"spec": spec}).spec == spec
-
-
-def test_make_chart_args_leaves_a_genuinely_broken_script_untouched() -> None:
-    # A stray mismatched bracket (confirmed live as this bug's second failure mode)
-    # isn't an over-escaping artifact — unescaping can't fix it, so the validator
-    # must not mangle it further and should hand it back as-is for the normal
-    # failed-tool-result retry path to surface.
-    spec = 'fig = px.bar(df, labels={"a": "b"]); fig.write_json(f"{OUT}/chart.plotly.json")'
-    assert MakeChartArgs.model_validate({"spec": spec}).spec == spec
 
 
 def test_search_knowledge_args_accepts_an_explicit_states_list() -> None:
@@ -232,14 +202,18 @@ async def test_run_sql_query_result_carries_a_precomputed_money_conversion(
     assert "total_revenue = ₹2,860.80 crore" in result.summary
 
 
-async def test_make_chart_uses_the_conversations_own_last_result(
+def _plan_plot_response(script: str = 'fig.write_json(f"{OUT}/chart.plotly.json")') -> str:
+    return json.dumps(
+        {"engine": "python", "script": script, "outputs": ["plotly_json"], "title": "x"}
+    )
+
+
+async def test_auto_chart_uses_the_conversations_own_last_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # data_ref (a required model-supplied argument matched against conversation_id)
-    # used to gate this — but the model is never told the conversation_id anywhere
-    # (not in CHAT_SYSTEM_PROMPT, not in the message history), so no real call could
-    # ever pass it. The lookup is scoped by the trusted conversation_id dispatch()
-    # already receives from the request, not by anything the model supplies.
+    # A chart is a deterministic step chat/loop.py takes itself, scoped by the
+    # trusted conversation_id it already has from the request — never a tool
+    # argument the model supplies (MCP_ENGINES.md §Tools).
     class _FakeEngine:
         supported_outputs = frozenset({"plotly_json"})
 
@@ -247,32 +221,36 @@ async def test_make_chart_uses_the_conversations_own_last_result(
             return RenderResult(plotly_json="{}", files={}, engine="python")
 
     monkeypatch.setattr(chat_tools, "get_engine", lambda name: _FakeEngine())
-    chat_tools._LAST_RESULT["c1"] = pd.DataFrame([{"a": 1}])
-    chat_tools._LAST_RESULT["c2"] = pd.DataFrame([{"a": 2}])
-    call = ToolCall(name="make_chart", arguments={"spec": "fig.write_json(...)"})
-    result = await dispatch(
-        call, ollama=_ollama_returning("{}"), schema_card="(schema)", conversation_id="c1"
+    chat_tools._LAST_RESULT["c1"] = pd.DataFrame([{"a": 1}, {"a": 2}])
+    chat_tools._LAST_RESULT["c2"] = pd.DataFrame([{"a": 3}, {"a": 4}])
+    result = await auto_chart(
+        "c1", "chart it", ollama=_ollama_returning(_plan_plot_response()), usage=None
     )
+    assert result is not None
     assert result.ok is True
     del chat_tools._LAST_RESULT["c1"]
     del chat_tools._LAST_RESULT["c2"]
 
 
-async def test_make_chart_rejects_when_no_prior_result_exists() -> None:
+async def test_auto_chart_returns_none_when_theres_nothing_to_chart() -> None:
+    # No prior run_sql_query result, or a single-row one (a bare COUNT(*), say) —
+    # neither has a dimension to plot, the same reasoning pipeline.py's own
+    # row_count > 1 gate already uses for /query. None, not a failed ToolResult:
+    # this isn't an error, there was never a chart to attempt.
     chat_tools._LAST_RESULT.pop("c-empty", None)
-    call = ToolCall(name="make_chart", arguments={"spec": "x"})
-    with pytest.raises(ChatToolArgumentError):
-        await dispatch(
-            call, ollama=_ollama_returning("{}"), schema_card="(schema)", conversation_id="c-empty"
-        )
+    assert await auto_chart("c-empty", "x", ollama=_ollama_returning("{}"), usage=None) is None
+
+    chat_tools._LAST_RESULT["c-single"] = pd.DataFrame([{"a": 1}])
+    assert await auto_chart("c-single", "x", ollama=_ollama_returning("{}"), usage=None) is None
+    del chat_tools._LAST_RESULT["c-single"]
 
 
-async def test_make_chart_returns_a_failed_tool_result_instead_of_raising(
+async def test_auto_chart_returns_a_failed_tool_result_instead_of_raising(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # A bad script (the model hallucinating a Plotly kwarg that doesn't exist,
-    # say) must come back as something the chat loop can feed to the model for
-    # a retry within its own tool-call budget, not end the whole turn.
+    # A bad script (Qwen hallucinating a Plotly kwarg that doesn't exist, say) must
+    # come back as a failed ToolResult chat/loop.py can tell the model about, not
+    # raise and end the turn.
     class _FailingEngine:
         supported_outputs = frozenset({"plotly_json"})
 
@@ -280,11 +258,11 @@ async def test_make_chart_returns_a_failed_tool_result_instead_of_raising(
             raise SandboxViolationError("exit 1: TypeError: bad kwarg")
 
     monkeypatch.setattr(chat_tools, "get_engine", lambda name: _FailingEngine())
-    chat_tools._LAST_RESULT["c-fail"] = pd.DataFrame([{"a": 1}])
-    call = ToolCall(name="make_chart", arguments={"spec": "bad script"})
-    result = await dispatch(
-        call, ollama=_ollama_returning("{}"), schema_card="(schema)", conversation_id="c-fail"
+    chat_tools._LAST_RESULT["c-fail"] = pd.DataFrame([{"a": 1}, {"a": 2}])
+    result = await auto_chart(
+        "c-fail", "chart it", ollama=_ollama_returning(_plan_plot_response()), usage=None
     )
+    assert result is not None
     assert result.ok is False
     assert "bad kwarg" in result.summary
     del chat_tools._LAST_RESULT["c-fail"]

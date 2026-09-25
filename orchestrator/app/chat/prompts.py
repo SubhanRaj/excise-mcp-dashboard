@@ -4,7 +4,7 @@ MCP_ENGINES.md §Tools (chat/tools.py).
 
 from pydantic import BaseModel
 
-from app.chat.tools import MakeChartArgs, RunSqlQueryArgs, SearchKnowledgeArgs
+from app.chat.tools import RunSqlQueryArgs, SearchKnowledgeArgs
 
 CHAT_SYSTEM_PROMPT = """You are a conversational analyst for the UP Excise department.
 You answer questions about UP Excise data, revenue, shops, policy, and law only.
@@ -16,7 +16,7 @@ do not go on to answer the unrelated question anyway.
 If asked what model or LLM you are, say you are Llama 3.1, running locally for
 this department — never guess an architecture or version you were not told.
 
-Three tools are available:
+Two tools are available:
 - search_knowledge: retrieves excise acts, rules, and policy text. Defaults to
   Uttar Pradesh only — leave `states` unset for an ordinary question. The
   corpus also holds other states' own policies as comparative reference
@@ -35,25 +35,18 @@ Three tools are available:
 - run_sql_query: answers a question about numbers. Pass your question in plain
   language as `question` — you have never seen the database schema, so always
   let this tool plan the SQL; never invent a table or column name yourself.
-- make_chart: charts the most recent run_sql_query result in this conversation.
-  Use it only after run_sql_query, and only when a chart would help.
 
 Call a tool only when the question needs it — answer a definitional question
 directly, with no tool call.
 
-Never describe or refer to a chart in your written answer unless make_chart
-was actually called in this same turn and succeeded. A sentence like "here is
-a chart showing..." shows the user nothing if make_chart was never called, or
-was called but failed — a failed call is not a chart. If make_chart fails,
-say so in plain language and either correct the script and call it again or
-leave the chart out of your answer entirely; never claim one exists that
-doesn't.
-
-make_chart's spec must plot columns using the exact names run_sql_query's own
-result gave them, listed right after "columns:" in that tool's result — never
-guess, abbreviate, or rename a column. If you are not sure what a column is
-called, look at that list again rather than guessing a plausible-sounding
-name.
+There is no chart tool. A chart is added automatically, by the system, right
+after a run_sql_query result with more than one row, whenever the person
+asked for one — you never decide whether to make one and never write any
+chart code yourself. You are told directly, in the tool result that follows,
+whether a chart was attached; write your answer to match that fact exactly.
+Never describe or refer to a chart unless you were just told one was
+attached — a sentence like "here is a chart showing..." shows the user
+nothing if none was, and is a false claim, not a helpful gesture.
 
 A run_sql_query result naming a license category only by its code (CL5C,
 FL4A, FL5DB, and so on) also carries that code's plain-language name as its
@@ -123,28 +116,5 @@ CHAT_TOOL_SCHEMAS: list[dict[str, object]] = [
         "Answer a question about excise numbers. Takes a plain-language question, "
         "never raw SQL — the schema-aware planner writes the query.",
         RunSqlQueryArgs,
-    ),
-    _tool_schema(
-        "make_chart",
-        "Chart the most recent run_sql_query result in this conversation. `spec` must "
-        "be real, immediately runnable Python source code — never a description, "
-        "placeholder, or comment about what the chart should show; a `spec` that isn't "
-        "actual code fails as a syntax error. A pandas DataFrame `df` is already loaded "
-        "from that result, `OUT` is the output directory. Build a Plotly figure and "
-        'call exactly `fig.write_json(f"{OUT}/chart.plotly.json")` — this tool only '
-        "ever collects that file, so matplotlib's plt.savefig() produces nothing it "
-        "reads. Never call the figure's own fig.write_image() — it needs a headless "
-        "Chrome the sandbox cannot launch. Give the chart human-readable axis titles "
-        "with `labels=` — a raw column name like `retail_license_category` or "
-        "`total_bl` means nothing to someone reading the chart, only to the query "
-        "that produced it. Never put a backslash before a quote character — write "
-        'plain "double quotes" or \'single quotes\', never \\" — spec is already a '
-        "JSON string argument, so escaping is handled for you; a backslash before "
-        "a quote in the actual Python source is a SyntaxError. Example spec for a "
-        "bar chart: "
-        '`fig = px.bar(df, x="category_name", y="total_bl", '
-        'labels={"category_name": "Shop category", "total_bl": "Dispatched volume (BL)"}); '
-        'fig.write_json(f"{OUT}/chart.plotly.json")`',
-        MakeChartArgs,
     ),
 ]

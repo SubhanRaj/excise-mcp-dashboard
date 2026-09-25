@@ -503,7 +503,27 @@ sequenceDiagram
 |---|---|---|---|
 | `search_knowledge` | `{query: str, k?: int \| null, states?: list[str] \| null}` | Retrieves from `kb.chunks` (§Retrieval), returns chunk text + `heading_path` + `source_url`, each labeled by the state its own document belongs to | read-only; `withdrawn_at IS NULL`; `k` capped at 12, defaults to 6 on `null`; `states` defaults to Uttar Pradesh only (state-agnostic Acts/GOs always included) and widens only when named explicitly |
 | `run_sql_query` | `{question: str}` | Plans SQL like `/query`'s `plan_sql`, always — no raw-`sql` argument, so the chat model (which never sees the schema) can't hand-write a query against a table it invented; then `guard.py` -> `runner.py` (READ ONLY txn, statement timeout, row cap); returns column list + row count + a small preview | identical guard + read-only role as the one-shot path; no writes possible; a rejected or failing statement comes back as a failed tool result (see below), not a turn-ending exception |
-| `make_chart` | `{spec: str}` | Runs a generated Python plot script over the last `run_sql_query` result in the `bwrap` sandbox; returns artifact refs | same sandbox, same caps; the DataFrame is looked up by the request's own `conversation_id`, a trusted value the model never supplies and is never shown — an earlier `data_ref` argument asked the model to restate that id as a match check, which no real call could ever pass |
+
+There is no `make_chart` tool the chat model can call. A chart is
+`chat/loop.py`'s own deterministic step, `chat/tools.py`'s `auto_chart` —
+triggered automatically right after a `run_sql_query` call succeeds with
+more than one row, when `ChatRequest.want_chart` is set (`web/`'s composer
+chart toggle, sent as its own field rather than left for the model to
+notice in the message text). `auto_chart` plans the chart's own script
+through `settings.ollama_sql_model` (Qwen, the coder-role model) using the
+same `build_plot_prompt`/`PlotPlan` machinery `/query`'s own `plan_plot`
+stage already uses, with the same reprompt-and-retry-once shape on a
+sandbox failure — the chat model (Llama) never decides whether to chart
+and never writes a line of the chart's own Python. Removing this as a
+tool call also removed the quote-escaping bug a raw Llama-authored `spec`
+argument used to need a validator for (below): Qwen's structured output
+goes through the same `PlotPlan` Pydantic model `/query` already validates
+against, so a malformed script fails as a normal `LLMStructuredOutputError`
+retry instead of arriving as free-form text with its own escaping
+artifacts. A single-row result (a bare `COUNT(*)`, say) has nothing to
+plot — `auto_chart` returns `None` for exactly this, the same
+`row_count > 1` gate `/query`'s own pipeline already uses, and the turn
+shows no chart card at all rather than a failed one.
 
 Ollama's native tool-calling (`tools=[...]` on `/api/chat`) drives this;
 Qwen 2.5 and Llama 3.1 both support it. A live chat turn on a plain greeting

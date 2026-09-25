@@ -98,12 +98,13 @@ class ChatTest extends TestCase
         $this->assertNotNull(ChartArtifact::where('owner_id', $toolCall->id)->first()->spec);
     }
 
-    public function test_the_chart_toggle_hints_the_orchestrator_without_altering_the_stored_message(): void
+    public function test_the_chart_toggle_reaches_the_orchestrator_as_a_field_not_message_text(): void
     {
-        // make_chart is the model's own judgment call ("only when a chart would help") and
-        // correctly skips a single-number answer — the composer's toggle turns that judgment
-        // into an explicit ask for one turn, without putting the instruction in the message
-        // the user actually typed and sees in the transcript.
+        // A chart is now a deterministic step the orchestrator takes itself after a
+        // successful run_sql_query, never a judgment call the chat model makes from wording
+        // in the message — the composer's toggle rides as its own want_chart field, and the
+        // message the orchestrator receives matches exactly what the user typed and sees in
+        // the transcript.
         $user = User::factory()->create();
         $conversation = Conversation::create(['user_id' => $user->id]);
 
@@ -123,10 +124,11 @@ class ChatTest extends TestCase
             'content' => 'How many CL5C shops in Lucknow in August 2026?',
         ]);
 
-        $this->assertStringContainsString(
-            'Please include a chart to visualize the answer.',
-            $fake->capturedPayload['message'] ?? '',
+        $this->assertSame(
+            'How many CL5C shops in Lucknow in August 2026?',
+            $fake->capturedPayload['message'] ?? null,
         );
+        $this->assertTrue($fake->capturedPayload['want_chart'] ?? null);
     }
 
     public function test_an_unknown_model_key_is_refused(): void

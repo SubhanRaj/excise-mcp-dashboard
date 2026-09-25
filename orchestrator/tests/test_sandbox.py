@@ -91,6 +91,32 @@ async def test_violation_message_is_the_tracebacks_last_line_only(data_path: Pat
     assert "in outer" not in message
 
 
+async def test_violation_message_keeps_a_multi_line_exception_from_its_own_start(
+    data_path: Path,
+) -> None:
+    # Confirmed live: a make_chart script's Plotly ValueError (its own schema
+    # validation, not a plain exception) printed the real description across
+    # several lines, ending in a trailing location pointer ("    chart at line 6
+    # column 1") with no "Error:" prefix of its own — the old last-line-only
+    # summary grabbed that pointer alone, useless to the model retrying. The
+    # summary now starts at the traceback's actual "ValueError: ..." line and
+    # keeps what follows, since that's exactly the shape a multi-line message needs.
+    script = (
+        "raise ValueError(\n"
+        "    'Invalid value of type str received for the x property.\\n'\n"
+        "    '    Received value: bad\\n'\n"
+        "    '\\n'\n"
+        "    '    chart at line 6 column 1'\n"
+        ")\n"
+    )
+    with pytest.raises(SandboxViolationError) as excinfo:
+        await run_in_sandbox(script=script, data_path=data_path)
+
+    message = str(excinfo.value)
+    assert "ValueError: Invalid value of type str received for the x property." in message
+    assert "chart at line 6 column 1" in message
+
+
 async def test_memory_cap(data_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings, "sandbox_memory_mb", 64)
     # b"1" * n forces real page commits (unlike bytearray(n), which CPython

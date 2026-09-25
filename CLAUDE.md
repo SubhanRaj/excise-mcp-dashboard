@@ -1665,6 +1665,59 @@ existing fallback already covers by returning the tool result's own
 (now correctly converted) summary rather than inventing an answer; this is
 the already-documented tool-calling reliability gap, not a new failure.
 
+That same evening surfaced how much further the pattern above had to run:
+a fresh live report on the identical beer-revenue question showed the
+correct figure, then a chart claim, then a literal `assistant\n\nLlama 3.1,
+running locally for this department` fragment — a stray piece of its own
+system prompt leaking into the reply — followed by the raw tool-result
+dump once both generation attempts degenerated. Every one of this session's
+`make_chart` fixes so far had patched a specific shape of the same root
+cause without removing it: `make_chart` asked Llama, an 8B general chat
+model, to both judge whether a chart would help and author real Plotly
+Python as a tool-call argument — a coding task, on top of an already
+overloaded turn. `make_chart` is no longer a tool the chat model can call
+at all. A chart is `chat/loop.py`'s own deterministic step now: right
+after a `run_sql_query` call succeeds with more than one row, if
+`ChatRequest.want_chart` is set — a real field carrying `web/`'s composer
+toggle, replacing the old text-appended hint the model had to notice and
+act on — `chat/tools.py`'s `auto_chart` plans the script through
+`settings.ollama_sql_model` (Qwen), reusing `/query`'s own
+`build_plot_prompt`/`PlotPlan` machinery and its reprompt-and-retry-once
+shape on a sandbox failure, exactly the Qwen-writes-code,
+Llama-converses split this file's own Decisions section already called
+for. Llama never decides whether to chart and never writes a line of it;
+`CHAT_SYSTEM_PROMPT` now says plainly there is no chart tool, and to
+mention a chart only when told one was attached. This also deleted the
+quote-escaping validator an earlier fix needed: Qwen's script arrives as
+validated `PlotPlan` structured output, the same path `/query` already
+trusts, not free-form text with its own escaping artifacts.
+
+Testing the rebuilt chart path against a real multi-row question (Chat's
+own "compare dispatched volume by shop category" example) surfaced two
+further bugs past the redesign itself, both pre-existing and shared with
+`/query`'s identical `plan_plot` prompt, just never exercised this way
+before. First, Qwen wrote `fig.write_json(path, output_type=...)` —
+`output_type` isn't a real keyword on Plotly's `write_json`, a
+hallucination the prompt's own wording left room for by never saying the
+call takes exactly one argument; it does now.
+Second, the resulting `TypeError` came back to the chat user as
+`"chart at line 6 column 1"` — a trailing location-pointer line, not the
+actual message — because `run_in_sandbox`'s "an exception's summary is its
+final printed line" rule, true for a plain Python traceback, isn't true
+for Plotly's own multi-line schema-validation `ValueError`, which puts its
+real description first and a location pointer last. The summary now
+starts at the last line matching `SomeError:`/`SomeException:` and keeps
+what follows it, capped, rather than assuming the message is always
+exactly one line. With both fixed, the same question rendered its chart
+correctly on the next run, and re-verifying every SQL/chart demo question
+in `Ask::EXAMPLE_QUESTIONS`/`Chat::EXAMPLE_QUESTIONS` live confirmed each
+one clean — correct figures, correct chart, no chart claims, no narrated
+fake calls. The remaining example (an MGQ knowledge question,
+`search_knowledge` only, untouched by this change) still has the
+already-documented "reads like a raw retrieval dump" polish gap from
+earlier in this file, deliberately left out of scope here since it never
+touched `run_sql_query` or a chart at all.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures

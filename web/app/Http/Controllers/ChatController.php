@@ -45,13 +45,12 @@ class ChatController extends Controller
 
         $userMessage = $conversation->messages()->create(['role' => 'user', 'content' => $validated['message']]);
 
-        // The model only charts a result "when it would help" (CHAT_SYSTEM_PROMPT) — left to
-        // its own judgment, a single-number answer correctly gets no chart. The composer's
-        // chart toggle turns that judgment call into an explicit ask for this one turn,
-        // without putting the instruction in the message the user actually typed.
-        $orchestratorMessage = ($validated['includeChart'] ?? false)
-            ? $validated['message'].' Please include a chart to visualize the answer.'
-            : $validated['message'];
+        // A chart is now a deterministic step the orchestrator takes itself after a
+        // successful run_sql_query, never something the chat model decides on or writes —
+        // want_chart carries the composer's toggle as a real field instead of leaving the
+        // orchestrator to infer intent from wording in the message text (MCP_ENGINES.md
+        // §Tools).
+        $wantChart = $validated['includeChart'] ?? false;
 
         $history = $conversation->messages()
             ->where('id', '!=', $userMessage->id)
@@ -73,9 +72,10 @@ class ChatController extends Controller
         return $this->streamTurn($assistantMessage, $orchestrator->chatStream([
             'conversation_id' => $conversation->id,
             'turn_id' => $assistantMessage->id,
-            'message' => $orchestratorMessage,
+            'message' => $validated['message'],
             'history' => $history,
             'model' => $model,
+            'want_chart' => $wantChart,
         ]));
     }
 
@@ -114,7 +114,7 @@ class ChatController extends Controller
             'turn_id' => $message->id,
             // Ignored by the orchestrator once turn_id already names a running
             // (or just-finished) turn — only the first /chat call for a turn_id
-            // actually starts it (main.py's chat()).
+            // actually starts it (main.py's chat()), want_chart included.
             'message' => '',
             'history' => [],
             'model' => $message->model,

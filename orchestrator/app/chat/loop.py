@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import asyncpg
 
 from app.chat.prompts import CHAT_SYSTEM_PROMPT, CHAT_TOOL_SCHEMAS
-from app.chat.tools import dispatch
+from app.chat.tools import auto_chart, dispatch
 from app.config import settings
 from app.llm.client import ChatChunk, OllamaClient, TokenUsage
 from app.pipeline import _select_model
@@ -278,6 +278,32 @@ async def _dispatch_with_heartbeats(
             task.cancel()
 
 
+async def _auto_chart_with_heartbeats(
+    conversation_id: str,
+    question: str,
+    *,
+    ollama: OllamaClient,
+    usage: TokenUsage | None,
+) -> AsyncIterator[HeartbeatEvent | ToolResult | None]:
+    """Same heartbeat shape as `_dispatch_with_heartbeats`, for auto_chart's own
+    Ollama call (Qwen planning the chart script) and sandboxed render — both can
+    run long enough on this CPU-only box to need the same keep-alive.
+    """
+    task: asyncio.Task[ToolResult | None] = asyncio.create_task(
+        auto_chart(conversation_id, question, ollama=ollama, usage=usage)
+    )
+    try:
+        while True:
+            done, _pending = await asyncio.wait({task}, timeout=_HEARTBEAT_INTERVAL_S)
+            if done:
+                yield task.result()
+                return
+            yield HeartbeatEvent()
+    finally:
+        if not task.done():
+            task.cancel()
+
+
 async def _generate_with_heartbeats(
     chunks: AsyncIterator[ChatChunk],
 ) -> AsyncIterator[HeartbeatEvent | ChatChunk]:
@@ -371,16 +397,16 @@ async def run_chat(
             # the retry gets the same per-chunk holdback the first attempt already
             # has, instead of streaming it unconditionally.
             #
-            # A chart claim with no make_chart call is a different shape: the fix
-            # is an actual make_chart call, which a tools=[] retry can never
-            # produce — confirmed live, that retry just repeated the same false
-            # claim since it had no tool to fall back on. This retry keeps tools
-            # attached and gets one line saying what it did wrong, the same
-            # feedback-and-retry shape a failed run_sql_query call already gets.
-            # A wrong scope-refusal is the same shape again: the fix is answering
-            # using the tool result already in hand, not a fresh tool call, but
-            # tools stay attached in case the model legitimately wants another one
-            # (e.g. make_chart once it actually answers).
+            # A chart claim with no chart attached is a different shape: there is no
+            # make_chart tool to call anymore (a chart is chat/loop.py's own
+            # deterministic step after run_sql_query, never the model's decision or
+            # script to write — chat/tools.py's auto_chart docstring has the full
+            # history) — the fix is telling the model plainly that no chart exists
+            # and to drop the claim, the same feedback-and-retry shape a failed
+            # run_sql_query call already gets. A wrong scope-refusal is the same
+            # shape again: the fix is answering using the tool result already in
+            # hand, not a fresh tool call, but tools stay attached in case the model
+            # legitimately wants another run_sql_query call once it actually answers.
             retry_tools = [] if needs_plain_retry else CHAT_TOOL_SCHEMAS
             retry_messages = messages
             if claims_chart and not needs_plain_retry:
@@ -389,10 +415,10 @@ async def run_chat(
                     {
                         "role": "user",
                         "content": (
-                            "Your last reply referred to a chart but never called "
-                            "make_chart. Call make_chart now, using the last "
-                            "run_sql_query result's own column names, if a chart "
-                            "would help — otherwise answer without mentioning one."
+                            "Your last reply referred to a chart, but no chart was "
+                            "attached this turn. There is no tool to call for one — "
+                            "answer the question in plain language, with no mention "
+                            "of a chart at all."
                         ),
                     },
                 ]
@@ -479,13 +505,6 @@ async def run_chat(
             )
             return
 
-        # Llama sometimes emits a whole turn's tool calls at once (e.g. run_sql_query
-        # and make_chart together) with no guarantee they're listed in a usable order —
-        # a make_chart before its run_sql_query always fails, since nothing to chart
-        # exists yet. Stable sort keeps every other call's relative order and only moves
-        # make_chart calls after it, so they always see that turn's own query result.
-        pending_calls.sort(key=lambda c: c.name == "make_chart")
-
         for call in pending_calls:
             yield ToolCallEvent(name=call.name, arguments=call.arguments)
             result: ToolResult | None = None
@@ -504,19 +523,55 @@ async def run_chat(
             except ChatToolArgumentError as e:
                 # Llama's tool-calling fills in every schema property, sending an
                 # explicit null for one it means to leave unset (e.g. search_knowledge's
-                # k) — a validation error, same as a bad run_sql_query/make_chart call.
-                # Fed back as a failed tool result rather than raised, so this doesn't
-                # end the whole turn the way it did before: the model sees why its
-                # arguments were rejected and can call the tool again correctly.
+                # k) — a validation error, same as a bad run_sql_query call. Fed back
+                # as a failed tool result rather than raised, so this doesn't end the
+                # whole turn the way it did before: the model sees why its arguments
+                # were rejected and can call the tool again correctly.
                 result = ToolResult(ok=False, summary=e.message)
             assert result is not None
             last_tool_result = result
-            if call.name == "make_chart" and result.ok:
-                chart_made_this_turn = True
             tool_calls_made += 1
             yield ToolResultEvent(name=call.name, ok=result.ok, summary=result.summary)
-            if result.chart is not None:
-                yield ChartEvent(chart=result.chart)
             messages.append({"role": "tool", "content": result.summary})
+
+            # A chart is a deterministic step after a successful run_sql_query, not
+            # something the chat model calls or writes the script for — confirmed
+            # live, asking it to both judge whether a chart would help and author
+            # Plotly Python as a tool argument is exactly the kind of judgment call
+            # and coding task it gets wrong (chat/tools.py's auto_chart docstring has
+            # the full history). Runs at most once per turn, right after the query
+            # it charts, never at the model's own discretion.
+            if call.name == "run_sql_query" and result.ok and request.want_chart:
+                question = call.arguments.get("question")
+                async for chart_item in _auto_chart_with_heartbeats(
+                    request.conversation_id,
+                    question if isinstance(question, str) else request.message,
+                    ollama=ollama,
+                    usage=usage,
+                ):
+                    if isinstance(chart_item, HeartbeatEvent):
+                        yield chart_item
+                    elif chart_item is not None:
+                        tool_calls_made += 1
+                        yield ToolCallEvent(name="make_chart", arguments={})
+                        yield ToolResultEvent(
+                            name="make_chart", ok=chart_item.ok, summary=chart_item.summary
+                        )
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "content": (
+                                    chart_item.summary
+                                    if chart_item.ok
+                                    else f"The chart could not be rendered: {chart_item.summary}"
+                                ),
+                            }
+                        )
+                        if chart_item.chart is not None:
+                            chart_made_this_turn = True
+                            yield ChartEvent(chart=chart_item.chart)
+                    # item is None: nothing to chart (a single-row result) — no event,
+                    # no message, the same silent skip pipeline.py's own row_count > 1
+                    # gate already does for /query.
 
     raise ChatToolLoopExceededError()

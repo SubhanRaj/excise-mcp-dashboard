@@ -27,6 +27,11 @@ _TIMEOUT_EXIT_CODES = {124, 137}
 _ENGINE_SCRIPT_FILENAMES = {"python": "chart.py", "octave": "chart.m"}
 _ENGINE_DATA_FILENAMES = {"python": "data.parquet", "octave": "data.m"}
 
+# Matches a Python exception's own "SomeError: message" line, however deep a dotted
+# module path runs (e.g. "plotly.exceptions.PlotlyError:") — the line a traceback's
+# real description starts on, not necessarily its last line (see run_in_sandbox).
+_EXCEPTION_LINE = re.compile(r"^[\w.]+(Error|Exception):")
+
 
 def _octave_identifier(column: str) -> str:
     ident = re.sub(r"\W", "_", column)
@@ -288,14 +293,26 @@ async def run_in_sandbox(
         # script that guessed a wrong column name came back with the whole traceback as
         # the tool result, when the one actionable line ("Value of 'x' is not the name
         # of a column... Expected one of [...] but received: shop_category") was already
-        # its own last line. A Python exception's summary is always its final printed
-        # line, so that is what a chat user (and the model retrying) sees; the full
-        # traceback stays in the log line above, operator-only.
-        last_line = next(
-            (line for line in reversed(user_facing.strip().splitlines()) if line.strip()),
-            user_facing,
+        # its own last line. A plain Python exception's summary is its final printed
+        # line, but Plotly's own schema-validation ValueError isn't plain: it spans many
+        # lines (the real description, then a list of valid properties, then a trailing
+        # location pointer like "    chart at line 6 column 1") — confirmed live, taking
+        # only the last line surfaced that trailing pointer with no description at all.
+        # Found backwards from the end instead: the last line that looks like
+        # `SomeError: message` starts the summary, and everything after it (still
+        # capped, so a genuinely huge Plotly dump doesn't reach the user whole) is kept,
+        # since that's exactly the case where the description needs more than one line.
+        lines = [line for line in user_facing.strip().splitlines() if line.strip()]
+        error_line_index = next(
+            (i for i in reversed(range(len(lines))) if _EXCEPTION_LINE.match(lines[i])),
+            None,
         )
-        raise SandboxViolationError(f"exit {proc.returncode}: {last_line}")
+        summary = (
+            "\n".join(lines[error_line_index : error_line_index + 10])
+            if error_line_index is not None
+            else (lines[-1] if lines else user_facing)
+        )
+        raise SandboxViolationError(f"exit {proc.returncode}: {summary}")
 
     return run_dir, stdout_tail
 

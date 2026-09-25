@@ -215,9 +215,11 @@ _ENGINE_CAPABILITIES = {
     "python": (
         "python: a pandas DataFrame `df` is already loaded, `OUT` is the output "
         "directory. For an interactive chart, build a Plotly figure and call "
-        '`fig.write_json(f"{OUT}/chart.plotly.json")` with outputs=["plotly_json"]. '
-        "For a static chart, use matplotlib and call `plt.savefig(...)` into OUT "
-        'with outputs=["png"|"svg"|"pdf"]. Never call a Plotly figure\'s '
+        '`fig.write_json(f"{OUT}/chart.plotly.json")` with outputs=["plotly_json"] — '
+        "that call takes exactly one argument, the path, and nothing else; it has "
+        "no `output_type`, `format`, or similar keyword the way `write_image()` "
+        "does. For a static chart, use matplotlib and call `plt.savefig(...)` into "
+        'OUT with outputs=["png"|"svg"|"pdf"]. Never call a Plotly figure\'s '
         "`fig.write_image()` — it needs a headless Chrome this sandbox cannot launch."
     ),
     "octave": (
