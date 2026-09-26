@@ -19,13 +19,28 @@ and Google ingestion (M1). Milestone 4 (the Octave engine) is done, tested
 live against a real `octave-cli` render in the sandbox. The `db/` data bank,
 `etl/` core, and `orchestrator/`'s pipeline + knowledge base + second engine
 are merged into `dev`. **Milestone 5 (Laravel UI)** is underway on
-`web/plan/webui.md`'s design: Phase 0 (shell, RBAC, auth) and Phase 4 (admin —
-users, Google connect, knowledge base, activity log) are built (branch
-`m5-phase-0-4-admin`, tested green — `pint`/PHPUnit 39 tests on `web/`,
-`ruff`/`mypy --strict`/`pytest` 48 tests on `orchestrator/`, including the new
-`GET /kb/documents` endpoint). Phases 1-3 (the Ask form, the orchestrator
-`/chat` endpoint, the Chat window) and Phase 5 (customization panel, brand
-assets) are next.
+`web/plan/webui.md`'s design. Phase 0 (shell, RBAC, auth), Phase 4 (admin —
+users, Google connect, knowledge base, activity log), Phase 1 (the Ask
+form), Phase 2 (the orchestrator `/chat` endpoint and tool loop), and Phase
+3 (the Chat window) are merged into `dev` — tested green,
+`pint`/PHPUnit 58 tests on `web/`, `ruff`/`mypy --strict`/`pytest` 73 tests on
+`orchestrator/`. A public `/` landing page and the brand assets (state
+emblem, favicons, moved from `assets/brand/` into `web/public/`) are also
+built, ahead of the rest of Phase 5. The app is live end to end on this box —
+Apache vhost, Cloudflare tunnel, `web/` queue worker, and the orchestrator
+all running as `systemd --user` units, verified together against the real
+`visualizer.exciseup.in` URL. A super-admin System health screen, AI
+token-usage tracking, Ask feedback capture, and Pulse/Telescope (both
+locked to Admin regardless of `APP_ENV`) are built too, ahead of schedule —
+none of this was part of the original Phase 0-4 scope. Phase 5's remaining
+piece, the customization panel, is also built. **Milestone 5's checklist is
+now fully checked off** — money formatting, chart PNG/SVG/PDF export, the
+query ledger view, and the admin ETL visibility screen are all built,
+closing out the four items this file previously listed as not built. The
+ETL screen needs one pending grant (`excise_ro` read on schema `etl`,
+`OPERATOR_SETUP.md` §Data bank) applied to this box's already-provisioned
+database before it shows real data; every other item is live. **Milestone 6
+— perimeter, hardening, end-to-end — is next.**
 
 Every `sudo` / install / external-console step is collected, copy-pasteable,
 in [`OPERATOR_SETUP.md`](OPERATOR_SETUP.md), grouped by the milestone that
@@ -115,6 +130,16 @@ pulled, the sandbox user exists.
 - [x] `etl.source_registry` / `etl.ingestion_runs` / `etl.quarantine` writing
       on every run; Postgres advisory lock so timers cannot overlap
 - [x] `etl/sources/excel.py`, `etl/sources/csv.py`
+- [x] `etl/sources/iescms_dispatch.py` — the IESCMS shop-wise wholesale-to-
+      retail dispatch report (a live-system monthly export, not the NITI
+      annual reconciliation below), into the new `dispatches` /
+      `dispatch_strength_lines` tables (`DATA_PIPELINE.md` §Dispatches).
+      August 2026, Lucknow, both report layouts (foreign-liquor-family and
+      country-liquor with its per-strength breakdown). `db/schema.sql` /
+      `analytics_views.sql` / `seed_reference.sql` (FY2026-27, the seven
+      retail/wholesale license codes the report uses) are written; applying
+      them and running the import is pending the operator's `sudo -u
+      postgres` step (`OPERATOR_SETUP.md` §Data bank)
 - [ ] Excel adapter loads the NITI submission workbooks from
       `~/mentor_portal_db/UP Excise Data Collection/` and reconciles counts
       against the sibling's verified import (75 districts; 900 rows/series on
@@ -334,25 +359,36 @@ the detail and the reasoning behind each decision below.
       `excise_mcp_dashboard_local` (MariaDB, scoped user)
 - [x] Port auth from `~/Sites/upexcise-stats-dashboard` (OTP login, magic-link
       onboarding + reset, `tests/Feature/Auth/*`)
-- [ ] Move `assets/brand/*` (state emblem, favicons, app icons) into
-      `web/public/`; port the identity strip, the theme + high-contrast toggle
-      and the skip link from `~/Sites/upexcise-stats-dashboard` into the authed
-      layout; regenerate the icons and OG card with that repo's
-      `scripts/make-brand-assets.php` (`EVALUATION.md` §4)
+- [x] Move `assets/brand/*` (state emblem, favicons, app icons) into
+      `web/public/`, wired into `<x-head>`; port the identity strip and the
+      skip link into a new public landing page (`web/plan/webui.md` §3 — a
+      placeholder public route was added this milestone, reversing the
+      original "no public route" call). Not done: the theme + high-contrast
+      toggle (that's the Phase 5 customization panel below) and regenerating
+      the icons/OG card with the sibling's `scripts/make-brand-assets.php` —
+      the existing sibling-generated assets were copied as-is
 - [x] Design system: copy the token block and `@apply` classes from the
       sibling's `head.blade.php`, the Tabler-icon admin shell
       (`components/{layout,sidebar}.blade.php`), and `public/vendor/tabler-icons/`;
       follow `docs/design-guidelines.md` (`govviolet` / `govsaffron`, Inter,
-      GIGW accessibility baseline). Since this app has no public route
-      (`web/plan/webui.md` §3), the one admin shell uses `govviolet` as its
-      accent rather than the sibling's public/admin split; Chart.js colours
-      per §Charts wait on the first screen that renders a Chart.js chart
-- [ ] Customization panel: a FAB + Display panel (theme, font family via
+      GIGW accessibility baseline). The admin shell uses `govviolet` as its
+      accent, same as the one public landing page (`web/plan/webui.md` §3);
+      Chart.js colours per §Charts wait on the first screen that renders a
+      Chart.js chart
+- [x] Customization panel: a FAB + Display panel (theme, font family via
       on-demand Google Fonts, text size, line spacing, content width, density,
-      accent, high contrast, reduce-motion), `data-*` + one CSS var, anti-flash
-      script from the sibling, `localStorage` + cookie + `users.ui_prefs` JSON,
-      Reset. Port `CustomizationPanel.tsx` from
-      `~/Projects/chinese-intel-pipeline` (`EVALUATION.md` §4)
+      accent, high contrast, reduce-motion), `data-*` attributes + CSS vars,
+      `localStorage` + a mirrored cookie, `users.ui_prefs` JSON via
+      `PATCH /account/ui-prefs`, Reset. Theme keeps its own `color_scheme` key,
+      separate from the `ui_prefs` JSON, so the sidebar's light/dark toggle and
+      the panel's three-way control share one piece of state. Accent recolors
+      every existing `govviolet-*` utility class app-wide with no change to
+      the ~20 files using them: the Tailwind config routes the `govviolet`
+      palette through `--accent-*` CSS custom properties — `rgb(var(--accent-600))`,
+      the same trick a full Tailwind build uses for opacity-modifier support —
+      and an accent choice swaps which ramp those ten variables hold:
+      govviolet (default) and govsaffron, the department's own two-tone
+      palette
 - [x] Port middleware: `SecurityHeaders` (CSP extended for the FastAPI origin,
       Plotly/Chart.js, `marked` + highlighter, `cleave.js`, `dexie`),
       `LogMutation`, `HasPrivilege` / `IsAdmin`. Every Livewire write method
@@ -365,77 +401,160 @@ the detail and the reasoning behind each decision below.
       independently (`web/plan/webui.md` §6); `AppServiceProvider` rate
       limiters incl. `ask` and `chat`; `Carbon::macro('ist')` and the `Login` /
       `Logout` -> `activity_logs` listeners ported from the sibling
-- [ ] Formatting: store UTC, render IST via `->ist()`; `₹` + `en-IN` grouping
-      with a rupees / thousands / lakh / crore switcher on money figures;
-      Cleave.js `currency-input` component for money inputs
+- [x] Formatting: store UTC, render IST via `->ist()`. `₹` + `en-IN` grouping
+      with a rupees / thousands / lakh / crore switcher
+      (`App\Support\Money`, `<x-money>`) and the ported `<x-currency-input>`
+      Cleave.js component are built; neither screen currently on `web/`
+      renders a money figure or takes a money input, so this is ready
+      infrastructure with no live caller yet, the same position
+      `->ist()`/`Carbon::macro` was in before Phase 4's admin screens used it
 - [x] `/admin/activity-logs` (Admin only) ported; the audit table in
       `SECURITY.md` §5 is the coverage checklist
-- [ ] Migrations: `conversations` (ULID), `messages` (incl. `model`),
-      `message_tool_calls`, `queries` (prompt, sql, engine, `model`,
-      `tables_used`, row_count, timings JSON, status, request_id),
-      `chart_artifacts` (`spec` JSON + disk file paths), `query_feedback` are
-      Phase 1-3 scope, not built yet. `kb_uploads`, `google_connections`, and
-      `users.ui_prefs` (JSON) are built (Phase 4)
-- [ ] Orchestrator `orchestrator/app/chat/` (`tools.py`, `loop.py`,
+- [x] Migrations: `conversations` (ULID), `messages` (incl. `model`,
+      `prompt_tokens`, `completion_tokens`), `message_tool_calls`, `queries`
+      (prompt, sql, engine, `model`, `tables_used`, row_count, timings JSON,
+      status, request_id, `prompt_tokens`, `completion_tokens`),
+      `chart_artifacts` (`spec` JSON + disk file paths), and `query_feedback`
+      (thumbs + note, one row per person per query) are all built.
+      `kb_uploads`, `google_connections`, and `users.ui_prefs` (JSON) are
+      built (Phase 4)
+- [x] Orchestrator `orchestrator/app/chat/` (`tools.py`, `loop.py`,
       `prompts.py`; `ChatRequest` + tool schemas in the existing root
       `schemas.py`) and one new route, `POST /chat` — the bounded tool loop
       over the existing `sql/`, `kb/`, `engines/` primitives, no parallel
       implementation (`MCP_ENGINES.md` §Chat and retrieval,
       `web/plan/webui.md` §9). Streams the same newline-delimited JSON
       `/query` already uses, not `text/event-stream`
-- [ ] `RunExciseQuery` job (one-shot `/query`); queue worker systemd `--user`
+- [x] `RunExciseQuery` job (one-shot `/query`); queue worker systemd `--user`
       unit with `--timeout` above the orchestrator timeout
-- [ ] Livewire `Ask` component: split-view (chat left, canvas right, one
+- [x] Livewire `Ask` component: split-view (chat left, canvas right, one
       column under `lg`); submit -> job -> a plain route the browser polls via
       `fetch()` for DB-status stage changes
-      (`Querying database -> Running analysis -> Rendering chart -> Complete`),
-      `wire:poll` fallback
-- [ ] Livewire `Chat` component: conversation list rail, active thread, a
+      (`Querying database -> Running analysis -> Rendering chart -> Complete`)
+- [x] Livewire `Chat` component: conversation list rail, active thread, a
       `fetch()` + `ReadableStream` reader (not `EventSource`, which is
       GET-only and would put the message in a query string) appending
-      assistant tokens; tool-call cards (SQL, cited knowledge snippets with
-      `docsrepo.exciseup.in` links, chart); history persists and resumes;
-      markdown/code render client-side, sanitised; model picker
-      (`config/models.php` registry, offered entries filtered by orchestrator
-      `/health`, sent as `model`, server-validated)
-- [ ] Chart canvas: interactive `chart.plotly.json`; data table
-      (`rows_preview`, paginated); generated SQL (collapsed, copyable); export
-      PNG / SVG / PDF (artifact files) + CSV / XLSX (rows, reuse the sibling
-      `ExportService`, `openspout`)
-- [ ] Query ledger view: every past `/query` with prompt, SQL, timing, engine,
-      model, status, thumbs + note; Admin sees all, Analyst sees own
-- [ ] Admin: user CRUD (built); "Connected sources" (Google connect /
+      assistant tokens; tool-call cards (SQL, cited knowledge snippets,
+      chart); history persists and resumes; markdown/code render
+      client-side, sanitised; model picker (`config/models.php` registry,
+      offered entries filtered by orchestrator `/health`, sent as `model`,
+      server-validated). Cited knowledge snippets don't carry a
+      `docsrepo.exciseup.in` link yet — `search_knowledge`'s tool result is
+      a plain text preview, not a structured per-chunk `source_url` field
+- [x] Chart canvas: interactive `chart.plotly.json` and a data table
+      (`rows_preview`) are built for Ask and Chat's `make_chart` card;
+      generated SQL (collapsed, copyable) is built for Ask. CSV / XLSX (rows,
+      the sibling `ExportService`, `openspout`) and PNG / SVG / PDF export of
+      the chart itself are both built — the chart export reuses
+      `engines/static_render.py`'s own persistent-browser renderer through a
+      new `POST /chart/render`, rather than a second render path, since it
+      only ever rasterizes a figure a completed query or chat turn already
+      produced
+- [x] Query ledger view: every past `/query` with prompt, SQL, timing, engine,
+      model, status; Admin sees all, Analyst sees own (`/ledger`, previously a
+      placeholder route). Thumbs + note itself is built, captured directly on
+      Ask's own result screen (`giveFeedback()`) rather than waiting on this
+      list view
+- [x] Admin: user CRUD (built); "Connected sources" (Google connect /
       disconnect, show "reconnect needed" — built; the Drive folder / Sheets /
       Docs `source_registry` picker waits on Milestone 1's Google ingestion);
       "Knowledge base" (upload `.md`, browse the ingested corpus via the new
       orchestrator `GET /kb/documents` — paginated, no ranking, alongside the
       existing ranked `/kb/search` — withdraw an upload — built); a read-only
-      view of `etl.ingestion_runs` / `etl.quarantine` — not built
+      view of `etl.ingestion_runs` / `etl.quarantine` is built
+      (`/admin/etl`, privilege `etl.view`, a new `GET /etl/runs` and
+      `GET /etl/quarantine`) but not yet live — it needs `excise_ro` granted
+      read on schema `etl`, which `db/roles.sql` now includes but this box's
+      already-provisioned database hasn't received yet
+      (`OPERATOR_SETUP.md` §Data bank has the pending grant)
+- [x] System health (Admin -> System health, privilege `system.monitor`,
+      not part of the original Phase 4 admin set): orchestrator reachability,
+      queue depth, server vitals, recent error counts, and AI usage by model
+      (query/message counts, summed prompt/completion tokens now that the
+      orchestrator reports them). Laravel Pulse and Telescope both installed
+      alongside it, both locked to Admin regardless of `APP_ENV` (`SECURITY.md`
+      §3 has the reasoning) — `telescope:prune` is scheduled but needs a
+      `schedule:run` cron entry that doesn't exist on this box yet
+      (`OPERATOR_SETUP.md` §Monitoring)
+- [x] Data dictionary (Admin -> Data dictionary, privilege `schema.manage`,
+      also not part of the original Phase 4 admin set): every `analytics.*`
+      table and column, from a new orchestrator `GET /schema/tables`, with an
+      admin-editable note per table and per column and a five-row sample per
+      table (`GET /schema/tables/{name}/sample`). A note is stored in `web/`'s
+      own new `schema_notes` table and read back into the SQL-planning
+      prompt by the orchestrator's own `GET /api/schema-notes` call into
+      `web/` — the first HTTP call in this app running that direction
+      (`DATA_PIPELINE.md` §Row visibility for the AI path, `SECURITY.md` §3).
 - [x] `deploy/`: Apache vhost on `127.0.0.1:8084`, `DocumentRoot web/public`;
       owner runs `OPERATOR_SETUP.md` §Apache (append `ReadWritePaths`, incl.
       the `kb-uploads` disk path) — done ahead of schedule via
-      `deploy/root-setup.sh`
+      `deploy/root-setup.sh`. The queue worker, the orchestrator, and the
+      Cloudflare tunnel are all installed as `systemd --user` units and
+      verified running together against `visualizer.exciseup.in`
+      (`OPERATOR_SETUP.md`'s per-milestone sections had the unit files
+      written earlier but not installed until now)
 
 ### Tests
 - [x] Auth suite (ported): login, wrong password, wrong/expired OTP, the auth
       gate redirecting an unauthenticated request, onboarding link, password
       reset
-- [ ] `ask` flow: submit -> ledger rows; mocked orchestrator success -> chart
-      artifact + ledger row; mocked error -> failed stage shown + ledger row
-- [ ] chat flow: streamed tokens; a tool call persisted and rendered; history
-      loads and resumes; `chat` rate limit; model picker lists only pulled
-      registry models and sends the choice as `model`
+- [x] `ask` flow: submit -> a pending `queries` row + dispatched job; a mocked
+      orchestrator success persists the result + a chart artifact; a mocked
+      error marks the row failed with its stage; the stream endpoint is
+      owner-only
+- [x] chat flow: a mocked orchestrator stream persists assistant tokens and a
+      tool call with its chart; an unknown model key is refused; sending to
+      another user's conversation is forbidden; reopening a conversation
+      resumes its history. The `chat` rate limit itself has no dedicated test
+      yet (neither does `ask`'s). These all drive `ChatController::send()`
+      directly — none exercise the browser-side bridge from the Livewire
+      `send()` call to that route, which is exactly where a real bug shipped
+      undetected (`CLAUDE.md`'s Status paragraph has the detail); no browser
+      JS test tooling is in place to close that gap yet
 - [x] knowledge upload: valid `.md` accepted + `kb_uploads` row; non-`.md` /
       oversize rejected; path traversal blocked
 - [x] Google OAuth: connect redirect scopes; callback stores encrypted token +
       row; disconnect deletes it; a token never appears in a log or response
-- [ ] `SecurityHeaders` present (built); `activity_logs` on non-GET (built);
-      the stage-polling endpoint returns the sequence — Phase 1 (Ask), not
-      built yet
-- [ ] customization panel: a pref change persists across reload (cookie +
-      `users.ui_prefs`), Reset restores defaults, timestamps render IST —
-      Phase 5, not built yet (`->ist()` itself is already covered by
-      `tests/Feature/Admin/ActivityLogTest.php`)
+- [x] `SecurityHeaders` present; `activity_logs` on non-GET; the stage-polling
+      endpoint returns the sequence
+- [x] System health: a non-privileged user is forbidden; an admin (or an
+      analyst granted `system.monitor`) sees it, with token usage correctly
+      summed per model; `ask` feedback persists thumbs + an optional note.
+      Pulse/Telescope's admin-only guard is asserted on their `config()`
+      middleware arrays, not over HTTP — both are disabled in the test
+      environment (`phpunit.xml`, the standard Laravel setup), so their
+      routes don't exist to hit there; verified live against real accounts
+      instead (`SECURITY.md` §3)
+- [x] customization panel: `PATCH /account/ui-prefs` persists a valid pref set
+      to `users.ui_prefs` and rejects an invalid one before it's saved
+      (`tests/Feature/UiPreferencesTest.php`); `->ist()` itself is covered by
+      `tests/Feature/Admin/ActivityLogTest.php`. Reset and the client-side
+      apply/reload behaviour are pure Alpine/localStorage with no server round
+      trip to assert against and no browser JS test tooling in place to cover
+      them either (the same gap `ChatTest`/`AskTest` already have for their
+      own browser-side bridges) — verified by hand instead: a headless-Chrome
+      pass against a rendered Ask page confirmed the accent swap, high
+      contrast, and every other control apply live
+- [x] `Money::format()` on all four units, including negative amounts
+      (`tests/Unit/MoneyTest.php`) — the Blade components built on top of it
+      (`<x-money>`, `<x-currency-input>`) have no current page to render them
+      on, so they're covered at the formatter level only
+- [x] chart export: the owner downloads a rendered file; another user's chart
+      is forbidden; an unknown format is rejected
+      (`tests/Feature/ChartExportTest.php`, against a mocked orchestrator).
+      `etl_status.py`'s `list_ingestion_runs()` / `list_quarantine()` are
+      tested the same way `kb/retrieve.py`'s `list_documents()` already is —
+      against the real local Postgres — and currently fail with a permission
+      error until the pending `etl` schema grant above lands
+      (`orchestrator/tests/test_etl_status.py`)
+- [x] query ledger: an Analyst sees only their own queries, an Admin sees
+      every query, search filters by prompt, an unauthenticated request
+      redirects to `/login` (`tests/Feature/QueryLedgerTest.php`)
+- [x] ETL visibility: a non-privileged user is forbidden; an Admin (or a
+      granted Analyst) sees the ingestion runs a mocked orchestrator returns;
+      an unreachable orchestrator shows the fallback banner; viewing a run's
+      quarantine reasons toggles them in
+      (`tests/Feature/Admin/EtlRunsIndexTest.php`)
 - [x] `vendor/bin/pint --dirty` clean
 
 **Done when:** a signed-in analyst can use the one-shot form and the chat
@@ -609,3 +728,11 @@ PDF / XLSX / ZIP with the data vintage on it.
   series becomes a published spotlight or dataset there. Needs an export
   contract and an admin review step; not started until this tool is in daily
   use (Milestone 7's `saved_analyses` + `report_exports` are the source side)
+- Bhang as a real license category — the legacy Mentor portal DB
+  (`~/mentor_portal_db`, a restored dump of the department's own predecessor
+  system) shows 2,024 real shops under `Bhang`/`Bhang Shop`, and
+  `upexcise-stats-dashboard`'s own `docs/data-model.md` independently flags
+  the same gap. Neither this project's `license_categories` table nor its
+  live IESCMS import carries it — the wholesale-to-retail dispatch reports
+  this app ingests are liquor-only. Needs a source of shop-level Bhang data
+  before there's anything to ingest; not started

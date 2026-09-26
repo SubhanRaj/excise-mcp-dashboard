@@ -131,6 +131,12 @@ needed" on the admin screen. `SECURITY.md` §Google OAuth.
   (`cloudflared` dials out over `lo`).
 - **Laravel -> orchestrator (8085)**: loopback only, bearer token, request-id
   correlation. The orchestrator refuses any request without the token.
+- **Orchestrator -> Laravel (8084)**: the one call running the opposite
+  direction — `GET /api/schema-notes`, the orchestrator reading the data
+  dictionary's admin-edited schema notes. Loopback only, gated by
+  `VerifyOrchestratorToken`, a constant-time compare against the same
+  shared bearer token — the caller is a server process with no session to
+  authenticate.
 - **Orchestrator -> PostgreSQL**: dedicated `LOGIN` role, `SELECT` only,
   `default_transaction_read_only = on`, statement timeout. DDL/DML refused by
   the engine.
@@ -189,7 +195,7 @@ gate (no Access), the knowledge base, the chat window with a model picker,
 Google OAuth, and the output store. 1U is the system flow, 2U the enforcement
 layers, 3 the chat and ingestion paths, 4 the output artifact lifecycle.
 
-### Diagram 1 (as supplied in the brief): comprehensive system flow
+### Diagram 1 (as supplied in the brief): system flow
 
 ```mermaid
 flowchart TD
