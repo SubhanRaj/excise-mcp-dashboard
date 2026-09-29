@@ -1932,6 +1932,10 @@ dimension made it worse here specifically: the question itself says
 that isn't there. `PLOT_SYSTEM_PROMPT` now says directly that only the
 listed columns exist, regardless of what the question's own wording
 mentions, and the "districts/categories" example is now just "categories."
+`pipeline.py`'s `/query` plan_plot stage and chat's `auto_chart` are the
+only two callers of this prompt, both routing through the one
+`PLOT_SYSTEM_PROMPT` constant with no per-caller copy — the fix needed no
+second change anywhere for `/query`'s own chart step to carry it too.
 
 ## What this project is
 
