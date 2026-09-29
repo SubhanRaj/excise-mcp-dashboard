@@ -1937,6 +1937,20 @@ only two callers of this prompt, both routing through the one
 `PLOT_SYSTEM_PROMPT` constant with no per-caller copy — the fix needed no
 second change anywhere for `/query`'s own chart step to carry it too.
 
+The retest past that fix surfaced a different hallucination on the same
+question: `run_sql_query` failed with `column d.source_shop_id does not
+exist` on a query against `analytics.dispatches` (aliased `d`) —
+`source_shop_id` is a real column, just on `analytics.sro_shops`, an
+unrelated view with no shared key. `schema_card.py`'s `VIEW_NOTES` for the
+two views sit next to each other and each names its own "shop identifier"
+column under a different name (`dispatches.shop_id`,
+`sro_shops.source_shop_id`) with nothing telling the model they aren't
+interchangeable — the same cross-contamination shape the `CL5CC`/license-
+code and `data_ref` fixes elsewhere in this file already closed for other
+near-miss column pairs. Both notes now say so directly, each naming the
+other view's differently-named identifier and stating plainly it does not
+exist on this one.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures
