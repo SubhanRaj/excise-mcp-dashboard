@@ -253,7 +253,14 @@ already loaded.
 Pick the "engine" that best fits the outputs you want, then write "script"
 as a script for that engine only — do not mix syntax from the other engine.
 Pick chart types that make sense for excise data: a line for a trend over
-financial years, a bar for a comparison across districts/categories.
+financial years, a bar for a comparison across categories.
+
+Use only the columns listed below, by their exact given names. The question
+that produced this data may itself name a dimension — a district, a year,
+a category — that the result has already been filtered down to and no
+longer carries as its own column; never reference a column just because the
+question's own wording mentions it. A column that is not in the list below
+does not exist in this data, regardless of what the question says.
 
 Give the chart human-readable axis titles — a raw column name like
 "retail_license_category" or "total_bl" means nothing to someone reading the

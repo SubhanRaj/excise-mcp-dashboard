@@ -1916,6 +1916,23 @@ question is actually asking about, leaving a derived percentage column for
 the table and the summary text rather than a second series on the same
 axis.
 
+A live retest of that same question, past the axis fix, failed differently:
+"sandbox violation: exit 1: KeyError: 'district'" on a result whose only two
+columns are `liquor_type` and `revenue_inr` — already filtered to Lucknow,
+with no `district` column left to reference at all. `PLOT_SYSTEM_PROMPT`
+had a real gap: the rule to plot only the columns a result actually has
+(`MCP_ENGINES.md` §Tools) had only ever lived in `CHAT_SYSTEM_PROMPT`, from
+back when Llama wrote chart scripts itself as a tool call, and never carried
+over to `PLOT_SYSTEM_PROMPT` once charting became this deterministic Qwen
+step reusing `/query`'s own `plan_plot` machinery — the shared prompt Qwen
+sees for every chart, chat or `/query`, never actually said this. The
+prompt's own example line naming "districts" as a typical bar-chart
+dimension made it worse here specifically: the question itself says
+"Lucknow district," so the model had every reason to reach for a column
+that isn't there. `PLOT_SYSTEM_PROMPT` now says directly that only the
+listed columns exist, regardless of what the question's own wording
+mentions, and the "districts/categories" example is now just "categories."
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures
