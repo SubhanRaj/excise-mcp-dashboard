@@ -1979,6 +1979,23 @@ characters into `<br>`-joined lines there, fixing both renderers from the
 one choke point rather than duplicating the logic in the frontend and in
 `static_render.py` separately.
 
+A live report on Ask's own prepared demo question ("how many country liquor
+and composite shops are in Lucknow in August 2026") — its `GROUP BY
+ROLLUP(lc.kind)` worked example above returns a small multi-row breakdown,
+chartable — failed twice in a row at the render stage with `AttributeError:
+'Figure' object has no attribute 'figure'`, past the one retry `pipeline.py`
+already gives a failed chart script. Matplotlib/pandas/seaborn plotting calls
+inconsistently return either a `Figure` or an `Axes` depending on which one
+was called, and only an `Axes` carries a `.figure` back-reference to its
+parent — a script that chains `.figure.savefig(...)` off whichever one it
+happened to get crashes exactly this way when it guessed `Figure`.
+`_ENGINE_CAPABILITIES["python"]` already told the model to call
+`plt.savefig(...)` for a static chart but never said not to chain `.figure`
+off a returned object first; it now says so directly, naming the exact
+exception text so a retry's own reprompt (which already includes the prior
+failure's message) reads as confirmation of a stated rule rather than a new
+mystery.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures

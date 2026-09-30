@@ -303,9 +303,14 @@ _ENGINE_CAPABILITIES = {
         '`fig.write_json(f"{OUT}/chart.plotly.json")` with outputs=["plotly_json"] — '
         "that call takes exactly one argument, the path, and nothing else; it has "
         "no `output_type`, `format`, or similar keyword the way `write_image()` "
-        "does. For a static chart, use matplotlib and call `plt.savefig(...)` into "
-        'OUT with outputs=["png"|"svg"|"pdf"]. Never call a Plotly figure\'s '
-        "`fig.write_image()` — it needs a headless Chrome this sandbox cannot launch."
+        "does. For a static chart, use matplotlib and call the module-level "
+        '`plt.savefig(...)` into OUT with outputs=["png"|"svg"|"pdf"] — never '
+        "chain `.figure.savefig(...)` off whatever a plotting call returned; "
+        "matplotlib/pandas/seaborn calls inconsistently return a Figure or an "
+        "Axes, and `.figure` only exists on an Axes, so guessing wrong crashes "
+        "the render with 'Figure' object has no attribute 'figure'. Never call "
+        "a Plotly figure's `fig.write_image()` — it needs a headless Chrome "
+        "this sandbox cannot launch."
     ),
     "octave": (
         "octave: each result column is already loaded as a plain variable "
