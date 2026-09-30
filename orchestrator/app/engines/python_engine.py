@@ -19,12 +19,35 @@ that calls it anyway before a sandboxed process ever runs.
 """
 
 import importlib.util
+import json
+import textwrap
 from pathlib import Path
 
 from app.engines.base import RenderRequest, RenderResult
 from app.engines.static_render import get_renderer as get_static_renderer
 from app.sandbox.bwrap import run_in_sandbox
 from app.schemas import RenderEmptyError, SandboxViolationError
+
+_TITLE_WRAP_WIDTH = 50
+
+
+def _wrap_long_title(plotly_json: str) -> str:
+    """Plotly.js renders a chart title as one unbroken line of SVG text — it
+    never wraps on its own, live or in a kaleido-rendered PNG/SVG/PDF, so a
+    title as long as a real question ("Revenue Generated from Beer Sales
+    Across All Districts...") runs off the right edge of the chart instead
+    of fitting inside it. Breaking it into `<br>`-joined lines here, once,
+    covers both renderers since they both read this same JSON.
+    """
+    spec = json.loads(plotly_json)
+    title = spec.get("layout", {}).get("title")
+    text = title.get("text") if isinstance(title, dict) else title
+    if not isinstance(text, str) or "<br>" in text or len(text) <= _TITLE_WRAP_WIDTH:
+        return plotly_json
+    wrapped = "<br>".join(textwrap.wrap(text, _TITLE_WRAP_WIDTH))
+    spec["layout"]["title"] = {**title, "text": wrapped} if isinstance(title, dict) else wrapped
+    return json.dumps(spec)
+
 
 PREAMBLE = """import inspect
 import pandas as pd
@@ -94,7 +117,7 @@ class PythonEngine:
             if not path.exists():
                 continue
             if output == "plotly_json":
-                plotly_json = path.read_text()
+                plotly_json = _wrap_long_title(path.read_text())
             else:
                 files[output] = path
 

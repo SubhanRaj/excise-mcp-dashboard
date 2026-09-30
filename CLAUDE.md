@@ -1966,6 +1966,19 @@ liquor = ₹7,142.87 crore. Computing the Total in SQL rather than leaving it
 to the summarizing model to add two already-converted lakh/crore figures
 avoids the exact arithmetic mistake documented elsewhere in this file.
 
+A live screenshot of that same beer-revenue chart — the one with the long,
+question-derived title — showed the title text running off the right edge
+of the chart, live in the browser and identically in its PNG export.
+Plotly.js renders a chart title as a single unbroken line of SVG text with
+no wrapping of its own, and this project's static export (`static_render.py`,
+via kaleido) rasterizes the same JSON with the same Plotly.js renderer, so
+neither side ever wrapped a long title on its own. `python_engine.py` reads
+`chart.plotly.json` at one point already, before handing it to both the
+static renderer and the browser — `_wrap_long_title` breaks a title past 50
+characters into `<br>`-joined lines there, fixing both renderers from the
+one choke point rather than duplicating the logic in the frontend and in
+`static_render.py` separately.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures
