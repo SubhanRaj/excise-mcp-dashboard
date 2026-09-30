@@ -1951,6 +1951,21 @@ near-miss column pairs. Both notes now say so directly, each naming the
 other view's differently-named identifier and stating plainly it does not
 exist on this one.
 
+Two of Chat's six example questions carried `'chart' => false`, matching
+`auto_chart`'s own more-than-one-row rule — each had a single-row worked
+`FEW_SHOT_SQL_EXAMPLES` query behind it, so there was nothing to chart even
+with the toggle on. "Which district generated the highest revenue in
+FY2025-26?" already ran a `GROUP BY district` returning all 75 districts,
+just never flagged for a chart; it now is. The beer-revenue question's own
+worked example summed both contributing shop-type buckets into one row —
+now `GROUP BY ROLLUP(bucket)` instead, the same pattern the shop-count
+example above it already uses, giving a Composite/Country Liquor (CL5CC)
+breakdown plus a SQL-computed Total row rather than one flat number,
+confirmed live: ₹6,740.18 crore composite + ₹402.69 crore CL5CC country
+liquor = ₹7,142.87 crore. Computing the Total in SQL rather than leaving it
+to the summarizing model to add two already-converted lakh/crore figures
+avoids the exact arithmetic mistake documented elsewhere in this file.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures

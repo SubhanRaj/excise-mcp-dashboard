@@ -142,17 +142,27 @@ FEW_SHOT_SQL_EXAMPLES: list[dict[str, str]] = [
         # other shop_types' own totals on analytics.sro_shops, not a filterable category
         # anywhere: composite_lf_beer + composite_mgr_beer for a COMPOSITE_SHOP, and
         # special_beer_lf + special_beer_mgr for a COUNTRY_LIQUOR shop with
-        # has_cl5cc = true.
+        # has_cl5cc = true. Broken out by bucket with GROUP BY ROLLUP rather than one
+        # summed row — the same pattern the shop-count example above already uses — so
+        # the result both answers "how much" (the Total row) and is chartable; a Total
+        # computed by SQL also avoids asking the summarizing model to add two lakh/crore
+        # figures itself, the exact arithmetic mistake documented elsewhere in this file.
+        # Confirmed live: ₹6,740.18 crore composite + ₹402.69 crore CL5CC country liquor
+        # = ₹7,142.87 crore.
         "question": (
             "How much revenue was generated from beer sale across Uttar Pradesh in FY 2025-26?"
         ),
-        "sql": "SELECT "
-        "SUM(CASE WHEN shop_type = 'COMPOSITE_SHOP' "
-        "THEN COALESCE(composite_lf_beer, 0) + COALESCE(composite_mgr_beer, 0) ELSE 0 END) "
-        "+ SUM(CASE WHEN has_cl5cc "
-        "THEN COALESCE(special_beer_lf, 0) + COALESCE(special_beer_mgr, 0) ELSE 0 END) "
-        "AS total_beer_revenue "
-        "FROM analytics.sro_shops WHERE financial_year = 'FY2025-26' LIMIT 100;",
+        "sql": "SELECT COALESCE(bucket, 'Total') AS bucket, SUM(revenue_inr) AS beer_revenue_inr "
+        "FROM (SELECT 'Composite Shop' AS bucket, "
+        "COALESCE(composite_lf_beer, 0) + COALESCE(composite_mgr_beer, 0) AS revenue_inr "
+        "FROM analytics.sro_shops WHERE financial_year = 'FY2025-26' "
+        "AND shop_type = 'COMPOSITE_SHOP' "
+        "UNION ALL "
+        "SELECT 'Country Liquor (CL5CC)', "
+        "COALESCE(special_beer_lf, 0) + COALESCE(special_beer_mgr, 0) "
+        "FROM analytics.sro_shops WHERE financial_year = 'FY2025-26' "
+        "AND shop_type = 'COUNTRY_LIQUOR' AND has_cl5cc) x "
+        "GROUP BY ROLLUP(bucket) ORDER BY bucket NULLS LAST LIMIT 100;",
     },
     {
         # Confirmed live: a compound question asking for a district's total revenue and
