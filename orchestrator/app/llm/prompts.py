@@ -240,6 +240,21 @@ FEW_SHOT_SQL_EXAMPLES: list[dict[str, str]] = [
         "FROM analytics.sro_shops WHERE financial_year = 'FY2025-26' "
         "GROUP BY district ORDER BY total_revenue DESC LIMIT 100;",
     },
+    {
+        # Confirmed live: asked for a dispatch total in both amount and volume, the model
+        # guessed dispatched_amount_inr — schema_card.py's own VIEW_NOTES already names the
+        # real column (duty_fee_inr) directly, but nothing had ever shown the model a query
+        # actually using it, so it pattern-matched the dispatched_bulk_litres/dispatched_cases/
+        # dispatched_bottles prefix onto the one column that breaks it. duty_fee_inr and
+        # dispatched_bulk_litres together, confirmed live for Lucknow August 2026:
+        # ₹161.33 crore, 33,86,731.41 BL.
+        "question": "What was the total dispatch amount and volume for Lucknow in August 2026?",
+        "sql": "SELECT SUM(d.duty_fee_inr) AS total_amount_inr, "
+        "SUM(d.dispatched_bulk_litres) AS total_bl FROM analytics.dispatches d "
+        "WHERE d.district = 'Lucknow' "
+        "AND EXTRACT(MONTH FROM d.transport_pass_issued_at) = 8 "
+        "AND EXTRACT(YEAR FROM d.transport_pass_issued_at) = 2026 LIMIT 100;",
+    },
 ]
 
 

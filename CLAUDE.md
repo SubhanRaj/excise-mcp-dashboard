@@ -1996,6 +1996,18 @@ exception text so a retry's own reprompt (which already includes the prior
 failure's message) reads as confirmation of a stated rule rather than a new
 mystery.
 
+A live report on a related question ("what was the total dispatch amount and
+volume for Lucknow in August 2026") failed at `run_sql` with `column
+d.dispatched_amount_inr does not exist` — `analytics.dispatches`' own
+`VIEW_NOTES` already names the real column (`duty_fee_inr`) directly, but
+nothing had ever shown the model a query actually using it, so it pattern-
+matched the `dispatched_bulk_litres`/`dispatched_cases`/`dispatched_bottles`
+prefix onto the one money column that breaks it. A new worked
+`FEW_SHOT_SQL_EXAMPLES` entry covers this exact amount-and-volume shape,
+confirmed live: ₹161.33 crore, 33,86,731.41 BL for Lucknow in August 2026 —
+consistent with every other case in this file where a plain prose note alone
+didn't stop a hallucinated column name but a matching worked example did.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures
