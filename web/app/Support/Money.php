@@ -37,6 +37,26 @@ final class Money
     }
 
     /**
+     * Result-table columns whose values are rupee amounts, matched on the column
+     * name. Mirrors _MONEY_COLUMN_HINTS in orchestrator/app/llm/prompts.py; keep the
+     * two lists in step by hand.
+     */
+    private const MONEY_COLUMN_HINTS = ['inr', 'revenue', 'amount', 'fee', 'duty', 'mgr', '_lf', 'price', 'mrp'];
+
+    public static function isMoneyColumn(string $name): bool
+    {
+        $lowered = strtolower($name);
+
+        foreach (self::MONEY_COLUMN_HINTS as $hint) {
+            if (str_contains($lowered, $hint)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
      * "1,23,456" — the last three digits, then groups of two, the digit
      * grouping en-IN locale strings use and Cleave.js's numeralThousandsGroupStyle:
      * 'lakh' already applies to the currency-input component below.

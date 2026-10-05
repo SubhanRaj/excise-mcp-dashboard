@@ -28,7 +28,8 @@ and the saved-analyses and report features (Milestone 7) are not built.
 ## What it does
 
 - **Ask** takes a question in plain language and returns a read-only SQL query,
-  the result table, an interactive chart, a short summary of the numbers, and
+  the result table (money columns in ₹ with Indian digit grouping), an
+  interactive chart, a short summary of the numbers, and
   the SQL itself. Each question is recorded in a ledger with its timings and
   stage.
 - **Chat** is a streaming conversation with the local chat model. The model

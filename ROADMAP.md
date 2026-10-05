@@ -407,10 +407,9 @@ the detail and the reasoning behind each decision below.
 - [x] Formatting: store UTC, render IST via `->ist()`. `₹` + `en-IN` grouping
       with a rupees / thousands / lakh / crore switcher
       (`App\Support\Money`, `<x-money>`) and the ported `<x-currency-input>`
-      Cleave.js component are built; neither screen currently on `web/`
-      renders a money figure or takes a money input, so this is ready
-      infrastructure with no live caller yet, the same position
-      `->ist()`/`Carbon::macro` was in before Phase 4's admin screens used it
+      Cleave.js component are built. Ask's result table renders money
+      columns through `<x-money>`; `<x-currency-input>` has no caller yet,
+      since no screen takes a money input
 - [x] `/admin/activity-logs` (Admin only) ported; the audit table in
       `SECURITY.md` §5 is the coverage checklist
 - [x] Migrations: `conversations` (ULID), `messages` (incl. `model`,
@@ -537,9 +536,9 @@ the detail and the reasoning behind each decision below.
       pass against a rendered Ask page confirmed the accent swap, high
       contrast, and every other control apply live
 - [x] `Money::format()` on all four units, including negative amounts
-      (`tests/Unit/MoneyTest.php`) — the Blade components built on top of it
-      (`<x-money>`, `<x-currency-input>`) have no current page to render them
-      on, so they're covered at the formatter level only
+      (`tests/Unit/MoneyTest.php`), including the money-column name match.
+      `<x-money>` renders in Ask's result table; `<x-currency-input>` has no
+      page yet
 - [x] chart export: the owner downloads a rendered file; another user's chart
       is forbidden; an unknown format is rejected
       (`tests/Feature/ChartExportTest.php`, against a mocked orchestrator).

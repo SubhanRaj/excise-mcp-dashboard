@@ -25,4 +25,13 @@ class MoneyTest extends TestCase
     {
         $this->assertSame('₹-1,000', Money::format(-1000, 'rupees'));
     }
+
+    public function test_money_columns_are_matched_by_name(): void
+    {
+        $this->assertTrue(Money::isMoneyColumn('total_revenue'));
+        $this->assertTrue(Money::isMoneyColumn('beer_revenue_inr'));
+        $this->assertTrue(Money::isMoneyColumn('composite_lf_beer'));
+        $this->assertFalse(Money::isMoneyColumn('bucket'));
+        $this->assertFalse(Money::isMoneyColumn('shop_count'));
+    }
 }
