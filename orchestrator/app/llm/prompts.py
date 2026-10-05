@@ -246,10 +246,13 @@ FEW_SHOT_SQL_EXAMPLES: list[dict[str, str]] = [
         "SELECT CASE WHEN shop_type IN ('PRV', 'HBR') THEN shop_type "
         "ELSE INITCAP(REPLACE(shop_type, '_', ' ')) END, SUM(total_revenue) "
         "FROM analytics.sro_shops WHERE district = 'Lucknow' AND financial_year = 'FY2025-26' "
-        "AND shop_type NOT IN ('COMPOSITE_SHOP', 'COUNTRY_LIQUOR') GROUP BY shop_type) "
-        "SELECT liquor_type, revenue_inr, "
+        "AND shop_type NOT IN ('COMPOSITE_SHOP', 'COUNTRY_LIQUOR') GROUP BY shop_type), "
+        "typed AS (SELECT liquor_type, revenue_inr, "
         "ROUND(100.0 * revenue_inr / SUM(revenue_inr) OVER (), 1) AS pct_of_total "
-        "FROM by_type ORDER BY revenue_inr DESC LIMIT 100;",
+        "FROM by_type) "
+        "SELECT * FROM (SELECT liquor_type, revenue_inr, pct_of_total FROM typed "
+        "UNION ALL SELECT 'Total', SUM(revenue_inr), 100.0 FROM by_type) x "
+        "ORDER BY liquor_type = 'Total', revenue_inr DESC LIMIT 100;",
     },
     {
         # A bare code (CL5C, FL4A, FL5DB, ...) means nothing to a reader who hasn't
@@ -410,7 +413,10 @@ standout value or trend. State each figure once; the table already shows it,
 so the summary should not repeat it in a second format. If the result breaks
 a total down into parts — a "Total" row alongside category rows, or several
 rows that together answer one combined question — state the total and each
-part, not the total alone or the parts alone.
+part, not the total alone or the parts alone. A row is the total only when its
+label is "Total"; if no row is labelled Total, do not call any row the total.
+The row count is how many rows came back, never a shop count, a revenue, or any
+other figure in the data; report a figure from the rows themselves.
 
 Every money figure in this data is Indian Rupees, never dollars — write ₹,
 never $. State a large amount in lakh or crore rather than a long digit
@@ -468,8 +474,10 @@ def money_annotations(columns: list[str], rows: list[dict[str, object]]) -> str:
     money_cols = [c for c in columns if _looks_like_money_column(c)]
     if not money_cols:
         return ""
+    label_cols = [c for c in columns if not _looks_like_money_column(c)]
     lines = []
     for row in rows:
+        label = next((str(row[c]) for c in label_cols if isinstance(row.get(c), str)), None)
         parts = []
         for c in money_cols:
             value = row.get(c)
@@ -482,7 +490,8 @@ def money_annotations(columns: list[str], rows: list[dict[str, object]]) -> str:
             if isinstance(value, int | float | Decimal) and not isinstance(value, bool):
                 parts.append(f"{c} = {format_inr(float(value))}")
         if parts:
-            lines.append("; ".join(parts))
+            prefix = f"{label}: " if label else ""
+            lines.append(prefix + "; ".join(parts))
     if not lines:
         return ""
     return (
@@ -529,7 +538,7 @@ def build_summary_prompt(
         f"{SUMMARY_SYSTEM_PROMPT}\n\n"
         f"Question: {question}\n"
         f"Columns: {', '.join(columns)}\n"
-        f"Row count: {row_count}\n"
-        f"Sample rows:\n{preview_block}\n"
+        f"Number of rows returned (a count of rows, not a figure from the data): {row_count}\n"
+        f"The figures are in these rows:\n{preview_block}\n"
         f"{money_annotations(columns, rows_preview[:10])}"
     )
