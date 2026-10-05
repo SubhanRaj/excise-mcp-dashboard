@@ -678,8 +678,8 @@ PDF / XLSX / ZIP with the data vintage on it.
 
 ## Backlog (not scheduled)
 
-- **Answer any question, not a curated set.** `Ask::EXAMPLE_QUESTIONS` /
-  `Chat::EXAMPLE_QUESTIONS` and this file's own build log both exist because
+- **Answer any question, not a curated set.** `Chat::EXAMPLE_QUESTIONS` and
+  this file's own build log both exist because
   each example was verified against live data before being shown as one —
   that verification-first discipline is what a proof of concept needs, not
   the boundary of what the tool is meant to answer. The actual goal is

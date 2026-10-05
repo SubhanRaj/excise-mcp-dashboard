@@ -18,20 +18,6 @@ class Ask extends Component
 {
     use ConfirmsWithSweetAlert;
 
-    /**
-     * Verified against the real August 2026 Lucknow import (CLAUDE.md's dispatch-report
-     * milestone) and the FY2025-26 SRO shop revenue snapshot — a first-time visitor's proof
-     * that the pipeline produces a real answer, not a hypothetical one. Shown only on the
-     * empty composer; not a data source of any kind, so a plain const is enough.
-     */
-    public const EXAMPLE_QUESTIONS = [
-        'How many country liquor and composite shops are in Lucknow in August 2026?',
-        'What was the total dispatch amount and volume for Lucknow in August 2026?',
-        'How many CL5CC shops, country liquor shops that also sell beer, are there in Lucknow?',
-        'Which district generated the highest revenue in FY2025-26?',
-        'How much revenue was generated from beer sale across Uttar Pradesh in FY 2025-26?',
-    ];
-
     public string $prompt = '';
 
     public ?string $activeQueryId = null;
@@ -44,11 +30,6 @@ class Ask extends Component
             abort_unless($query->user_id === Auth::id(), 403);
             $this->activeQueryId = $query->id;
         }
-    }
-
-    public function useExample(string $question): void
-    {
-        $this->prompt = $question;
     }
 
     public function submit(): void
