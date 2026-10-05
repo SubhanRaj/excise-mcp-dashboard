@@ -93,7 +93,10 @@ VIEW_NOTES = {
         "license_category for those two codes rather than inventing a beer_shops table. "
         "See analytics.license_categories "
         "for the full code/name/kind list, including wholesale-only codes that never appear "
-        "here (a shop's own license_category is never 'FL2' or 'CL2' — see that view's note)."
+        "here (a shop's own license_category is never 'FL2' or 'CL2' — see that view's note). "
+        "A specific code like CL5C is a filter on license_category here, never on a "
+        "has_cl5cc column — that flag exists only on analytics.sro_shops, which shares no "
+        "key with this view."
     ),
     "shop_years": (
         "quota/settlement per shop per financial year. mgq_bl is the minimum guaranteed quota."

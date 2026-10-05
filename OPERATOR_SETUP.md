@@ -923,7 +923,8 @@ After=network-online.target
 
 [Service]
 ExecStart=/usr/local/bin/cloudflared tunnel --config /home/subhan/.cloudflared/excise-mcp-config.yml run
-Restart=on-failure
+Restart=always
+RestartSec=2
 
 [Install]
 WantedBy=default.target
@@ -945,11 +946,18 @@ curl -s -o /dev/null -w '%{http_code}\n' https://visualizer.exciseup.in/    # 30
 
 A visitor hitting Cloudflare error 530 means this tunnel process itself isn't
 running — check `systemctl --user status excise-mcp-dashboard-tunnel` for
-`inactive (dead)`. A transient DNS failure on the box (systemd-resolved
-returning "server misbehaving" for a moment) can crash `cloudflared` a few
-times in quick succession; systemd's restart-rate-limit then gives up
-("Start request repeated too quickly") and leaves it dead until told
-otherwise — it does not recover on its own once the DNS blip passes:
+`inactive (dead)`. `Restart=always` with `RestartSec=2` matches the four
+sibling apps' own tunnel units and is what lets a transient DNS failure on
+the box (systemd-resolved returning "server misbehaving" for a moment) pass
+without taking the service down: five restarts 2s apart span systemd's
+default 10s `StartLimitIntervalSec` window closely enough that a blip
+clearing within a few seconds never reaches the default `StartLimitBurst=5`
+restart-rate-limit. Leave `RestartSec` set — without it `Restart` defaults
+to 100ms, which burns through that same five-restart budget in under a
+second on the exact same blip and leaves the service dead with "Start
+request repeated too quickly" until told otherwise, confirmed live. A DNS
+outage long enough to still cross the rate limit needs the same manual
+recovery as before:
 
 ```bash
 systemctl --user reset-failed excise-mcp-dashboard-tunnel.service

@@ -2008,6 +2008,41 @@ confirmed live: ₹161.33 crore, 33,86,731.41 BL for Lucknow in August 2026 —
 consistent with every other case in this file where a plain prose note alone
 didn't stop a hallucinated column name but a matching worked example did.
 
+A live report of `visualizer.exciseup.in` erroring, while the four sibling
+apps' own Cloudflare Tunnels stayed up, traced to this app's tunnel unit
+alone: `journalctl --user -u excise-mcp-dashboard-tunnel` showed a transient
+systemd-resolved failure ("server misbehaving" looking up
+`argotunnel.com`) crashing `cloudflared` five times in under a second, then
+systemd's own restart-rate-limit giving up ("Start request repeated too
+quickly") and leaving the service dead even after DNS recovered seconds
+later — the same already-documented failure mode `OPERATOR_SETUP.md`'s
+recovery runbook covers, just not yet why only this app's tunnel hits it.
+The unit's own `Restart=on-failure` carried no `RestartSec`, which defaults
+to 100ms — fast enough to burn through systemd's default five-restart
+budget before a DNS blip this short ever has the chance to clear. All four
+sibling tunnel units already use `Restart=always` with `RestartSec=2`
+instead, spacing those same five restarts across roughly ten seconds — long
+enough for a blip this size to pass before the rate limit trips, which is
+why they never get stuck on it. `excise-mcp-dashboard-tunnel.service`
+(`OPERATOR_SETUP.md`'s own provisioning heredoc, and the live unit on this
+box) now matches that setting. A DNS outage that outlasts even that spacing
+still needs the manual `reset-failed` + `restart` recovery `OPERATOR_SETUP.md`
+already documents — this closes the specific blip duration seen live, not
+every duration.
+
+A live Ask question about country liquor shops that also sell beer failed at
+`run_sql` with `column "has_cl5cc" does not exist`. `has_cl5cc` is a column on
+`analytics.sro_shops` only. The beer-revenue worked example, which filters on
+it, was the only query in `FEW_SHOT_SQL_EXAMPLES` that used the column, and the
+model copied that filter onto `analytics.shops`, which has no such column. The
+shop's category is `license_category = 'CL5CC'` (Country Liquor with Beer) on
+`analytics.shops`; the live count for Lucknow is 29. A worked example now
+covers this shape, Ask's empty state lists the CL5CC question, and the `shops`
+note in `schema_card.py` states that `has_cl5cc` does not exist on that view.
+CL5C (plain Country Liquor, 560 shops in Lucknow) is a separate code in the same
+table and keeps its own worked example. The orchestrator change needs the
+standing `systemctl --user restart excise-orchestrator` step before it is live.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures

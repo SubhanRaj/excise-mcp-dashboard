@@ -88,6 +88,25 @@ FEW_SHOT_SQL_EXAMPLES: list[dict[str, str]] = [
         "GROUP BY district ORDER BY shop_count DESC LIMIT 100;",
     },
     {
+        # Confirmed live: "How many CL5C shops are there in Lucknow?" failed with
+        # column "has_cl5cc" does not exist — the model copied has_cl5cc from the beer
+        # worked example below onto analytics.shops, which has no such column (it
+        # lives only on analytics.sro_shops). A CL5C shop is license_category = 'CL5C'
+        # on analytics.shops; 560 shops, confirmed live for Lucknow.
+        "question": "How many CL5C shops are there in Lucknow?",
+        "sql": "SELECT COUNT(*) AS shop_count FROM analytics.shops "
+        "WHERE district = 'Lucknow' AND license_category = 'CL5C' LIMIT 100;",
+    },
+    {
+        # Confirmed live: CL5CC is Country Liquor with Beer — a country liquor shop
+        # that also sells beer, filtered on license_category like CL5C above, never on
+        # has_cl5cc. 29 shops in Lucknow.
+        "question": "How many CL5CC shops, country liquor shops that also sell beer, "
+        "are there in Lucknow?",
+        "sql": "SELECT COUNT(*) AS shop_count FROM analytics.shops "
+        "WHERE district = 'Lucknow' AND license_category = 'CL5CC' LIMIT 100;",
+    },
+    {
         # Confirmed live: without a worked example in exactly this shape, the model
         # pattern-matched the shops-per-district example above, joined shops to
         # districts, and referenced transport_pass_issued_at on that join anyway —
