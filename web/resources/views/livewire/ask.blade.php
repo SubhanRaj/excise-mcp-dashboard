@@ -74,6 +74,16 @@
         <a href="{{ route('ask') }}" class="text-sm text-slate-500 hover:underline flex items-center gap-1.5">
             <i class="ti ti-plus"></i> New question
         </a>
+        @else
+        <div class="space-y-1.5">
+            <p class="text-xs font-medium text-slate-400 dark:text-slate-500 uppercase tracking-wide">Try an example</p>
+            @foreach(self::EXAMPLE_QUESTIONS as $q)
+            <button type="button" wire:click="useExample(@js($q))"
+                    class="block w-full text-left text-sm text-govviolet-700 dark:text-govviolet-300 hover:bg-govviolet-50 dark:hover:bg-govviolet-900/30 rounded-lg px-3 py-2 transition-colors">
+                {{ $q }}
+            </button>
+            @endforeach
+        </div>
         @endif
 
         @if($recentQueries->isNotEmpty())

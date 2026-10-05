@@ -2077,12 +2077,6 @@ the chart script; it passed on the other runs. The orchestrator changes need
 the standing `systemctl --user restart excise-orchestrator` before the live
 service uses them.
 
-Ask's empty state no longer shows example questions. All five were removed
-at the owner's request, and the "Try an example" block, `useExample()`, and
-`Ask::EXAMPLE_QUESTIONS` went with them. Chat's examples are unchanged.
-Ask's examples will be re-added one at a time, each checked against live
-data before it is shown.
-
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures
