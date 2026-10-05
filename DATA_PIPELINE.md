@@ -117,7 +117,7 @@ CREATE TABLE sales_volumes (               -- dispatches / supply-chain volume
     district_id        BIGINT NOT NULL REFERENCES districts(id),
     financial_year_id  BIGINT NOT NULL REFERENCES financial_years(id),
     license_category_id BIGINT REFERENCES license_categories(id),
-    metric             TEXT NOT NULL,       -- 'dispatch_bl' | 'consumption_bl' | 'cases'
+    metric             TEXT NOT NULL,       -- liquor type: 'beer' | 'country_liquor_cml' | 'imfl' | 'wine' | ...
     quantity           NUMERIC(18,3) NOT NULL,
     unit               TEXT NOT NULL,       -- 'BL' (bulk litres) | 'cases'
     published_at       TIMESTAMPTZ NULL,
@@ -651,6 +651,26 @@ question needs no join in the first place, since `district` and
 `total_revenue` both already live on the view directly. `VIEW_NOTES` now
 says so, and `FEW_SHOT_SQL_EXAMPLES` has this exact question worked
 correctly — confirmed live, the same Lucknow figure as above with no join.
+
+#### CL5CC shops: category, revenue split, and what the data does not measure
+
+A shop's licence code is `analytics.shops.license_category` (`CL5C`, `CL5CC`,
+`FL5DB`, ...). `has_cl5cc` exists only on `analytics.sro_shops`, a separate
+survey snapshot with no shared key to `analytics.shops`; a query against
+`analytics.shops` that filters on it fails with `column "has_cl5cc" does not
+exist`.
+
+For a revenue question about CL5CC shops, `analytics.sro_shops` carries the
+split. Beer revenue is `special_beer_lf + special_beer_mgr` and country-liquor
+revenue is the rest of `total_revenue`, for rows with `shop_type =
+'COUNTRY_LIQUOR' AND has_cl5cc`. Lucknow FY2025-26, 29 shops: ₹21.74 crore
+country liquor, ₹4.13 crore beer, ₹25.87 crore total.
+
+The data does not measure consumption. The revenue split shows what shops paid
+by licence type. Dispatch strength lines hold country-liquor strengths only,
+and `analytics.sales_volumes` holds beer volume at district level, not per shop.
+An answer about what people drink needs a volume source this schema does not
+have.
 
 ### BI access (future — Power BI and similar, not built)
 

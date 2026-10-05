@@ -169,7 +169,9 @@ flowchart TD
    statements; no DML/DDL/`COPY`/`CALL`/`DO`/`SET`/`GRANT`; no reference to
    anything outside schema `analytics`; enforce a `LIMIT` (inject
    `row_limit` if absent). A failure here is `SQL rejected` — one re-plan with
-   the reason appended, then error. `sqlglot` raises either `ParseError`
+   the reason appended, then error. A top-level `UNION` is rejected because the
+   statement root must be `SELECT` or `WITH`; a `UNION` is wrapped as
+   `SELECT ... FROM (... UNION ALL ...) x`. `sqlglot` raises either `ParseError`
    (malformed SQL) or `TokenError` (text its tokenizer can't lex at all, e.g.
    a reply that isn't SQL) — sibling exceptions, neither a subclass of the
    other — so the guard catches their common `SqlglotError` base rather than
@@ -790,6 +792,14 @@ generally. This is a within-one-generation fix: a turn that goes through the
 chart-claim retry above still shows the first attempt's text followed by the
 retry's corrected one, by design (above) — two passes there is the accepted
 cost of the retry, not something a prompt wording change reaches.
+
+Both answer prompts also carry three plain-prose rules: a specific figure stays
+a specific figure rather than a general claim about growth or significance, no
+"not only X but Y" or "X rather than Y" for emphasis, and no closing recap. They
+also say what a revenue split can and cannot show. A split describes what shops
+paid by licence type and does not measure consumption, so an answer about
+drinking habits says the data does not measure it (`DATA_PIPELINE.md`, the CL5CC
+section under row visibility).
 
 The loop:
 

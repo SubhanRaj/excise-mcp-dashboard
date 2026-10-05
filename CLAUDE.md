@@ -2043,6 +2043,22 @@ CL5C (plain Country Liquor, 560 shops in Lucknow) is a separate code in the same
 table and keeps its own worked example. The orchestrator change needs the
 standing `systemctl --user restart excise-orchestrator` step before it is live.
 
+Ask's CL5CC example asks for more than a count: the revenue of CL5CC shops in
+Lucknow for FY2025-26 split into country liquor and beer. Beer is
+`special_beer_lf + special_beer_mgr` and country liquor is the rest of
+`total_revenue`, both on `analytics.sro_shops` (`has_cl5cc` rows only). Live:
+₹21.74 crore country liquor, ₹4.13 crore beer, ₹25.87 crore total across 29
+shops. The worked example returns those three rows, with the total computed in
+SQL, so the answer names each part and the total. It is wrapped in a subquery
+because the SQL guard rejects a top-level `UNION`.
+
+The data supports a revenue split, not a consumption figure. Dispatch strength
+lines carry country-liquor strengths only, and `analytics.sales_volumes` holds
+beer volume at district level, not per shop. The summary and chat prompts now
+say so: a revenue split describes what shops paid, and an answer does not
+infer drinking habits from it. The same prompts state the specific figure
+without general claims of growth or significance, and do not end with a recap.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures
