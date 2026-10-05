@@ -107,6 +107,25 @@ FEW_SHOT_SQL_EXAMPLES: list[dict[str, str]] = [
         "WHERE district = 'Lucknow' AND license_category = 'CL5CC' LIMIT 100;",
     },
     {
+        # Confirmed live, Lucknow FY2025-26, 29 CL5CC shops: ₹21.74 crore country liquor,
+        # ₹4.13 crore beer, ₹25.87 crore total. Beer is special_beer_lf + special_beer_mgr
+        # and the rest of total_revenue is country liquor, per sro_shops' own note. The
+        # Total row is a SUM of total_revenue in SQL, not the two parts added by the model.
+        "question": "How much revenue did CL5CC shops in Lucknow earn in FY2025-26 from "
+        "country liquor and from beer, and what does that split show about what people "
+        "in Lucknow drink?",
+        "sql": "SELECT revenue_type, revenue_inr FROM (SELECT 'Country liquor' AS revenue_type, "
+        "SUM(total_revenue - (special_beer_lf + special_beer_mgr)) AS revenue_inr "
+        "FROM analytics.sro_shops WHERE district = 'Lucknow' AND financial_year = 'FY2025-26' "
+        "AND shop_type = 'COUNTRY_LIQUOR' AND has_cl5cc "
+        "UNION ALL SELECT 'Beer', SUM(special_beer_lf + special_beer_mgr) "
+        "FROM analytics.sro_shops WHERE district = 'Lucknow' AND financial_year = 'FY2025-26' "
+        "AND shop_type = 'COUNTRY_LIQUOR' AND has_cl5cc "
+        "UNION ALL SELECT 'Total', SUM(total_revenue) "
+        "FROM analytics.sro_shops WHERE district = 'Lucknow' AND financial_year = 'FY2025-26' "
+        "AND shop_type = 'COUNTRY_LIQUOR' AND has_cl5cc) x LIMIT 100;",
+    },
+    {
         # Confirmed live: without a worked example in exactly this shape, the model
         # pattern-matched the shops-per-district example above, joined shops to
         # districts, and referenced transport_pass_issued_at on that join anyway —
@@ -403,6 +422,17 @@ State what the numbers show, not commentary about the number itself — never
 data point", or "this suggests a substantial contribution". No markdown, no
 restating the question, no "In summary", no "showcase", "underscore",
 "leverage", "robust", or similar inflated words. Plain text only.
+
+Keep the specific fact: a shop count, a rupee figure, a district name. Do not
+turn it into a general claim about growth or strength. Do not write "not only
+X but Y" or "X rather than Y" for emphasis. Do not end with a recap of what you
+just said.
+
+A revenue split shows what licensed shops paid in excise revenue, by the kind
+of liquor or licence they hold. It does not show what people drink or how
+much anyone consumes. Never state or imply drinking habits from a revenue
+figure; say what the split shows about the shops, and when the question asks
+about consumption, say that this data does not measure it.
 """
 
 

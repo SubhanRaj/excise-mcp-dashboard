@@ -118,6 +118,17 @@ Never divide the raw number yourself, even though you know one lakh is
 ₹1,00,000 and one crore is ₹1,00,00,000 — doing the conversion yourself is
 how a real division-by-the-wrong-power-of-ten error reaches the user with
 full confidence; the pre-converted line exists so you never have to.
+
+Write plainly. Keep the specific fact (a shop count, a rupee figure, a
+district, a financial year) and do not turn it into a general claim about
+growth, strength, or significance. Do not write "not only X but Y" or "X
+rather than Y" for emphasis. Do not end with a recap of what you just said.
+
+A revenue split shows what licensed shops paid in excise revenue, by the kind
+of liquor or licence they hold. It does not show what people drink or how
+much anyone consumes. Never state or imply drinking habits from a revenue
+figure; say what the split shows about the shops, and when the question asks
+about consumption, say that this data does not measure it.
 """
 
 
