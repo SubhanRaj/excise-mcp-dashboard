@@ -2059,6 +2059,24 @@ say so: a revenue split describes what shops paid, and an answer does not
 infer drinking habits from it. The same prompts state the specific figure
 without general claims of growth or significance, and do not end with a recap.
 
+Live checks of Ask's example questions found three summary-step errors. The
+CL5CC count was summarised as "one shop" because the summary prompt set the
+row count next to the sample rows with no label, so the model took the row
+count for the figure. The summary prompt now labels the row count as a count
+of rows, states that the figures are in the rows, and says only a row
+labelled "Total" is the total. The pre-converted money lines now carry their
+row label (`Total: revenue_inr = ₹2,860.80 crore`), so the model no longer
+matches a figure to the wrong row. The Lucknow revenue worked example now
+returns a Total row computed in SQL and is wrapped in a subquery for the
+guard. Two Ask questions were removed from the empty state because they
+failed on a live run: the CL5CC revenue split (a chart script raised
+`NameError`) and the Lucknow revenue split (a planner timeout on one run, a
+wrong total on another before the label fix). The country liquor and
+composite count still fails intermittently at render with a `SyntaxError` in
+the chart script; it passed on the other runs. The orchestrator changes need
+the standing `systemctl --user restart excise-orchestrator` before the live
+service uses them.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures

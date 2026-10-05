@@ -974,7 +974,9 @@ like money, and hand the model the pre-converted figure directly — both
 `pipeline.py`'s `build_summary_prompt` and the chat `run_sql_query` tool's
 own result summary carry it now, so neither the one-shot pipeline's
 summarizer nor the chat model doing its own narration has to compute the
-conversion itself (`DATA_PIPELINE.md` §Row visibility for the AI path has
+conversion itself. Each pre-converted line is prefixed with the row's own
+text label (`Total: revenue_inr = ₹2,860.80 crore`), so a figure is matched
+to the row it belongs to, not to its position in the sample (`DATA_PIPELINE.md` §Row visibility for the AI path has
 the same finding that surfaced the beer-revenue and CL5CC/FL5DB fixes this
 question needed first).
 
