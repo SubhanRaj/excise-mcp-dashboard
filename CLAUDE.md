@@ -12,8 +12,15 @@ role-verified live, and `orchestrator/`'s `/query` ran a real question
 end-to-end against real seed data (SQL -> Postgres -> a sandboxed Plotly
 render -> a narrated summary), tested green (`ruff` / `mypy --strict` /
 `pytest`, 32 tests including live `bwrap` runs). Static chart export
-(`chart.png` via `kaleido`) is a known gap — needs a headless Chrome the
-sandbox can't launch yet; see `engines/python_engine.py`. The `excise-sandbox`
+(`chart.png`/`svg`/`pdf`) never runs Plotly's own `fig.write_image()` inside
+the per-script sandbox — that repeatedly OOM-killed the render's cgroup
+launching a fresh headless Chrome. A matplotlib script still calls
+`plt.savefig()` directly, inside the sandbox. A Plotly script only ever
+calls `fig.write_json()`; `engines/static_render.py` then derives any
+requested static format from that JSON afterward, outside the sandbox, via
+one persistent, isolated browser kept running for the orchestrator's whole
+lifetime — it never executes LLM-authored code, only rasterizes an
+already-produced chart spec. The `excise-sandbox`
 uid-separation layer is also still off (`bwrap`'s own confinement covers the
 same ground meanwhile) — `loginctl enable-linger excise-sandbox` turned out
 insufficient on its own; the sudoers fallback in `SECURITY.md` §2 is the
@@ -49,18 +56,36 @@ namespace, so the engine uses gnuplot's own cairo terminals
 `ROADMAP.md` milestone order; Milestone 5 (Laravel UI) is underway, built
 against the full design in `web/plan/webui.md` (reuse map, RBAC and data
 model, the Ask and Chat flows, the orchestrator `/chat` design, the model
-picker, a security checklist). Phase 0 (shell, RBAC, auth) and Phase 4
-(admin — users, Google connect, knowledge base, activity log) are built on
-branch `m5-phase-0-4-admin`: OTP-email login and onboarding ported from
+picker, a security checklist). Phase 0 (shell, RBAC, auth), Phase 4
+(admin — users, Google connect, knowledge base, activity log), Phase 1
+(the Ask form), Phase 2 (the orchestrator `/chat` endpoint and bounded tool
+loop), and Phase 3 (the Chat window) are merged into `dev`. Phase 0/4:
+OTP-email login and onboarding ported from
 `upexcise-stats-dashboard`, `SecurityHeaders`/`LogMutation`/privilege
 middleware, the `designations`-backed RBAC model, and four full-page
 Livewire admin screens, each gated by route middleware and a per-write
-`abort_unless()` re-check — tested green (`pint`, 39 PHPUnit tests) and a
-new orchestrator `GET /kb/documents` endpoint for the Knowledge base
-screen's browse view (`ruff` / `mypy --strict` / `pytest`, 48 tests).
-Phases 1-3 (the Ask form, the orchestrator `/chat` endpoint, the Chat
-window) and Phase 5 (customization panel, brand assets) are next. Two
-decisions from the design correct this file: the chat stream is
+`abort_unless()` re-check, plus a new orchestrator `GET /kb/documents`
+endpoint for the Knowledge base screen's browse view. Phase 1: the `queries`
+ledger, `RunExciseQuery` queued job, and the Livewire `Ask` form, relaying
+the orchestrator's stage events to the browser via `fetch()` polling of a
+plain status route (not a held-open connection). Phase 2: `orchestrator/app/
+chat/` (`tools.py`, `loop.py`, `prompts.py`) wires `search_knowledge`,
+`run_sql_query`, and `make_chart` into a turn loop capped at
+`CHAT_MAX_TOOL_CALLS`, reusing the one-shot pipeline's SQL guard, read-only
+role, and sandbox — no parallel implementation. Phase 3: `conversations`/
+`messages`/`message_tool_calls` hold the transcript, and a plain
+`POST /chat/{conversation}/send` route (real streaming I/O, since a chat
+token arrives too fast for a queued job) pipes the orchestrator's ndjson
+stream straight to the browser while persisting it. Tested green throughout
+— `pint`, 51 PHPUnit tests on `web/`; `ruff` / `mypy --strict` / `pytest`,
+62 tests on `orchestrator/`. A live render also surfaced a second sandbox
+fix this phase: Plotly's own static export (`fig.write_image`, via
+kaleido's headless Chrome) was repeatedly OOM-killing the sandbox cgroup
+instead of erroring, so the plot-planning prompt no longer offers it and
+the Python engine now rejects a script that calls it anyway before a
+sandboxed process runs — matplotlib's `plt.savefig` covers static export
+without that dependency. Phase 5 (customization panel, brand assets) is
+next. Two decisions from the design correct this file: the chat stream is
 newline-delimited JSON (`application/x-ndjson`, matching `/query`'s
 existing wire format), not `text/event-stream` — every "SSE" reference
 below to `/chat`'s transport means that; and RBAC carries a `designations`
@@ -68,7 +93,2021 @@ preset table (`role` + `privileges` + `designation_id` + free-text `post`)
 — the pattern four sibling Laravel apps converged on independently.
 Dependency installs so far: `web/`'s Composer + npm set, `etl/`'s venv
 (`+aiomysql`), `orchestrator/`'s venv — each the current milestone's
-`OPERATOR_SETUP.md` section at the time.
+`OPERATOR_SETUP.md` section at the time. A public `/` route now exists — a
+placeholder landing page on the trimmed GIGW/UX4G track ported from
+`upexcise-stats-dashboard` (identity strip, emblem header, skip link, no
+policy footer), since every other route stayed behind `/login` with nothing
+to land on. The department's brand assets (state emblem, favicons) moved
+from `assets/brand/` into `web/public/`, wired into `<x-head>`. The app is
+now live end to end on this box: the Apache vhost, the Cloudflare tunnel, the
+`web/` queue worker, and the orchestrator itself all run as `systemd --user`
+units (`OPERATOR_SETUP.md`'s per-milestone sections had each unit file
+written but not installed until now) and were verified together —
+`visualizer.exciseup.in` serves the home page, `/ask` redirects an
+unauthenticated request to `/login`, and `/health` on both `web/` and
+`orchestrator/` report `ok`. `OPERATOR_SETUP.md` also gained the bootstrap
+step for an empty `users` table's first Admin account, and the recovery
+command for the tunnel's one operational failure mode so far — a transient
+DNS lookup tripping systemd's restart-rate-limit, which does not self-clear.
+Hand-testing the live site past `/health` surfaced what its test suite
+couldn't see, since `ChatTest` drives `ChatController::send()` directly and
+never exercises the browser-side bridge to it: sending a first chat message
+never reached the orchestrator at all. The thread panel's `wire:key` included
+`$activeConversation->id`, which `send()` sets in the same request it
+dispatches `chat-message-ready` — Livewire saw the key change and tore down
+and rebuilt that DOM node, destroying the very Alpine listener meant to
+catch that event before the browser's `fetch()` to `ChatController::send()`
+ever fired. Keyed off a mount-time-only property instead. The same pass
+found the composer clipped off-screen behind a hardcoded `calc(100vh-11rem)`
+guess and `overflow-hidden` (moved it inside the scrolling area with
+`sticky bottom-0`, immune to the guess being wrong), and the Users/Activity
+log search boxes' left icon overlapping the input text — `field-input`'s own
+padding, compiled via the Tailwind Play CDN's runtime `@apply`, was beating
+a plain `pl-9` override in the cascade; `excise-budget-tracker` hit the same
+thing and fixed it with Tailwind's `!` modifier, applied the same way here.
+Two more turned up right after: a failed Ask query rendered its red error
+box with nothing in it, traced to some httpx/httpcore exceptions (timeouts
+especially) having an empty `str()` when raised without an explicit
+message — `OllamaClient` wraps them as `OllamaUnreachableError(str(e))`, so
+the wrapped error's own message came out empty too, all the way to the blade
+view's `?? 'fallback'` (which only catches `null`, not `''`). Fixed at the
+source (`OrchestratorError` falls back to the raising exception's class
+name when the message is empty) and at the display (`?:` instead of `??`,
+plus the stage and request_id shown in the box when `APP_DEBUG` is on). And
+Chat's "New conversation" link stopped responding once a message had been
+sent in the thread: `sendToOrchestrator()` moves the address bar with
+`history.replaceState()` after a live send, which Livewire's `wire:navigate`
+router never observes, so a `wire:navigate` click back to a path it still
+thinks it's already on silently no-ops — the conversation-rail links are
+plain navigation now.
+
+A super-admin "System health" screen followed (Admin -> System health,
+privilege `system.monitor`), Livewire-native with `wire:poll` — this app's
+own convention for every screen. It shows orchestrator reachability, queue
+depth, server vitals (load, memory, CPU temp, direct `/proc` reads matching
+`pdf-markdown-pipeline`'s own health dashboard), recent error counts, and —
+new this round — AI usage by model. The orchestrator now tracks prompt/
+completion token counts per request (`TokenUsage` in `llm/client.py`,
+accumulated across however many Ollama calls one turn makes and returned on
+`QueryResponse` and the chat stream's `done` event), persisted onto
+`queries`/`messages` and totalled on the health screen. Fixing this also
+caught that `structlog` was never actually `.configure()`'d despite
+`CLAUDE.md` already claiming JSON-to-stdout logging — it ran on plain-text
+defaults; now configured for real, with an info-level line on every
+successful `/query` and `/chat` turn, not just exceptions. Ask also gained a
+minimal thumbs-up/down + note capture (`query_feedback`, one row per person
+per query) — `ROADMAP.md` had this planned since Phase 1 but nothing built
+it until the health screen needed something to show.
+
+Laravel Pulse and Telescope are both installed, and both needed the same
+fix before they were safe to leave running: each ships a default
+authorization that allows anyone through — no login at all — when
+`app()->environment('local')` is true, which is this box's real `APP_ENV`
+while it's also genuinely public through the tunnel. `SECURITY.md`'s new
+subsection under §3 has the full detail; the short version is both are now
+locked to `isAdmin()` unconditionally, verified against real accounts
+(non-admin 403, admin 200) rather than trusted from reading the source.
+`telescope:prune` runs daily via `routes/console.php`'s new `Schedule::`
+call — the first one in this app — and a `schedule:run` cron entry now
+exists on this box to actually fire it (`OPERATOR_SETUP.md` §Monitoring).
+
+A live Ask question surfaced a gap in the render step: the plot-planning
+model occasionally writes a script Python rejects outright (an invalid
+Plotly keyword argument, a column name that doesn't exist), and that
+failure had no retry — the whole query failed on the model's first mistake.
+`pipeline.py`'s `run_query` now retries once, the same pattern `guard_sql`
+already uses for a rejected SQL statement: the render error and the failed
+script go back to the model, and only a second failure surfaces to the
+user. The chat `make_chart` tool had the same gap, fixed differently: its script
+arrives directly as the tool call's own argument, with no separate planning
+step to reprompt, so a render failure there comes back as a failed tool
+result instead of ending the turn. The model sees why its script failed and
+can call `make_chart` again within its own `CHAT_MAX_TOOL_CALLS` budget.
+A zero-row result had the same hallucination risk the knowledge base's empty
+corpus already guards against: the summarize step was handing the model an
+empty result set and still asking for "a plain-language reading of the
+numbers," and it obliged with an invented trend. `run_query` now skips that
+call entirely on zero rows and returns a fixed "No rows matched this
+question." instead.
+
+`public/vendor/flasher/` — the toast-notification package's published JS and
+CSS, referenced on every page by `@flasher_render` — was missing from the
+repository since the original skeleton commit: the browser's request 404'd
+and the browser refused to execute the HTML error page it got back instead,
+on every single page load. `php artisan flasher:install` publishes it, and
+it is committed the same way `public/vendor/tabler-icons/` already is.
+
+The first real data import landed: an IESCMS shop-wise wholesale-to-retail
+dispatch report for August 2026, Lucknow — a live-system export, one row per
+transport pass, not the annual NITI reconciliation `sales_volumes` was built
+for. It doesn't fit either existing fact table, so it gets two new ones,
+`dispatches` and a `dispatch_strength_lines` child table for the
+country-liquor report's per-strength breakdown (`DATA_PIPELINE.md`
+§Dispatches). `license_categories` gained the specific retail/wholesale
+codes the report actually uses (FL2, CL2, FL5DB, FL4A, FL4C, CL5C, CL5CC)
+alongside the five broad kinds already there, and `financial_years` gained
+FY2026-27. `etl/sources/iescms_dispatch.py` upserts the retail shop
+dimension and the dispatch rows together, keyed on the report's own indent
+number so a re-run changes nothing. The August 2026 Lucknow import has run:
+9,322 dispatch rows and 25,200 country-liquor strength-line rows are live in
+`analytics.dispatches` / `analytics.dispatch_strength_lines`, with one
+trailing blank row correctly quarantined rather than inserted.
+
+Hand-testing surfaced two more live bugs past what the merged test suites
+covered. Chat's composer went missing on screen (the textarea and Send
+button were still in the rendered HTML, just squeezed to a few pixels wide):
+the model-picker `<select>` carries `w-auto` to keep its own width, but
+`field-input`'s `@apply w-full` (`resources/views/components/head.blade.php`)
+comes later in the Tailwind Play CDN's runtime stylesheet and wins the
+cascade at equal specificity, so the select claimed close to the full row
+width with `flex-shrink-0` refusing to give any of it back. Same fix as the
+admin search boxes' padding override before it: Tailwind's `!` modifier,
+`!w-auto` instead of `w-auto` (`chat.blade.php`).
+
+Pulse and Telescope both started 401ing a genuinely logged-in admin,
+underneath — not instead of — the `IsAdmin`/`Telescope::auth()` checks
+already documented in `SECURITY.md` §3. Both packages now ship
+`laravel/sentinel`, a bundled middleware that runs before session/auth even
+starts and denies any request reaching them through a trusted reverse proxy
+from a public IP while `APP_ENV=local` — a guard against a local-only
+dashboard leaking through a forgotten tunnel. This box's Cloudflare Tunnel
+exposure is deliberate and already gated by real login, so the heuristic was
+a false positive: `AppServiceProvider::configureSentinel()` registers a
+`Sentinel::extend()` driver for both `pulse` and `telescope` that always
+authorizes, leaving the actual admin check — which the false positive ran
+ahead of, not in place of — as the only gate.
+
+A round of hands-on Chat testing surfaced four more fixes. The model
+picker offered Qwen alongside Llama — `Chat::render()` filtered the
+registry only by whether Ollama reported a model pulled, not by `role`, so
+the coder model meant only for SQL/plot planning showed up as a
+conversational choice; it now filters to `role: chat` first
+(`MCP_ENGINES.md` §`ChatRequest`). A plain "hi" got back Llama's own
+tool-call deliberation instead of a greeting — "No tool call is needed as
+it's a greeting..." — since every token the model emits is streamed
+straight to the user with nothing held back; `CHAT_SYSTEM_PROMPT` now tells
+it directly not to narrate that decision (`MCP_ENGINES.md` §Tools). The
+composer textarea stayed one fixed row regardless of message length —
+it now grows with the message up to a capped height, and Enter sends while
+Shift+Enter still inserts a newline, matching the composer conventions of
+other chat products. And a new conversation had no title, staying
+"New conversation" in the rail forever — `Chat::send()` now sets `title`
+from the first message, truncated to 60 characters. Neither Claude,
+ChatGPT, nor Gemini actually put a readable slug in the chat URL despite
+that being the ask that prompted this — all three keep an opaque id there
+too — so the URL itself stays the plain ULID (`CLAUDE.md`'s existing
+ULID route-binding convention, restated below, is unchanged); only the
+title was missing.
+
+Live use past that round surfaced a real answer going wrong silently, and
+chat going silent outright. Asking Ask "how many composite shops are in
+Lucknow in August 2026" returned zero, because the generated SQL filtered
+`analytics.shops` on `created_at` — when that row was last loaded into the
+database, not a business date; `shops` is a present-day snapshot with no
+time dimension at all, and `schema_card.py`'s `VIEW_NOTES` had no entry for
+`analytics.dispatches`, the view that actually carries a real
+`transport_pass_issued_at` date, even though it has held the live August
+2026 IESCMS import since the dispatch-report milestone. `VIEW_NOTES` now
+says so directly for both views (`MCP_ENGINES.md` §Pipeline stages). And a
+plain "hi" in Chat sometimes got back nothing but a literal `"{}"` — Llama's
+tool-calling degenerates a trivial message into a bare `{}` once
+`CHAT_TOOL_SCHEMAS` is attached to the turn, confirmed directly against
+Ollama (the identical prompt with no `tools=` replies normally);
+`chat/loop.py` now holds back a brace-only reply instead of streaming it and
+retries the turn once with `tools=[]` (`MCP_ENGINES.md` §Tools). Underneath
+both: a real Postgres execution error — a hallucinated table, an ambiguous
+column — had no recovery at all, unlike `guard_sql`'s own rejection, which
+already got one re-plan. `run_query` now re-plans once on a `run_sql`
+failure the same way, and the chat `run_sql_query` tool returns a failed
+tool result instead of ending the turn, so the model can correct itself
+within its own tool-call budget the way `make_chart` already could.
+
+Continued live testing found three more failure modes in Chat and one in
+Ask. `search_knowledge`'s `k` argument is a plain `int = 6` in its Pydantic
+schema; Llama's tool-calling fills in every schema property rather than
+omitting the ones it leaves unset, so it sent an explicit `k: null` — a
+default only applies when a key is absent, not when it is `null` — and the
+resulting validation error killed the whole turn, leaving Chat silent.
+`run_sql_query` had a second failure from the same root: its schema let the
+model supply raw `sql` directly, and a general chat model has never seen the
+schema, so it hallucinated whole tables (`excise_data`,
+`country_liquor_shop`) instead of using the schema-aware planner. And after
+a tool call failed, Llama sometimes narrated a second call as literal text —
+replying with `run_sql_query(question="...")` verbatim — instead of issuing
+a real tool call or answering in prose, so the turn ended showing nothing
+but a failed query card and no answer. `k` is now `int | None`;
+`run_sql_query` takes only a plain-language `question`, always through the
+same schema-aware planner `/query` uses; any tool-call argument error now
+returns as a failed tool result instead of raising and ending the turn, the
+same way a rejected or failing SQL statement already did; and
+`chat/loop.py`'s bare-`{}` retry now also catches a narrated fake tool call,
+on the same reasoning (`MCP_ENGINES.md` §Tools). Chat also had no visual
+feedback for the gap before the first token or tool call arrived, now filled
+with a three-dot typing indicator. Ask had its own version of a stuck turn:
+`activeQueryId` lived only in the Livewire component's in-memory state, with
+no URL behind it, so navigating away and back could leave the stage spinner
+showing a query as still running after the orchestrator had actually
+finished. Ask questions now live at their own URL (`/ask/{query}`, the same
+pattern `/chat/{conversation}` already uses) and a "Recent questions" rail
+lists the last 20, so leaving and returning always re-mounts from the
+database instead of whatever was on screen when the user left.
+
+Live testing also surfaced two more wrong-but-not-erroring SQL answers and a
+slow-turn complaint. "How many composite/country-liquor shops in Lucknow in
+August 2026" twice generated `SELECT ... FROM analytics.shops WHERE
+created_at >= ...` — a syntactically valid query against the wrong table,
+since `shops.created_at` is an ETL load timestamp, not a business date, and
+silently returned zero instead of erroring. `schema_card.py`'s `VIEW_NOTES`
+already said not to do this; `guard_sql` now rejects the pattern outright
+(`analytics.shops` joined with a `created_at`/`updated_at` filter) and
+reprompts, the same retry a rejected statement already gets
+(`sql/guard.py`). Separately, a full chat turn needing a tool call was
+taking 1–3 minutes: `OLLAMA_MAX_LOADED_MODELS=1` evicts the coder model to
+load the chat model back in (or the reverse) on every swap within a single
+turn. `EVALUATION.md` §2 already priced pinning both models at once
+(~12–13 GB against this box's 30 GiB) as the fix for exactly this;
+`OPERATOR_SETUP.md` §Ollama runtime settings has the command to apply it.
+
+A desktop "application was stopped because the machine ran out of memory"
+notification during this same testing traced back to two separate things,
+not one. Most of it was `test_sandbox.py::test_memory_cap` doing exactly
+what it is supposed to: it deliberately allocates past a 64 MB cap inside a
+real sandbox cgroup to prove the memory limit actually kills a script, and
+GNOME surfaces that real kernel OOM-kill the same way it would an accidental
+one. The one genuine gap it surfaced alongside that: a `systemctl restart`
+of the orchestrator while a chart render was in flight left that render's
+`excise-sandbox-*.scope` running past the orchestrator's own death, holding
+its memory cgroup until it happened to hit its cap on its own several
+minutes later. `run_in_sandbox` now kills the sandboxed process immediately
+on cancellation, and a startup sweep stops any `excise-sandbox-*.scope`
+still active from a run that ended in a `SIGKILL` instead of a clean
+shutdown (`SECURITY.md` §2 After the render).
+
+Three usability gaps followed from hands-on use. Neither Chat nor Ask let a
+message or a query result be copied — no message on either page ever had a
+copy affordance, only the generated-SQL panel did. Both now carry a small
+copy button, the same pattern the SQL panel already used. Chat also had no
+way to stop a turn once sent, and stopping the browser's own `fetch()` alone
+would not have been enough: `ChatController::send()` relays the
+orchestrator's stream in a plain PHP loop with nothing checking whether the
+browser was even still there, so it kept driving the (expensive, CPU-only)
+Ollama call to completion regardless. The orchestrator's own turn-loop
+cancellation already existed (`MCP_ENGINES.md` §Chat and retrieval) — this
+was the missing link. The composer's send button now turns into a Stop
+button mid-turn (an `AbortController` on the fetch), and `send()` checks
+`connection_aborted()` on every relayed event and stops relaying the moment
+the browser disconnects, which is what actually reaches the orchestrator as
+a disconnect and cancels the in-flight call. And neither conversations nor
+questions could be removed at all. Both now get a soft delete (reversible,
+the Eloquent default) and a permanent delete from a per-item menu on their
+rail — permanent delete also clears the chart artifact and its rendered
+files, which carry no database-level foreign key to their owner and would
+otherwise be left behind.
+
+A live Chat turn surfaced one more shape of the tool-calling reliability gap:
+a real `run_sql_query` call succeeded, but the model's follow-up turn came
+back with no content at all, on both the tool-aware attempt and the
+`tools=[]` retry — the user was left looking at a tool call card with no
+answer and no chart, since `make_chart` is also the model's own choice and
+it never got the chance to make one. `CHAT_SYSTEM_PROMPT` already says never
+to let a tool result be the last thing in the turn, but that's a request the
+model can silently fail, not a guarantee; `chat/loop.py` now falls back to
+the tool result's own summary as the turn's answer when both attempts come
+back empty (`MCP_ENGINES.md` §Tools).
+
+Chat gained an explicit way to ask for a chart. `CHAT_SYSTEM_PROMPT` already
+limits `make_chart` to a call the model makes "only when a chart would
+help," so a single-number answer correctly gets no chart — but that leaves
+the request to make one entirely up to the model's own judgment. The
+composer's new chart toggle turns that judgment call into an explicit ask
+for one turn: checking it appends "Please include a chart to visualize the
+answer." to the copy of the message sent to the orchestrator; the message
+that `messages` stores and the transcript shows stays exactly what was typed
+(`ChatController::send`). The toggle first shipped on the same deferred
+`wire:model` the composer's textarea uses, which left its own on/off state
+invisible on click — a deferred binding only reaches the server on the next
+network round trip, and a lone checkbox click causes none. `wire:model.live`
+fixed that, and the active state is now a solid fill matching the send
+button's own convention.
+
+`shops` mutates in place from each IESCMS import, so nothing on the row
+itself says which reporting month its current state reflects — only
+`created_at`/`updated_at` (ETL load time, already the business date
+`guard_sql` rejects, above). A future monthly source that carries no per-row
+date at all — a shops roster, a monthly revenue/quota/enforcement figure —
+would have no period to record. `etl.source_registry.requires_period`
+and `etl.ingestion_runs.report_period` give such a source a place to state
+its month explicitly (`etl sync --source NAME --period 2026-08`), recorded
+on the run's own row instead of left to whenever the script happened to
+execute; `etl/etl/run.py` refuses to run a `requires_period` source with no
+`--period` given (`DATA_PIPELINE.md` §Periodic sources without a per-row
+date). `iescms_dispatch` itself needs none of this, since its rows already
+carry real dates — no source needs it yet, so this is groundwork for
+whichever one lands first. The period-stamped history table a mutate-in-place
+target would eventually need — `shop_years` already answers the equivalent
+question at financial-year grain — gets built alongside that source, once
+one is scoped.
+
+The chart toggle's switch had a second bug past its wire:model one: Tailwind's
+`peer-checked:*` only applies through a CSS sibling selector, which needs the
+element carrying it to be a direct sibling of the `.peer`-marked checkbox —
+the toggle's thumb `<span>` was nested inside its track `<span>` instead, a
+sibling of a sibling, so clicking it tinted the track blue but never slid the
+thumb. Both spans are now direct siblings of the checkbox under one
+positioning wrapper. Separately, live testing found a fifth shape of Chat's
+tool-calling reliability gap: asked for two metrics in one question (revenue
+and volume together), Llama skipped `run_sql_query` and wrote its own guessed
+SQL against a table that doesn't exist, narrated as "let me try running the
+following query" — the same class of failure as the narrated-fake-call and
+bare-`"{}"` cases, just a longer preamble before the fake content
+(`MCP_ENGINES.md` §Tools). Fine-tuning the chat model on this app's own
+transcripts came up as an alternative fix and is declined for now — every
+shape of this failure so far has closed with a prompt-wording change plus a
+matching `chat/loop.py` retry, not a retrain (`EVALUATION.md` §Right-sizing
+item 16).
+
+That fifth-shape fix immediately caused a live regression of its own: it
+withheld the guessed SQL from the stream entirely while deciding whether to
+retry, which meant sending nothing at all to the browser for the whole
+length of that generation plus the retry — long enough on a real turn that
+the connection dropped as interrupted before the correction ever streamed,
+and the composer sat on its typing indicator the entire time with nothing
+to show for it. A fenced sql block can't be told apart from ordinary prose
+until most of it has arrived, unlike the bare-`"{}"` and narrated-call
+checks either of which resolve within a few characters, so holding it back
+costs a lot more silence for the same guard. `chat/loop.py` now only checks
+for a fenced sql block once a turn's full text is in, deciding whether to
+retry, and no longer withholds it from the live stream while that decision
+is pending — the guessed SQL streams as it always did, and the correction
+follows right after it (`MCP_ENGINES.md` §Tools).
+
+Phase 5's last piece, the customization panel, is built: a FAB on every
+authed screen opens a Display panel — theme, font, text size, line spacing,
+content width, table density, accent, high contrast, reduce motion — applied
+through `data-*` attributes and a handful of CSS custom properties, with
+`users.ui_prefs` as the durable copy behind a `localStorage` + cookie fast
+path. The Tailwind config routes the `govviolet` palette through `--accent-*`
+CSS variables instead of literal hex, so an accent choice swaps which ramp of
+values those ten variables hold, and every existing `govviolet-*` utility
+across the app repaints with it — no change needed to the ~20 files that use
+them. The two accent options, govviolet and govsaffron, are the department's
+own two-tone palette, already part of the design system. Theme keeps its own
+`color_scheme` key, separate from the `ui_prefs` JSON, so the sidebar's
+light/dark toggle and the panel's three-way theme control read and write one
+shared piece of state. Reduce motion is a single CSS rule keyed to a
+`data-reduce-motion` attribute, so it also quiets Chat's bounce-dot typing
+indicator with no extra code there.
+
+Milestone 5's checklist is now fully built: money formatting, chart export,
+the query ledger, and an admin ETL visibility screen. `App\Support\Money`
+formats a rupee figure in rupees, thousands, lakh, or crore, with the
+Indian digit grouping `number_format()` doesn't produce on its own;
+`<x-money>` renders all four and switches between them with a plain Alpine
+`x-show`, and `<x-currency-input>` (ported from `excise-budget-tracker`) is
+the matching form input. Neither screen currently on `web/` shows a money
+figure or takes one as input, so this ships as ready infrastructure with no
+caller yet, the same position `Carbon::macro('ist')` was in before Phase 4's
+admin screens started calling it. Chart export reuses
+`engines/static_render.py`'s already-running persistent-browser renderer —
+a new `POST /chart/render` hands it an already-produced Plotly figure and
+returns PNG/SVG/PDF bytes, with no second render path and no LLM-authored
+code anywhere near it. Ask's and Chat's chart cards both gained export
+links. The query ledger replaces the placeholder `/ledger` route with a
+real Livewire screen listing every past `/query`; an Analyst sees their own
+questions, an Admin sees everyone's. The admin ETL screen
+(`/admin/etl`, privilege `etl.view`) lists `etl.ingestion_runs` and a run's
+`etl.quarantine` rows through two new orchestrator routes,
+`GET /etl/runs` and `GET /etl/quarantine` — the same pattern
+`GET /kb/documents` already established for a read-only admin browse
+screen. `excise_ro` had no grant on schema `etl` at all before this
+(`db/roles.sql`'s comment called it out explicitly: "excise_ro must not see
+the base data or write anywhere," lumping `etl`'s bookkeeping tables in
+with the base data it ingests into). The new grant covers only `etl.ingestion_runs` and `etl.quarantine` — the
+audit trail of what a run wrote and skipped — and `db/roles.sql` now
+includes it, but this box's database was already provisioned from an
+earlier run of that file, so the grant is a pending `sudo -u postgres` step
+(`OPERATOR_SETUP.md` §Data bank) rather than something already live. The new
+screen shows a clear fallback banner until that step runs.
+
+A compound Chat question — comparing two shop types' counts alongside their
+sales in amount and volume in one turn — surfaced a connection-level failure
+distinct from every earlier tool-calling gap: the browser's own `fetch()`
+died mid-stream with no ndjson `{"error": ...}` line to show, since a
+question needing several full `run_sql_query`/`make_chart` round trips can
+run past 300 seconds before the orchestrator gets the chance to send one.
+`OLLAMA_MAX_LOADED_MODELS=2` (above) was already live, confirming both
+models stay resident through the turn — the delay is the turn's own length,
+not a model reload. A single fixed request-duration cap has no right size
+here: a genuinely compound question can always need one more tool call than
+whatever ceiling was picked. `EVALUATION.md` already gives the matching
+reasoning for right-sizing generally. `run_chat`
+(`orchestrator/app/chat/loop.py`) now sends a `{"ping": true}` line every
+15s a tool call is still running — `_dispatch_with_heartbeats` runs
+`dispatch()` as a background task so the loop can keep yielding pings while
+it's in flight — the same keep-alive pattern a streaming tool-calling API
+relies on generally: the wire stays live off periodic bytes. A total-duration
+guess is never sized right for every turn. `OrchestratorClient::chatStream()`'s
+Guzzle timeout is uncapped to match, with `read_timeout` (45s) catching a
+genuinely dead connection. Apache's `mod_php max_execution_time` (this app
+has no FPM pool) becomes a backstop against a truly hung request instead of
+the turn-length budget itself. `deploy/apache-vhost.conf` sets it with
+`php_admin_value`, scoped to this app's own vhost: the shared
+`/etc/php/8.5/apache2/php.ini` also serves the four sibling apps on this
+same Apache instance, so an edit there would move their ceiling too — a
+pending `sudo` step (`OPERATOR_SETUP.md` §Apache PHP execution timeout)
+since Claude has no passwordless sudo on this box.
+
+With the connection no longer dying first, the same compound question
+surfaced the turn's actual next failure: every `make_chart` call rejected
+itself with "data_ref must point at this conversation's last run_sql_query
+result." `MakeChartArgs.data_ref` asked the model to restate the
+conversation's own id as a match check against `conversation_id` — but the
+model is never told that id anywhere, not in `CHAT_SYSTEM_PROMPT`, not in
+the message history, so no real call could ever supply the one value that
+would pass. The lookup was always scoped by the trusted `conversation_id`
+`dispatch()` receives from the request itself, never by anything the model
+supplies, so the check guarded nothing a mismatched value could actually
+have exploited. `data_ref` is gone from `MakeChartArgs`; `make_chart` now
+takes only the plot script (`MCP_ENGINES.md` §Tools).
+
+Asked to find other tool arguments in the same shape — the model required to
+supply something it was structurally never given — one more turned up: a gap
+in what the model is told, milder than `data_ref`'s always-fails bug.
+`/query`'s `plan_plot` stage hands its planning model an explicit capability
+string per engine before it writes a line of script: a pandas `df` is
+already loaded, the exact
+`fig.write_json(...)` call, that `fig.write_image()` is forbidden
+(`llm/prompts.py`'s `_ENGINE_CAPABILITIES`). `make_chart`'s tool description
+said only "chart the most recent result" — the chat model authoring `spec`
+had no equivalent contract, so a plausible chart script (matplotlib's
+`plt.savefig()`, a real option `/query` itself offers) could pass through
+looking reasonable and still produce nothing, since chat always fixes
+`outputs=["plotly_json"]` and only ever collects that one file. The tool
+description now states the same `df`/`OUT`/forbidden-`fig.write_image()`
+facts `_ENGINE_CAPABILITIES` already gives `/query`, plus the one fact
+specific to chat: only the `fig.write_json()` path is collected here.
+`llm/prompts.py` notes the two must be kept in sync by hand if the sandbox
+contract itself changes, since chat's fixed single output means it can't
+reuse `_ENGINE_CAPABILITIES` text as-is.
+
+A screenshot of the live Chat page surfaced three interface problems past
+what the test suite checks for. The per-conversation menu (delete, permanent
+delete) sat at `opacity-0` until hover, in a `p-1` hit target — invisible by
+default and small once found, in both `chat.blade.php`'s rail and
+`ask.blade.php`'s identical one. Both now keep it dimly visible at rest,
+brighten on hover or focus, and give it a full `w-7 h-7` target. Chat's empty
+state reused `.stat-card`, the bordered widget style the dashboard's stat
+tiles use; sitting right above the composer's own "Ask anything..."
+placeholder, it read as a second, self-contained input. It's unboxed now —
+an icon and a line of text, no border — with copy that names the composer
+directly: "Type a question below to begin." The Visualize toggle reset
+itself the moment a message was sent, before there was any way to tell the
+send had picked it up. `includeChart` (`Chat.php`) now holds its value the
+way the model picker beside it does — a standing choice for the composer,
+kept until the person using it changes it themselves.
+
+The same rail's menu had two more bugs that visual opacity alone didn't fix.
+It was `position: absolute` inside the rail's own `overflow-y-auto` div, so
+opening it on a row near the bottom grew the rail's scrollable content
+instead of showing a floating menu — the list visibly jumped to make room.
+Both rails now put the menu in a `<template x-teleport="body">`, positioned
+`fixed` from the trigger button's own `getBoundingClientRect()` at open
+time, opening upward when there is not 90px of room below — it floats over
+the page and never touches the rail's scroll height. Separately, the trigger
+button sits on top of the row's own link with nothing stopping a click from
+reaching past it, so the button's handler now carries `.stop.prevent`.
+Neither row's `<div>` carried a `wire:key` before this either — every other
+keyed Livewire loop in this app has one (`query-ledger.blade.php`'s rows,
+for one) — and a teleported node makes that matter more than it already
+did, so both loops key each row on the conversation/query id now.
+
+A live report of the same conversation getting stuck again traced to a
+different cause than any code bug: `excise-orchestrator.service` had been
+running since 2026-09-19, well before all three of that day's orchestrator
+fixes (the heartbeat pings, `data_ref`'s removal, `make_chart`'s script
+contract) — a `systemd --user` service does not pick up new code on its own,
+`web/`'s plain PHP files do on every request. The mismatch made the specific
+symptom worse: the new PHP-side fix traded a blunt 300s total-duration cap
+for a 45s *silence* cap, sized on the assumption the orchestrator's own
+heartbeat would keep the wire fed — running the old code with no heartbeat,
+a single slow step (the coder model planning SQL for a compound question)
+could go quiet past 45s and get cut sooner than the old 300s cap would have
+allowed. `OPERATOR_SETUP.md` gains no new step for this — restarting a
+`systemd --user` service after an orchestrator code change is not itself a
+milestone step, it is the standing operator action a code change like this
+always needs; `systemctl --user restart excise-orchestrator` is a pending
+`--user` service restart Claude documents rather than runs, per this file's
+own hard constraint.
+
+The five browser `confirm()` dialogs (`wire:confirm`, on conversation/query
+permanent-delete, knowledge upload withdraw, Google disconnect, and user
+deactivate) are now SweetAlert2 popups instead, matching the styled-confirm
+convention the sibling apps already use. `php-flasher/flasher-sweetalert-laravel`
+is the new dependency — a second php-flasher plugin package alongside the
+toast one already installed, sharing the same `@flasher_render` bootstrap,
+so it needed nothing beyond `composer require` + `php artisan flasher:install`
+to publish its assets. `ConfirmsWithSweetAlert`
+(`app/Livewire/Concerns/`) is the reusable half: a component calls
+`confirm($method, $arg, $message)` from its own trigger method in place of
+`wire:confirm`, and a trait-provided `#[On('sweetalert:confirmed')]` handler
+calls `$method($arg)` once SweetAlert2's own confirm button is clicked — the
+method name and its one argument ride through as `sweetalert()` options,
+read back off the event's `envelope.options` on confirm. That exact wire
+shape (`envelope.options`, not a top-level payload key) came from reading
+the installed package's own JS and PHP source directly, not the docs, which
+show the calling pattern but not the shape a listener actually receives.
+Building it caught two bugs before either shipped: `sweetalert()->question()`
+sets the dialog's icon and message but never queues the notification on its
+own — only a terminal call like `warning()` does, ending its own internal
+chain in `push()` — so `confirm()` had to end there instead, a mistake a
+live click never would have surfaced as anything but "nothing happens";
+and the trait's own `confirm()` needed to be `public`, not `protected`, to
+be reachable from `wire:click` at all, the same visibility `wire:click`
+already needs on every other component method. Both surfaced from a real
+test exercising the actual installed package rather than a mocked one —
+`Livewire::test()`'s own `->call()` never sets the `X-Livewire` header
+`isLivewireRequest()` checks, so the bridge that turns a queued envelope
+into a `flasher:render` browser event never fires under it; the test for
+`confirm()` itself uses a plain object with the trait instead, sidestepping
+that gap rather than working around it.
+
+An admin data dictionary followed a request to make it easier to tell the SQL-planning
+model what a table or column actually means, and to see the schema itself from the UI.
+`schema_card.py`'s `VIEW_NOTES` already carried this kind of note, but as a fixed
+table-level dict in the orchestrator's own source — changing one meant a code change and
+a restart, and there was no per-column equivalent at all. Admin -> Data dictionary
+(`schema.manage`) now lists every `analytics.*` table and column from a new
+`GET /schema/tables` (the orchestrator's own read-only introspection of
+`information_schema.columns`, the same query `render_schema_card` already ran), with an
+editable note per table and per column. A note is saved to web/'s own `schema_notes`
+table, since web/ has no Postgres connection of its own to write anywhere else. The
+orchestrator reads them back over a new `GET /api/schema-notes` on web/ — every earlier
+orchestrator/web/ call has run from web/ into the orchestrator, so this is the first one
+running the opposite direction — gated by the same shared bearer token web/'s
+`OrchestratorClient` already sends outbound, and
+merged into `VIEW_NOTES` at the next `render_schema_card` call (`schema_card.py`'s
+`fetch_note_overrides`). web/ being unreachable or the table empty degrades to `VIEW_NOTES`
+alone, not a startup failure. "See the database" is `GET /schema/tables/{name}/sample`,
+five rows from the named view — `table_name` is checked against `information_schema.tables`
+first, so only a name that already exists in the schema this endpoint just listed can ever
+reach the interpolated query after it. Notes reach the model only on the orchestrator's
+next start; `OPERATOR_SETUP.md`'s existing restart-after-a-code-change guidance covers this
+the same way it covers `VIEW_NOTES` itself.
+
+A live retest of the earlier compound-question fix — heartbeat pings, an
+uncapped Guzzle timeout, a generous `max_execution_time` — still dropped
+mid-turn through the real Cloudflare Tunnel, on the same comparison-plus-
+sales question that fix was written for. The Apache access log showed only a
+couple KB delivered on a turn that ran over two minutes server-side; the
+browser never saw the stream start at all. The shared php.ini's
+`output_buffering = 4096` was the reason: `ChatController::send()`'s
+`ob_flush()`/`flush()` calls only empty PHP's own buffer into that one, so a
+15s heartbeat ping sits there instead of reaching the socket until 4KB
+accumulates, and Cloudflare reads the resulting silence as a dead connection
+regardless of how generous `max_execution_time` is. `output_buffering` is
+`PHP_INI_PERDIR` — `ini_set()` in application code cannot turn it off, only
+a php.ini, `.htaccess`, or vhost directive can — so `deploy/apache-vhost.conf`
+now sets `php_admin_value output_buffering 0` alongside
+`max_execution_time`, same scope, same reason (`OPERATOR_SETUP.md` §Apache
+PHP execution timeout), applied live with `sudo bash deploy/root-setup.sh` —
+the vhost and `/health` both confirmed the setting is live; the next
+compound question through the real tunnel URL is the actual test of it.
+
+That next question dropped the same way, on a fresh conversation — the
+`output_buffering` fix was real but not the actual blocker. Timing raw event
+arrival directly (a standalone script hitting the orchestrator with the
+exact code `OrchestratorClient::chatStream()` ran) showed every single
+event of a two-minute turn, pings included, landing at the same timestamp:
+the whole response arrived in one burst when the connection closed, never
+progressively. Guzzle's `stream => true` — the option the original
+implementation relied on for this, in every handler it has (curl, its PHP
+stream-wrapper fallback, with or without Laravel's own `Http` facade
+wrapping it) — buffered the entire orchestrator response before releasing
+any of it. A plain `curl` CLI call to the same endpoint streamed normally;
+no PHP variant of the identical request did.
+`app/Services/CurlOrchestratorStream.php` now drives PHP's own curl
+extension directly instead — `CURLOPT_WRITEFUNCTION`, polled through
+`curl_multi_exec`, delivers each chunk as it lands on the socket, the same
+mechanism the curl binary itself uses. `OrchestratorClient::chatStream()`
+and `runQuery()` (the same buffering bug sat in `/query`'s relay too, just
+less visible — `RunExciseQuery` is a queued job with a 300s total-duration
+cap, not a live browser connection with a heartbeat to defeat) both go
+through it now, behind a small `OrchestratorStream` interface — the only
+reason for the interface at all is that `Http::fake()` cannot intercept a
+raw curl call, so a test binds a fake implementation in its place instead
+(`MCP_ENGINES.md` §Streamed events). Verified against the real app end to
+end, not just in isolation: a scripted request carrying a genuine
+authenticated session, posted straight at `ChatController::send()` through
+the live Apache vhost, showed a `tool_call` at 21.7s and pings at 36.7s and
+51.7s — exactly the 15s cadence the design calls for, for the first time
+confirmed the whole way from `run_chat` to the browser's own connection.
+
+The connection fixed, the same live question surfaced a data-modeling gap
+behind the SQL error underneath it: asking for a specific month's sales in
+amount and volume by shop category kept failing on a hallucinated
+`shop_id`/`dispatch_id` column against `analytics.sales_volumes`, since
+that view (and `analytics.revenues`) has no shop-level or monthly
+granularity at all — it's aggregated by district, financial year, and
+license category only. `VIEW_NOTES` now says so for both and points at
+`analytics.dispatches` instead, which already carries `duty_fee_inr` and
+the `dispatched_*` volume columns at exactly the granularity a month- or
+shop-scoped question needs (`DATA_PIPELINE.md` §Row visibility for the AI
+path). Past that, a real `run_sql_query` failure surfaced a second gap in
+the retry that was supposed to cover exactly this: the `tools=[]` retry
+streamed every chunk unconditionally, with none of the bare-`"{}"`/
+narrated-call holdback the first attempt already has, so when the retry
+also narrated the same fake call after a failed SQL statement, nothing
+caught it before it reached the user. The retry now gets the same per-chunk
+check, and the fallback for a still-degenerate retry changed too: a failed
+tool's raw `summary` (`column sv.shop_id does not exist`) meant nothing
+shown as a stand-alone reply to someone who didn't ask a SQL question, so
+`_tool_failure_fallback` states the failure in plain terms first and keeps
+the technical detail after it — a successful call's summary is unchanged,
+since it already reads fine on its own (`MCP_ENGINES.md` §Tools). Ask's own
+failed-query box gets the same plain-terms-first treatment, with the
+technical `error_message` kept as supporting detail underneath it.
+
+Both Ask and Chat also gained a small set of example questions on their
+empty state — three each, verified directly against the real August 2026
+Lucknow import before being shown as "try an example," not written from
+guessing what the data probably contains. Clicking one fills the composer
+(and, on Chat, sets the chart toggle where the example calls for one)
+without submitting it, so a first-time visitor sees the pipeline answer a
+real question with one click and can still edit it first.
+
+Tracing that `sales_volumes` hallucination back to its source — the raw
+IESCMS Excel reports in `scripts_and_data/sample_data/` — found a second,
+related gap. Every row in those reports carries two separate license-type
+columns: a wholesale one (`FL2`/`CL2`, the distributor) and a retail one
+(the actual shop, e.g. `FL5DB`/`CL5C`), and `analytics.dispatches` already
+keeps them apart correctly. What the model never had was anywhere to look
+up what any code means, or that `FL2`/`CL2` are wholesale-only —
+`license_categories` (code, name, kind) has held the full list since the
+dispatch-report milestone but was never exposed as its own view.
+`analytics.license_categories` now is one (`db/analytics_views.sql`,
+picked up by `excise_ro`'s existing default-privileges grant with no
+separate `GRANT` needed), and `VIEW_NOTES` for `dispatches`/`shops` now
+name it directly (`DATA_PIPELINE.md` §Row visibility for the AI path). A
+pending `sudo -u postgres psql -f db/analytics_views.sql` step, same shape
+as the earlier `etl` schema grant. Checking three related repos
+(`~/Sites/upexcise-stats-dashboard`, the restored legacy `~/mentor_portal_db`
+dump, `~/Projects/*`) for anything else the schema notes were missing
+surfaced one further, unbuilt gap: the legacy portal's own shop table has
+2,024 real shops under `Bhang`/`Bhang Shop`, a category this project's
+`license_categories` has never carried and the live IESCMS import doesn't
+either — noted in `ROADMAP.md`'s backlog, not started, since there is no
+source of shop-level Bhang data to ingest yet. `analytics.license_categories`
+is now live and confirmed — the pending `sudo -u postgres` step ran, all 12
+codes read back correctly, and the orchestrator's own restart picked up the
+matching `VIEW_NOTES` entry.
+
+A live report of Chat sticking on its typing indicator indefinitely, and the
+tunnel itself going down, traced past the app entirely: the Cloudflare
+Tunnel's own log (`journalctl --user -u excise-mcp-dashboard-tunnel`) showed
+`"failed to accept QUIC stream: timeout: no recent network activity"`
+dozens of times over 48 hours — cloudflared defaults to QUIC over UDP, and
+this box's network path was silently dropping idle QUIC sessions well
+before either side meant to close the connection. The sibling apps' tunnels
+showed the identical error hundreds of times over the same window, so this
+is the box's network path, not anything specific to this app. A request cut
+off mid-stream this way gets no clean error on the browser side — the
+connection just goes quiet, which is what every earlier "connection was
+interrupted" report and now a stuck typing indicator actually were.
+`~/.cloudflared/excise-mcp-config.yml` now pins `protocol: http2`, forcing
+HTTP/2 over TCP instead of QUIC over UDP — confirmed live, all four tunnel
+connections now register as `protocol=http2` in the log, with no further
+timeout errors since (`OPERATOR_SETUP.md` §Cloudflare Tunnel).
+
+The testing that surfaced all of the above left `queries` and `conversations`
+full of stuck and half-finished rows — two Ask queries stuck on `pending`
+from turns that died mid-stream, and chart artifacts and their rendered
+files pointing at rows that no longer meant anything. `OPERATOR_SETUP.md`'s
+new §Reset chat/Ask history runbook clears both tables and their chart
+artifacts, exporting every question actually asked (Ask's `prompt` and every
+`role = 'user'` chat message, all users) to a text file first — the actual
+data being tested against, `analytics.*` in Postgres, is untouched by this;
+it only ever reaches into `web/`'s own MariaDB store.
+
+A pre-demo pass surfaced two SQL bugs on the same prepared question ("how
+many country liquor and composite shops are in Lucknow in August 2026")
+stacked on top of each other. First, `sql/guard.py`'s `guard_sql` caught
+`sqlglot.errors.ParseError` but not its sibling `TokenError` — a tokenizer
+failure on text that isn't SQL at all, which is exactly what the SQL model
+returned once, live. Neither exception is a subclass of the other, so the
+`TokenError` escaped uncaught and crashed the whole request as an unhandled
+500 instead of getting the same reject-and-retry every other bad-SQL case
+gets; the guard now catches their common `SqlglotError` base. Second, once
+that was fixed, the same question still failed on its first real attempt:
+the model joined `analytics.shops` to `analytics.districts` and filtered on
+`transport_pass_issued_at`, a column that only exists on
+`analytics.dispatches` — a hallucination `VIEW_NOTES` already warned against
+in prose but the model didn't reliably follow. `dispatches` already carries
+`district` and `retail_license_category` as its own columns, so the correct
+query needs no join at all; `llm/prompts.py`'s `FEW_SHOT_SQL_EXAMPLES` now
+has this exact question worked correctly, and a live re-run answered it
+right on the first attempt with no retry. Alongside both fixes, Ollama's
+single `OLLAMA_TIMEOUT_SECONDS` split into `OLLAMA_GENERATE_TIMEOUT_SECONDS`
+(480s — `plan_sql`/`plan_plot`/`summarize`, non-streaming, already running
+inside a heartbeated tool call or a queued job) and
+`OLLAMA_CHAT_TIMEOUT_SECONDS` (300s — a live chat turn a person is actually
+watching stream, tighter margin), after a live retry on the slow path
+measurably needed more than the old flat 300s.
+
+The same pass found Chat's third example question ("What does the excise
+policy say about MGQ?") had nothing to retrieve — `kb.documents` was empty.
+`etl/.env` had no `KB_RO_MYSQL_PASSWORD` set, so the MariaDB connection to
+`pdf_markdown_pipeline_local` was rejected outright; the sync ran clean once
+that credential was set and populated 334 documents. That sync also carried
+two structural gaps of its own past just getting it running. `kb.documents`
+already had `effective_from`/`effective_to` columns for exactly this, but
+`etl/sources/pdf_pipeline.py` never read `documents.metadata`'s
+`effective_year` — pdf-markdown-pipeline's own structured field for a rule
+amendment's year — so every synced document read as undated regardless of
+what its title said. The sync now parses it, and `search_knowledge`'s
+formatted output cites the real year (`[Bar Rules 2022 (1st amendment)
+(effective 2022) — ...]`) instead of only whatever text happened to be in
+the title; re-running the sync backfilled 196 of the (then-)334 documents,
+since a metadata-only change had to stop counting as "unchanged content" for
+that backfill to apply to documents synced before the column existed.
+Separately, pdf-markdown-pipeline's `excise` department also holds ten other
+states' excise policies as comparative reference material (`rule_sets.state`
+names which) — this tool answers for UP only, and plain FTS ranking put a
+couple of OCR-noisy Himachal Pradesh/Punjab fragments ahead of the relevant
+UP text on a live retrieval test. The sync query now excludes any document
+under a rule set tagged for a state other than Uttar Pradesh (a `NULL` state
+— a generic Act or government order with no state-specific rule set — stays
+in scope); the twelve already-synced other-state documents went through the
+sync's existing withdrawal path, the same one an unpublished or deleted
+upstream document already used, rather than a direct delete.
+
+The pending `excise_ro` grant on schema `etl` (above, Milestone 5's admin
+ETL screen) has run — confirmed live, `excise_ro` now reads `etl.*` and the
+`/admin/etl` screen shows real ingestion runs instead of its fallback
+banner.
+
+A live report of a chat question about the excise policy going silent
+traced to a fifth shape of the tool-calling degenerate-reply gap
+(`MCP_ENGINES.md` §Tools), past what the fourth shape's own fallback
+already covered. That fallback only fired once `last_tool_result` was set —
+true only after a tool call has actually happened in the turn — but this
+question never called `search_knowledge` at all: the model tried answering
+directly, and both the tool-aware attempt and the `tools=[]` retry came
+back degenerate with no tool ever dispatched. The guard condition was
+always false in that case, so the turn ended on a `DoneEvent` with not one
+character streamed — an empty persisted message, zero tool calls, no error
+anywhere, indistinguishable from the app hanging. `chat/loop.py`'s fallback
+now fires on any double-degenerate turn regardless of whether a tool was
+ever called, falling back to a plain retry prompt when there is no tool
+result to reference.
+
+Two more live reports followed on the same conversation. First, a sixth
+shape of the tool-calling gap: a real `run_sql_query` call succeeded but the
+follow-up answer wrote "here is a chart showing..." with no `make_chart`
+call ever made. `CHAT_SYSTEM_PROMPT` now forbids referring to a chart unless
+`make_chart` was actually called that turn. The same answer also read out
+shop categories by bare code only (`CL5C`, `FL4A`, ...) — unreadable without
+already knowing `analytics.license_categories` by heart. The chat model
+never sees the schema card, so asking it to name a code from memory would
+risk a guess; fixed in the SQL planner instead, with a worked few-shot
+example joining `analytics.license_categories` in by code so the
+plain-language name rides along in the result the model reads
+(`MCP_ENGINES.md` §Tools, `DATA_PIPELINE.md` §Row visibility for the AI
+path). Second, a `make_chart` call sent `spec` as the literal text "chart
+specification code" — a description of a script, not one — which the
+sandbox ran as-is and failed on with a `SyntaxError`. The tool description
+had never shown a worked example, only prose describing the contract; it
+now ends with one concrete `spec` and says directly that the value must be
+real, runnable Python, never a description or placeholder.
+
+A live question about the chat model picker surfaced that a second `role:
+chat` registry entry (Qwen 2.5 3B/1.5B, added earlier the same day as
+groundwork for a faster chat option) had shipped ahead of the work that
+would make picking it actually safe — speculative work this file's own
+negative constraints already rule out. Past the RAM cost of a third
+`OLLAMA_MAX_LOADED_MODELS` slot never having been accepted, it turned out
+outright broken: `web/`'s picker sends the registry's short key
+(`"llama3.1"`), the orchestrator validates the full Ollama tag
+(`"llama3.1:8b-instruct-q4_K_M"`) against `OLLAMA_ALLOWED_MODELS`, and
+nothing translates one to the other — picking any option, including
+re-picking the default, failed the call outright. `web/config/models.php`
+is back to the one `role: chat` entry it had before, which also hides the
+picker again (`Chat::render()` only shows it past one option), and
+`EVALUATION.md` §2 now names both gaps as what a real second chat model
+needs done together, not a registry line added alone.
+
+A live `make_chart` failure past the placeholder-text bug surfaced two more
+gaps on the same call. The model plotted `x="shop_category"`, a column that
+does not exist — the real result carried `retail_license_category`/
+`category_name`/`total_bl`, named in that tool's own result summary right in
+front of it — and Plotly's `ValueError` killed the render; `CHAT_SYSTEM_PROMPT`
+now tells the model to plot columns using the exact names `run_sql_query`
+gave them, never a guessed one. The model's answer still claimed a chart
+existed afterward — a narrower case of the earlier narrated-chart shape, this
+time past an actual `make_chart` call that failed rather than one never made
+— so the prompt's guard now checks that the call succeeded, not just that it
+happened. The failed call's own traceback also turned out to carry this
+box's real filesystem layout in every stack frame under
+`orchestrator/.venv`'s site-packages — `bwrap` binds that venv at its own
+host path, and a failed tool call's message reaches a chat user verbatim.
+`run_in_sandbox` (`sandbox/bwrap.py`) now strips that host path out of the
+exception message a user can see; the full traceback stays in the log line,
+operator-only (`MCP_ENGINES.md` §Tools).
+
+A related report — a persisted assistant message rendering as a bubble with
+nothing in it at all, no text and no tool card — traced to
+`ChatController::send`'s own `finally` block: it persists the assistant
+message with whatever `$assistantText` it accumulated regardless of whether
+a turn produced any, since a turn that failed still needs a row in the
+transcript. Every degenerate-turn case `chat/loop.py` guards against is
+meant to fall back to some text before this happens, but a client disconnect
+mid-stream reaches it the same way, and `chat.blade.php`'s persisted-message
+rendering had no fallback of its own for an empty message with no tool
+calls — nothing rendered, indistinguishable from the page being broken. It
+now shows "No response was generated for this message." instead
+(`MCP_ENGINES.md` §Streamed events).
+
+The admin Knowledge base screen's "Ingested corpus" table had two more gaps.
+`KnowledgeBaseIndex::render()` called `OrchestratorClient::kbDocuments()`
+with no arguments, always the first 20 documents with no way to reach the
+rest even though both the orchestrator's `GET /kb/documents` and the client
+method already took `page`/`per_page` — only the caller never passed them.
+It now builds a `LengthAwarePaginator` from that response's own `total`,
+keyed on a `corpus_page` page name distinct from the uploads table's own
+pager on the same screen, rendered with the same `->links()` Tailwind view
+the uploads table already uses. A document's `doc_type` also rendered as
+the raw code (`rule_amendment`) rather than a reader's label — this corpus
+syncs from `pdf-markdown-pipeline`, whose own `Document::DOCUMENT_TYPES`
+already carries the human label for each of the fixed set of codes it can
+send; `KnowledgeBaseIndex::docTypeLabel()` now carries the same map.
+
+The admin Data dictionary screen had a related complaint: every table's
+full column list rendered open on every page load, so a table like
+`dispatches` (27 columns) made the whole screen long before an admin had
+asked to look at any of it. The screen already had a per-table
+`$expandedTable` toggle, but it only gated the sample-rows panel — the
+column list and its note-editing inputs sat outside it, always visible.
+Both now open together behind the same toggle, defaulting closed; the
+table-level note field stays visible unconditionally, since a one-line
+summary is what makes browsing the collapsed list still useful.
+
+A live report of the Data dictionary's sample-rows panel showing nothing
+traced to real data, not a bug: `db/seed_reference.sql` only ever populated
+`districts`, `divisions`, `financial_years`, `license_categories`, and
+`zones` — of `analytics`'s 13 tables, only those plus `shops` and the
+IESCMS-imported `dispatches`/`dispatch_strength_lines` carry any rows today.
+`brands`, `brand_prices`, `duty_rates`, `operations`, `policy_entries`,
+`revenues`, `sales_volumes`, and `shop_years` were real fact tables with no
+source data imported into them at the time — sampling one correctly showed
+"No rows." The NITI workbook import below fills all of them except
+`duty_rates`. A related live Chat report — a sample question left showing "No
+response was generated for this message" — traced the same way: the
+orchestrator's own log had no "chat turn complete", "chat turn failed", or
+unhandled-error line for that request at all, and the very next request
+logged five seconds later was a page navigation away from Chat — consistent
+with the browser's `fetch()` being aborted by leaving the page mid-turn
+(`asyncio.CancelledError` propagates past both of `_stream_chat`'s `except`
+clauses, so a cancelled turn logs nothing), not a new failure shape. A SQL
+plan alone has taken over two minutes on this box on a real question
+(`EVALUATION.md` §2's `OLLAMA_GENERATE_TIMEOUT_SECONDS` margin exists for
+exactly this) — long enough that navigating away to check something else
+mid-turn will read as this fallback message every time.
+
+A live Ask question ("how many country liquor and composite shops in
+Lucknow in August 2026") undercounted by 417 shops — every one of them
+`FL5DB`. The exact worked example added for this question in an earlier
+pass (`FEW_SHOT_SQL_EXAMPLES`) filtered `retail_license_category IN ('CL5C',
+'CL5CC')`, and the model copies a worked example's pattern directly rather
+than reasoning about what a general category name covers —
+`analytics.license_categories.kind = 'composite'` is both `CL5CC` (Country
+Liquor with Beer) and `FL5DB` (Composite: Foreign + Country Liquor), and the
+hardcoded list only had one of them. The example now JOINs
+`license_categories` and filters on `kind IN ('country_liquor',
+'composite')` instead of a memorized code list, and `VIEW_NOTES` states the
+general rule directly: a category name that isn't a specific code (composite,
+country liquor, foreign liquor, beer, model shop) can mean more than one
+code, so filter on `kind`, never on a hand-picked list that can silently
+leave one out (`DATA_PIPELINE.md` §Row visibility for the AI path).
+
+That fix's own `kind = 'composite'` classification for `CL5CC` turned out
+wrong, caught by checking `~/Projects/up-excise-spatial-revenue-optimizer`'s
+roadmap — the canonical shop-type reference for this department's licensing,
+independently built and far more detailed on this specific point than
+anything in this repo. `CL5CC` is not its own shop type at all: it is a
+Country Liquor shop with a beer endorsement, modeled there as
+`shopType = COUNTRY_LIQUOR` with a `hasCl5cc` flag, never combined with
+foreign liquor. "Composite" means only a Foreign Liquor + Beer license —
+`FL5DB` is the sole `kind = 'composite'` code. `public.license_categories`
+had both wrong: `CL5CC.kind` was `'composite'` (corrected to
+`'country_liquor'`) and `FL5DB.name` read "Composite (Foreign + Country
+Liquor)" (corrected to "Composite (Foreign Liquor + Beer)") — fixed live
+against the running database and in `db/seed_reference.sql` for the next
+fresh provision, with `schema_card.py`'s `VIEW_NOTES` and the worked SQL
+example's own comment corrected to match. The fix from the paragraph above
+still holds: filtering on `kind` rather than a hardcoded code list already
+gave the "country liquor and composite shops" question the right answer
+either way, since `CL5C` and `CL5CC` both being `kind = 'country_liquor'`
+was never in question — only `CL5CC`'s own kind label was wrong.
+
+A new knowledge-base document, `UP Excise shop types and license codes`,
+carries the corrected classification for every shop type this project
+uses (Country Liquor, Composite, Model Shop, PRV, Bhang Shop, HBR) in
+plain language, sourced from the same roadmap, so a chat question asking
+what CL5CC or FL5DB means retrieves the correct answer instead of nothing
+— confirmed live via `search_knowledge`. Getting it in surfaced that the
+admin "upload a `.md` file" screen (`KnowledgeBaseIndex::upload()`) has
+never had an ETL consumer: `etl/etl/sources/` only syncs
+`pdf-markdown-pipeline`'s own corpus, nothing anywhere reads a pending
+`kb_uploads` row despite the upload screen's own flash message promising
+ingestion "on the next sync." This document was ingested by hand instead,
+calling `etl/etl/chunk.py`'s `chunk_markdown()` directly the way the
+pdf-pipeline sync does, tagged `origin = 'admin_upload'` rather than
+`'pdf_pipeline'`. Wiring `kb_uploads` into a real sync path — chunk each
+pending row's stored file the same way, mark it ingested, handle a
+withdrawal — is unbuilt, `ROADMAP.md`'s backlog.
+
+Pre-demo retesting of the exact question set planned for the demo surfaced
+two more live failures, both traced through `journalctl --user -u
+excise-orchestrator`'s structured logs rather than guessed at. First, the
+sixth tool-calling shape's fix (`MCP_ENGINES.md` §Tools) — a
+`CHAT_SYSTEM_PROMPT` line forbidding a chart claim with no `make_chart`
+call — turned out to be a request the model could still ignore: a retest
+answered "Here is a chart showing the dispatched volume by shop category in
+Lucknow for August 2026" with the log confirming only one tool call that
+turn (`run_sql_query`, no `make_chart`). `chat/loop.py` now enforces this in
+code, the same way `_needs_retry` already enforces the fenced-sql-guess
+guard rather than trusting the prompt alone: `_claims_unmade_chart` checks a
+completed turn's text against a fixed set of chart-claim phrases and retries
+once, unless a `make_chart` call actually succeeded that turn. Second, a
+compound question ("compare dispatched volume by shop category") dropped
+mid-turn with "The connection was interrupted" after roughly 90 seconds.
+The existing 15s heartbeat (`MCP_ENGINES.md` §Streamed events) only ever
+covered a running tool call, not the model's own turn generation — the
+follow-up turn deciding whether to call `make_chart` after `run_sql_query`
+returned streamed through a plain iterator with nothing to fill the wire if
+it sat quiet, long enough to cross the PHP relay's 45s idle cap
+(`CurlOrchestratorStream`). `_generate_with_heartbeats` now wraps
+`ollama.chat_stream()` the same way `_dispatch_with_heartbeats` already
+wraps a tool call. Both fixes are `orchestrator/`-only and need the standing
+`systemctl --user restart excise-orchestrator` step (this file's own hard
+constraint on `systemctl` — Claude documents the command, an operator runs
+it) before a retest of the same demo question set will show either fix live.
+
+That chart-claim retry had its own bug, caught on the very next retest after
+a restart: it reused `_needs_retry`'s `tools=[]` shape, so the retry could
+never call `make_chart` — the one thing that would actually produce a
+chart — and just repeated the identical false claim, this time landing on
+top of the first attempt's already-streamed text plus the doubly-degenerate
+fallback's raw tool-result summary, all three concatenated with no
+separator. The retry that follows a chart claim (and not also a degenerate
+or guessed-SQL reply) now keeps `CHAT_TOOL_SCHEMAS` attached and gets one
+added line telling the model what it did wrong and to call `make_chart` now
+if a chart would help — the same feedback-and-retry shape a failed
+`run_sql_query` call already gets, rather than a retry that was structurally
+unable to fix what it was retrying for (`MCP_ENGINES.md` §Tools).
+
+After the restart, the same compound question rendered its chart live for
+the first time — confirmed against the real UI, bar chart and PNG/SVG/PDF
+export links included. That live render surfaced two more gaps past the
+chart itself existing. First, its axis titles read as the raw SQL column
+names (`retail_license_category`, `total_bl`) rather than anything a reader
+recognizes. `make_chart`'s tool description and `/query`'s own
+`PLOT_SYSTEM_PROMPT` now both ask for a Plotly `labels=` mapping to a
+human-readable title per axis, alongside the existing rule to plot the exact
+column names `run_sql_query` gave — the data reference and the display label
+are two different things, and only the first one had a rule before this.
+Second, the answer text itself read as two passes over the same numbers: an
+unformatted list, then "Here is a chart showing..." repeated within the same
+reply, then the formatted list again. `CHAT_SYSTEM_PROMPT` and `/query`'s
+`SUMMARY_SYSTEM_PROMPT` now both say to state each figure once, in one form,
+and drop the inflated wording `/general-english` already flags project-wide
+— this closes the repetition a single generation writes on its own. It does
+not touch the separate, already-documented case where a chart-claim retry
+fires: that retry's own corrected text still lands after the first attempt's
+already-streamed one, by design (above) — a demo question that needs no
+retry now reads as one clean answer; one that does still shows both passes.
+
+The eight NITI workbooks under `~/mentor_portal_db` are loaded into
+`excise_bank`, run against the live database: 3,455 revenue rows, 3,812
+sales-volume rows, 11,124 operations rows, 80,676 shops / 241,762
+shop-years (192 quarantined, mostly a known Bahraich financial-year typo),
+2,541 brands, 5,008 of 8,693 brand-price rows (3,684 quarantined — an
+unmatched brand name, an ambiguous one, or a genuine price conflict, in
+that order of frequency), and 60 policy entries. `duty_rates` stays at
+zero: its source column holds a formula referencing EDP (ex-distillery
+price, e.g. `200+0.425*EDP`), not a plain number, and no destination for a
+formula exists in this schema — a decision still open, not a bug. Two shop
+categories the real-category Shops workbook carries, "Bar" and "Wholesale
+Beer & Wine," have no seeded `license_categories` code (`FL6`/`FL2B` were
+never added) and load with `license_category_id = NULL`. The 14 districts
+`FLAGGED.md` already named for a per-district merge conflict load the same
+way every other district does, just left unpublished
+(`shops.published_at IS NULL`) pending district confirmation. Full detail,
+the exact quarantine reasons, and the Lucknow shop-identity collision check
+(zero collisions) are in `DATA_PIPELINE.md`'s "NITI workbook import"
+section.
+
+Ask's own page header always read "Ask," on the question's own page as much
+as on the empty composer — `Ask::render()` hardcoded the title regardless of
+`$activeQuery`. Chat already sets its header from the active conversation's
+own title; Ask now does the same from the active query's own `prompt`,
+truncated to 60 characters the same way `Chat::send()` already truncates its
+own title. A plain PHP file change — live on the next request, no restart.
+
+A live report of the department's own prepared question — "how many country
+liquor and composite shops are in Lucknow in August 2026" — coming back as
+one flat number with no breakdown, and its chart as a single bar, traced to
+the exact worked example pinned for this question in `FEW_SHOT_SQL_EXAMPLES`
+(`llm/prompts.py`): it summed both named categories into one `COUNT`, so the
+model copied that shape and answered "1006" with nothing said about how many
+of each. Verified live against the real database: 589 country liquor shops
+and 417 composite, the same 1006 split two ways. Grouping by
+`license_categories.kind` fixed the breakdown but dropped the total a person
+asking "how many X and Y" still wants — the example now uses
+`GROUP BY ROLLUP(lc.kind)` instead, which adds a "Total" row computed as its
+own `COUNT(DISTINCT ...)` over the combined group rather than the two
+subtotals added together, so it stays correct even if a shop's category
+varies across dispatch rows within the month (1006 either way, confirmed
+live). `SQL_SYSTEM_PROMPT` gained the general rule to match — a question
+naming more than one category wants each one broken out and a total across
+them, via `ROLLUP`, not a hand-summed single row — and both
+`SUMMARY_SYSTEM_PROMPT` and `CHAT_SYSTEM_PROMPT` now say to state the total
+and each part when a result breaks one down, not the total alone.
+
+A live report on a compound Chat question ("compare dispatched volume by
+shop category") surfaced two more gaps in the same turn. First, the answer
+text itself still read as three passes over the same five rows — a bullet
+list, then a paragraph naming the same five categories again, then a third
+pass giving each one's share of the total — despite `CHAT_SYSTEM_PROMPT`
+already saying to state each figure once; the rule existed but didn't rule
+out a second narrated pass specifically, so `CHAT_SYSTEM_PROMPT` now says
+directly that a bullet list followed by a paragraph re-naming the same
+categories is the same numbers said twice, and a percentage or comparison
+belongs in the same pass as the figure it describes. Second, the message
+itself rendered chart-first, then the SQL query's own card, then the answer
+text last — the order tool-call events actually arrive in, not the order a
+reader wants them in, and it read as the chart appearing before the text
+that introduces it rather than after. `chat.blade.php` now renders the
+answer text first, the chart card next, and the SQL/search tool cards after
+that inside a closed `<details>` ("Show query") — a persisted message only,
+since a turn still streaming needs its tool cards visible as progress
+feedback (the 15s-ping heartbeat above has nothing else to show while a
+tool call is still running), so the live in-flight view keeps them
+uncollapsed, text moved above them the same way.
+
+A live Chat report that a question about MGQ found nothing in the knowledge
+base traced to two separate bugs, not the KB's storage design — `kb.chunks`
+already held the real corpus in Postgres (106,865 chunks, 335 documents)
+exactly as designed. First, `kb.chunks.fts` is indexed with the `'simple'`
+text search config, which has no stopword list — a chat model's
+`search_knowledge` query is often its full question verbatim, and
+`websearch_to_tsquery` ANDs every one of its words, "what"/"does"/"say"/
+"about" included, so a chunk had to contain all of them next to the real
+term to match at all. `kb/retrieve.py` now strips a small stopword list from
+the query before it reaches Postgres — dropping configs to `'english'`
+instead would need a full reindex of the generated `fts` column, this
+doesn't. Second, and far more serious: `etl/tests/test_pdf_pipeline.py` runs
+`sync_documents()` against the real database with no isolation, and that
+function's withdrawal step marks every row of one `origin` not in the
+current call's rows as withdrawn — scoped only by the hardcoded
+`"pdf_pipeline"` origin the real corpus also uses. Every test in that file
+that called `sync_documents()` with its own 1-2-row fixture list was
+withdrawing every real document of that origin on every run. That ran for
+real on 2026-09-24 at 13:35:59, withdrawing 322 of 334 real documents — the
+actual cause of the MGQ report, confirmed by matching `withdrawn_at`
+timestamps against `etl.ingestion_runs`. `sync_documents()` now takes an
+`origin` parameter (default unchanged, real production behavior untouched);
+the test file runs entirely under `origin="pdf_pipeline_test"`, which can
+never collide with real rows again — verified by running the full fixed
+suite twice against the real database and confirming the real `pdf_pipeline`
+row count didn't move either time. Re-running the real sync
+(`python -m etl sync --source pdf_pipeline`) restores every document still
+published upstream, since the upsert is content-hash-checked and idempotent
+— a pending operator step, not yet run.
+
+A report that a chat answer wrote a rupee figure with a `$` sign traced to
+the summarizing prompts never having been told the data's own currency —
+`SUMMARY_SYSTEM_PROMPT` and `CHAT_SYSTEM_PROMPT` now both say every money
+figure here is Indian Rupees, never dollars, and to state a large amount in
+lakh or crore rather than a long digit string, with the exact inflated
+phrasing seen live ("this figure represents a significant amount", "this
+suggests a substantial contribution") named directly as what not to write.
+Cleave.js, raised as a possible fix, doesn't apply here — it masks a live
+input field, and this is generated prose with nothing to mask; the house
+convention for money display, `App\Support\Money`, is PHP and only wired
+into `<x-money>`, not into LLM output, so a prompt rule is the equivalent
+fix on this side, same pattern as every other prompt-only fix in this file.
+
+The same report's underlying number was also wrong, and turned out to be a
+real data bug, not a display one: Lucknow's `excise_duty` in
+`analytics.revenues` jumps from ₹551.5 million (FY2018-19) to ₹125.3
+*billion* (FY2019-20) with every later year staying in the tens of billions
+— confirmed live. The reason: before 2018 each district's own treasury
+received its own excise receipts; after 2018 a central treasury at Lucknow
+began receiving the whole state's receipts, Lucknow's own included, so the
+post-2018 NITI import's per-district attribution is only reliable through
+FY2017-18 — every "Lucknow" row after that is largely the state total
+booked under one treasury's location, not Lucknow district's own economic
+activity. Cross-checked against a real, current, correctly-attributed
+source: `~/Projects/up-excise-spatial-revenue-optimizer`'s own latest D1
+backup (`backups/d1-prod-backup-2026-09-23.sql`, "SRO" — sro.exciseup.in —
+is that project's own short name) carries `phase1_raw_collection`, 28,405
+shops across all 75 districts with a real FY2025-26 `total_revenue` per
+shop. Its statewide total is ₹554.6 billion (₹55,463 crore, the right order
+of magnitude for UP's real annual excise revenue) with Lucknow at ₹28.6
+billion — a plausible top district, not an outlier — while the broken
+`analytics.revenues` FY2025-26 Lucknow figure (₹507.8 billion) sits close to
+SRO's entire *state* total instead, exactly what treasury consolidation
+under one location would produce. Not yet fixed: `VIEW_NOTES` needs a
+warning against trusting `analytics.revenues`'s post-2018 district
+attribution, and the SRO backup is a real candidate source for both a
+corrected revenue figure and the statewide shop dataset `analytics.shops`
+is still missing outside the IESCMS-imported districts — neither is
+imported yet, pending a decision on shape (below).
+
+Ask's canvas now shows the asked question above its result with its own
+copy button, the same affordance the summary and SQL panels already had —
+`Ask::render()`'s page title also stops truncating to 60 characters now
+that it's the visible `<h1>` (which already line-clamps/truncates via CSS on
+its own): only the browser tab title and the recent-questions rail, both
+genuinely space-constrained, still get the truncated version.
+
+The pending pieces from the sessions above are done. `db/schema.sql` and
+`db/analytics_views.sql` ran live (`sudo -u postgres psql -d excise_bank -f
+...`, both files); `sro_shops` and `analytics.sro_shops` exist and are
+granted the same way every other table here is. The real import ran twice —
+the first attempt failed outright on `numeric field overflow`, five of
+28,405 rows carrying a coordinate with its decimal point dropped during
+SRO's own data entry (a longitude like `77747738.0` instead of
+`77.747738`); `read_rows()` now drops a coordinate outside real lat/long
+bounds instead of letting it fail the row's insert, since the shop's own
+name and revenue are still good data worth keeping. The second attempt
+quarantined 862 rows on two district-name spelling variants SRO uses —
+`Rae Bareli` / `Siddharth Nagar` against this schema's `Raebareli` /
+`Siddharthnagar` — added to `etl.district_aliases`, the same mechanism
+every other spelling mismatch here already goes through. The third attempt
+was clean: 28,405 seen, 28,405 upserted, 0 quarantined, confirmed live
+against `analytics.sro_shops` — 75 districts, ₹554.6 billion statewide,
+₹28.6 billion for Lucknow, matching the raw dump exactly.
+
+`python -m etl sync --source pdf_pipeline_docs` restored the 322 documents
+the earlier test-isolation bug had withdrawn — confirmed live (322 live, 12
+still correctly withdrawn, the deliberate other-state exclusion from
+before) and by re-running the real MGQ question through `kb/retrieve.py`
+directly, which now returns real CL Retail Rules amendments instead of
+nothing. That real run surfaced one more gap in the stopword fix above:
+"What does the excise policy say about MGQ?" stripped down to "excise
+policy MGQ", which still matched zero real documents — "policy" happened
+not to co-occur with "mgq" in the same chunk anywhere in the corpus (`fts`
+is built from `heading_path` + `content` only, never `title`, so requiring
+"policy" was never actually matching a document by name either, just an
+incidental word). Tried an OR fallback when the AND query finds nothing
+first — it fixed this case, but a live rerun of `test_retrieve_no_match_
+returns_empty` immediately showed the real cost: a genuinely nonsense
+query ("xyzzy nonexistent gibberish query term") started returning real
+unrelated chunks on a single incidental word match, breaking the "no real
+match returns no context, not a guess" guarantee this corpus already
+relies on elsewhere. Reverted. `"excise"` and `"policy"` are in
+`_STOPWORDS` instead — every document in this corpus is already about
+excise policy in the broad sense, so in a "what does excise policy say
+about X" question both words are the question's own frame, not the search
+intent, the same reasoning that put "what"/"does"/"say" there already.
+
+Hand-testing Chat with off-topic questions surfaced three more gaps.
+Asked "how to create a linked list in Python," the model answered as a
+general-purpose coding assistant — nothing in `CHAT_SYSTEM_PROMPT` scoped it
+to the department's own subject matter, so it had no reason not to.
+`CHAT_SYSTEM_PROMPT` now says directly that this assistant answers UP
+Excise questions only and should decline anything else in one sentence
+rather than answer it. Asked what model it runs on, it invented an answer —
+"based on the T5 architecture" — a real hallucination, not a retrieval gap,
+since it was never given the true answer and guessed rather than declining.
+`CHAT_SYSTEM_PROMPT` now states the real fact (Llama 3.1, running locally)
+so there's nothing left to guess. Third, a reply trailed off mid-turn into
+a raw `{"name": "` — a tool-call JSON object narrated as text partway
+through an otherwise ordinary answer, not the whole reply degenerating the
+way the bare `"{}"` and narrated-call cases already caught. `_needs_retry`
+(`chat/loop.py`) now catches this shape too, checked once the full text is
+in the same way the fenced-sql-guess case already is, for the same reason:
+holding a whole generation back to check it risks the connection dropping
+as interrupted before a correction ever streams.
+
+A live report that sending a new message in an existing conversation made
+the previous answer "collapse and disappear" traced to a gap that has
+apparently always been there: the `@foreach($activeConversation->messages
+as $m)` loop in `chat.blade.php` never carried a `wire:key`, unlike every
+other keyed loop in this app (the conversation rail, `query-ledger.blade.php`'s
+rows). `syncAfterStream()` exists solely to force a fresh `render()` once a
+turn's stream finishes, so the DOM morph on every single message send is
+exactly the moment Livewire has to match each already-rendered message `<div>`
+to its right slot with no identity to go on — the conditions for exactly this
+symptom. Both message branches now key on `message-{{ $m->id }}`, the same
+pattern the rest of the app already uses.
+
+Chat gained a whole-conversation export, its first real use of
+`barryvdh/laravel-dompdf` (already a Composer dependency, never called from
+anywhere before this). `GET /chat/{conversation}/export`
+(`ChatExportController`) renders every message, tool call summary, and
+chart in order into `resources/views/pdf/chat-transcript.blade.php` — a
+chart embeds as a base64 PNG via the same `OrchestratorClient::renderChart()`
+call `ChartExportController` already uses for a single chart, since dompdf
+renders static HTML, not the interactive Plotly figure the chart card shows
+on screen. The link sits in the conversation rail's own per-item menu,
+beside Delete.
+
+A live report of a `make_chart` failure showed the same column-name-guessing
+bug `CHAT_SYSTEM_PROMPT` already tells the model not to make (`MCP_ENGINES.md`
+§Tools) — plotting `x="shop_category"` when the real result carried
+`retail_license_category`/`category_name`/`total_bl`. The prompt rule alone
+didn't stop it happening again, and the failure it produced compounded the
+problem: `run_in_sandbox` (`sandbox/bwrap.py`) returned the sandboxed
+script's *entire* Python traceback — dozens of internal pandas/plotly stack
+frames — as the tool result, when the one line the model actually needed to
+self-correct (`Value of 'x' is not the name of a column... Expected one of
+[...] but received: shop_category`) was already sitting right there as the
+traceback's own last line. A Python exception's summary is always its final
+printed line, so that's what a failed sandboxed script now returns as its
+message — the full traceback stays in the log line next to it, operator-only,
+same as before. Confirmed against the real sandbox: a three-frame traceback
+now comes back as a single `ExceptionType: message` line.
+
+The admin Data dictionary screen showed each table under its raw Postgres
+name (`analytics.dispatch_strength_lines`) with `VIEW_NOTES`' own text as
+the only description — that text is planning guidance written for the SQL
+model, dense with column names and JOIN instructions, not a sentence an
+admin reads to find out what a table is for. `schema_card.py` now carries a
+plain-language name and one-sentence summary per view (`TABLE_DISPLAY`);
+`GET /schema/tables` returns them as `display_name`/`summary` alongside the
+existing `note`, and the Data dictionary screen leads with those, keeping
+the raw `analytics.*` name in small type underneath and the full technical
+note behind a "Technical note (what the AI is told)" disclosure
+(`DATA_PIPELINE.md` §Row visibility for the AI path). Writing the summaries
+surfaced a real gap alongside the display one: `analytics.sro_shops` — live
+since the SRO import earlier in this file — had no `VIEW_NOTES` entry at
+all, so the SQL model had no guidance to prefer it over `analytics.revenues`
+for a district-level revenue question past FY2018-19, exactly the
+consolidation problem `revenues`' own note already warns about. Both notes
+now say so.
+
+A live report that the department's own prepared demo question ("how many
+country liquor and composite shops are in Lucknow in August 2026") sometimes
+answered fine and sometimes hung on "still working" before "The connection
+was interrupted" traced to a ceiling past every fix `MCP_ENGINES.md` §Streamed
+events already documents. Matching the browser's own timing against
+`journalctl --user -u excise-orchestrator`, Ollama's own request log, and
+`journalctl --user -u excise-mcp-dashboard-tunnel` line by line: the 15s
+heartbeat pings were landing on schedule the whole time — the SQL plan alone
+took just over two minutes that run — but cloudflared logged
+`"context canceled"` around the 90-100s mark regardless. That's Cloudflare's
+own edge, not this app: it caps a single connection's total duration at
+roughly 100 seconds, a limit no amount of keep-alive traffic can raise,
+separate from — and tighter than — every idle-timeout this project has
+already chased down. A genuinely slow turn on this CPU-only box was always
+going to cross it eventually. (A second, unrelated failure showed up in the
+same trace: the very first retry of the same question landed while
+`excise-orchestrator.service` was mid-restart for the data-dictionary
+deploy above, hanging 90s in "Waiting for application shutdown" before
+systemd's own default `TimeoutStopSec` SIGKILLed it — collateral from the
+restart's own graceful-shutdown time, not a chat-path bug, and not chased
+further here.)
+
+The real fix survives the disconnect instead of trying to outrun it, mirroring
+the resume-by-polling shape Ask's own `RunExciseQuery` + status route already
+uses for the same reason. `run_chat`'s turn no longer lives or dies with the
+one HTTP request that started it: `orchestrator/app/main.py` keeps each turn
+in an in-memory `ChatTurnState`, keyed by `turn_id` (web/'s own assistant
+`Message` ULID), that buffers every event as the turn produces it regardless
+of whether anything is still reading. `POST /chat` starts a turn the first
+time its `turn_id` is seen and attaches to the already-running (or
+just-finished) one on every call after that, replaying its full history from
+the start. `ChatController::resume()` (`POST
+/chat/{conversation}/messages/{message}/resume`) is what calls back in after
+`chat.blade.php`'s `fetch()` throws for a reason other than the user's own
+Stop click — clearing any tool-call rows the dropped attempt already
+persisted first, since the replay is authoritative and would otherwise
+double them up. Bounded at 5 reconnect attempts, 2s apart, enough headroom
+for a turn up to `OLLAMA_GENERATE_TIMEOUT_SECONDS`'s own 480s ceiling. This
+also meant the Stop button's old mechanism (aborting the fetch, which used
+to reach the orchestrator as a disconnect and cancel the call as a side
+effect) quietly stopped doing anything — worse, it would now make a
+deliberate Stop just as resumable as an accidental drop. `POST
+/chat/turn/{turn_id}/cancel` is Stop's own real cancellation now, called
+directly alongside the fetch abort rather than left to its side effect.
+None of this survives an orchestrator restart (`chat_turns` is memory-only,
+the same boundary `status_store` already has for Ask's polling) — a resume
+past that point gets a plain 404 and the same "connection was interrupted"
+message as before, which is correct: a restart really did end the work.
+**This is an `orchestrator/`-only change — `systemctl --user restart
+excise-orchestrator` (documented, not run — this file's own hard constraint)
+is still owed before it's live.**
+
+A live retest of that exact demo question, right after the restart, still
+came back with the tool card's query result but no answer text at all — not
+the same failure, a new one the fix above made possible. The orchestrator's
+own log showed the turn genuinely finishing (`"chat turn complete"`, 361
+completion tokens) three minutes after the browser had given up on it.
+`uptime` showed a load average over 10 at the time, and two turns abandoned
+during this same debugging session (curl calls left to time out client-side
+with no cancel sent) were still running minutes later, one still holding an
+Ollama `llama-server` process north of 700% CPU until cancelled by hand — the
+turn that survives a dropped connection on purpose also survived being given
+up on, since nothing distinguished the two. `reconnectAndStream()` giving up
+(no `turn_id` ever learned, or all 5 reconnect attempts exhausted) now calls
+the same `/chat/turn/{turn_id}/cancel` Stop already uses, factored into a
+shared `cancelTurn()` — freeing the turn's Ollama and CPU time the moment
+nothing is left to show it to, instead of it running to completion for an
+answer nobody will ever see. The same repeated-attempt pattern (the
+department's demo question tried again and again in quick succession,
+each attempt abandoned rather than resumed to completion) is the most likely
+cause of the turn that finished with nothing to show for it — several
+turns competing for this CPU-only box's one Ollama instance at once
+made every one of them slower, including whichever was genuinely still
+being watched.
+
+A live question — "how much revenue was generated from beer sale across
+Uttar Pradesh in FY 2025-26?" — came back with a tool card showing a clean
+query and then nothing: `1 row(s), columns: total_revenue. Preview:
+[{'total_revenue': None}]`. Reproducing the same question directly against
+`/query` (Ask's own pipeline, same planner) showed the real shape of the
+problem: the model wrote `SELECT SUM(amount_inr) ... FROM analytics.revenues
+WHERE financial_year = 'FY2025-26' AND license_category IN ('CL5CC',
+'FL5DB')` — `CL5CC`/`FL5DB` are shop licence codes, not a liquor-type
+filter, and `analytics.revenues` has no breakdown by liquor type at all (a
+real `BEER` code exists in `analytics.license_categories`, but the NITI
+import that `revenues` comes from was never broken out by it — zero rows
+either way). `SUM()` with no `GROUP BY` still returns one row, `NULL`, when
+nothing matches — not the zero-row case `run_query`'s own no-hallucination
+guard already checks for — and summarize, handed a `NULL` total with nothing
+marking it empty, wrote a full confident answer anyway: "₹12,451 crore...
+approximately 70%... urban areas... 30%... rural areas" — a complete
+fabrication, worse than the chat path's silent nothing, since it read as a
+real number. `run_query`'s guard now also fires when every value in the
+result is empty, whatever `row_count` says; the chat `run_sql_query` tool
+checks the same thing on its own raw result before it ever reaches the
+model. The underlying question has a real answer, just not from
+`analytics.revenues`: the Excise Policy 2025 abolished standalone beer
+shops, so beer revenue for FY2025-26 lives inside two other shop types' own
+totals on `analytics.sro_shops` — `composite_lf_beer + composite_mgr_beer`
+for a `COMPOSITE_SHOP`, `special_beer_lf + special_beer_mgr` for a
+`COUNTRY_LIQUOR` shop with `has_cl5cc = true` — confirmed against
+`~/Projects/up-excise-spatial-revenue-optimizer`'s own roadmap and live
+data: ₹7,142.87 crore statewide (₹6,740.18 crore composite, ₹402.69 crore
+CL5CC country liquor). `schema_card.py`'s `sro_shops` note also had the same
+`CL5CC`-shaped mistake the shop-type classification fix above already
+caught once: it listed `shop_type` as bare `COMPOSITE`/`BHANG`, when the
+real column values are `COMPOSITE_SHOP`/`BHANG_SHOP` — a filter copied
+straight from the note would have matched nothing. Both notes and a worked
+`FEW_SHOT_SQL_EXAMPLES` entry now carry the corrected values and the
+two-part beer calculation (`DATA_PIPELINE.md` §Row visibility for the AI
+path). A second, unrelated broken example turned up in the same file while
+fixing this one: "What financial years do we have data for?" queried
+`analytics.financial_years`, which does not exist — every fact view
+denormalizes `financial_year`/`start_year` onto its own rows instead, the
+same way `district` already is; the example now queries
+`analytics.revenues` directly. And the project's own name, "Spatial Revenue
+Optimizer" ("SRO"), was wrong in one place in `schema_card.py`
+("Shop Revenue Optimizer") — fixed to match every other reference to it
+already in this repo.
+
+Verifying candidate example questions for Ask's and Chat's empty states —
+not writing plausible ones, running each live and checking the answer
+against real data before showing it as "try an example" — surfaced a fresh
+round of live bugs. Also found a genuine schema gap along the way:
+`analytics.policy_entries` carries five states' own policy rules as
+comparative reference material (UP, Delhi, Haryana, Rajasthan,
+Uttarakhand), with the state named only inside a free-text `title` and no
+separate column — the exact shape of contamination risk the knowledge
+base's own pdf-pipeline sync already excludes for, undocumented here until
+now. `VIEW_NOTES` says so directly and gives the `title ILIKE '%Uttar
+Pradesh%'` filter a UP-scoped question needs.
+
+The beer-revenue question's own SQL model asked "which district generated
+the most revenue in FY2025-26" got right — then reported the number wrong
+by a factor of ten: told to "state a large amount in lakh or crore," it did
+the conversion itself and wrote ₹28,608 crore for what checking the raw
+figure directly showed was really ₹2,860.80 crore (dividing by one million
+and calling it crore instead of dividing by ten million). Real revenue
+figures reported confidently wrong are worse than the question going
+unanswered. `format_inr`/`money_annotations` (`orchestrator/app/llm/
+prompts.py`) compute the correct conversion in Python — never left to the
+model's own arithmetic again — for any column whose name looks like money,
+and hand the pre-converted figure to both `pipeline.py`'s summarizer and
+the chat `run_sql_query` tool's own result, the two places that used to
+ask the model to do this math itself.
+
+A knowledge-base candidate question ("what are the different UP Excise
+shop types and license codes") surfaced four more shapes of the
+tool-calling reliability gap `MCP_ENGINES.md` §Tools already tracks at
+length, each caught live in turn: `search_knowledge`'s `k` argument sent as
+the literal string `"null"` instead of the JSON value (a validation error
+`int | None` alone doesn't catch); the model declining with "I only answer
+UP Excise questions" immediately *after* `search_knowledge` had already
+returned exactly the right content, a real contradiction now caught and
+retried; a full 78-token reply reducing to a single streamed `"#"`, past
+what the existing brace/tool-name degenerate checks catch; and, even though
+`CHAT_SYSTEM_PROMPT` already forbids it by name, the model narrating "No
+tool call needed here" instead of answering. Each got its own targeted
+catch-and-retry, the same shape every other tool-calling fix in this file
+has closed with. A fifth, milder issue survived all four: the eventual
+answer was correct but read as a raw, bracket-and-all dump of every
+retrieved section rather than the model's own synthesis of the parts that
+actually answered the question — a prompt-only nudge for now, since the
+content itself was never wrong, just unpolished; this specific question
+stays out of the example set until it reads as cleanly as the others do.
+
+Two verified additions did make it into both `Ask::EXAMPLE_QUESTIONS` and
+`Chat::EXAMPLE_QUESTIONS`: the beer-revenue question itself, and "which
+district generated the highest revenue in FY2025-26" (Lucknow,
+₹2,860.80 crore, confirmed live after the crore-arithmetic fix). Further
+verified candidates, not added — the empty state is three-to-five
+questions, not a catalogue — surfaced across the rest of `analytics.*`:
+`sales_volumes` carries real beer/country-liquor/IMFL/wine volume series
+back to FY2014-15; `operations` carries enforcement data (illicit liquor
+seized, raids, convictions, deaths from illicit liquor) over the same
+span; `analytics.policy_entries`, UP-scoped, has real per-year wholesale
+and retail margin policy text once a question is written to survive the
+model actually reaching for it reliably (not yet confirmed, given this
+round's own findings). `db/analytics_views.sql` already builds `district`/
+`financial_year` labels onto every fact view — this survey is what finally
+exercised several of them for the first time since the NITI import.
+
+A live report — the beer-revenue answer came back fine, `make_chart` then
+failed twice, and reloading the page showed the answer itself gone — traced
+to two separate bugs stacked on each other. The persistence one: a resume's
+own connection can drop again before it replays anything, and a repeated
+`make_chart` failure is exactly what makes a turn run long enough to need a
+second resume. `ChatController::resume()` used to wipe a message's tool-call
+rows before replaying, and `streamTurn()`'s `finally` block persisted
+whatever the current attempt had accumulated regardless of how that compared
+to what was already saved — so a second resume dying immediately, with
+nothing replayed yet, overwrote a real, already-answered message with
+nothing. `resume()` no longer wipes anything upfront, tool calls accumulate
+locally through the stream instead of writing to the database as each one
+arrives, and a new `persistIfNotWorseThanBefore()` only overwrites the
+message once the new attempt is not shorter and has not lost any tool calls
+next to what is already there — a fresh message always starts from empty, so
+this never blocks a first attempt, including one that genuinely produces
+nothing. The `make_chart` failures underneath it were a real bug in their
+own right, not a knock-on effect of the connection dropping:
+`journalctl --user -u excise-orchestrator` showed the actual generated
+script had every quote character backslash-escaped
+(`x=\"category_name\"` instead of `x="category_name"`), invalid Python
+outside a string literal — `spec` is already a JSON tool-call argument, so
+Llama had no reason to escape its own quotes a second time, but it did
+anyway. Its own retry, handed that `SyntaxError`'s last line as feedback,
+dropped the escaping but introduced a mismatched bracket instead — still
+broken, just differently. `MakeChartArgs`'s validator now tries to compile
+the script as given and, only on failure, tries again with that specific
+double-escaping undone, keeping the original if neither version compiles —
+a genuinely broken script still comes back as an ordinary failed tool result
+for the model's own retry budget, rather than being mangled further
+(`MCP_ENGINES.md` §Tools).
+
+The knowledge base's other-state exclusion (above) traded away real
+capability: excluding every non-UP document at sync time stopped a UP-only
+question from getting OCR-noisy other-state fragments outranking real UP
+text, but it also meant a genuinely comparative question ("how does UP's
+excise policy compare to Delhi's") had nothing to retrieve at all — the
+department wants that comparison answerable on request, not designed out.
+`kb.documents` gains a `state` column mirroring pdf-markdown-pipeline's own
+`rule_sets.state` exactly; `etl/sources/pdf_pipeline.py`'s sync no longer
+excludes a document for having one, and carries it onto every row instead
+(NULL for a generic Act or government order, the real state name otherwise).
+Scoping moves from ingestion to retrieval: `kb/retrieve.py`'s `retrieve()`
+takes a `states` argument defaulting to `["Uttar Pradesh"]` (a state-agnostic
+document is always in scope regardless), and `search_knowledge`'s own
+`states` argument lets the chat model widen it for a question that actually
+asks to compare states — the same defensive-validator treatment `k` already
+needed for Llama's tool-calling quirks now also covers `states` arriving as
+a bare state name or the literal string `"null"`. Each retrieved chunk's
+citation now names its own state when it has one
+(`[title (state) — heading]`), and `CHAT_SYSTEM_PROMPT` tells the model
+never to blend facts from two states into one answer without saying which
+is which — the citation label is what keeps that honest. The operator-run
+`ALTER TABLE` and the pdf-markdown-pipeline re-sync (`OPERATOR_SETUP.md`
+§Data bank) have both run: `kb.documents.state` is live, the sync backfilled
+26 rows, and a live check confirms the labeling (13 states represented, 309
+documents with `state IS NULL`). All 136 orchestrator tests pass against the
+real database.
+
+The live check also surfaced a real gap in the NULL-means-agnostic
+assumption: of the 309 `state IS NULL` documents, 115 have no
+`rule_set_id` at all in pdf-markdown-pipeline, rather than a `rule_set`
+that is genuinely state-agnostic (a real Act or GO with `rule_sets.state`
+left blank on purpose). An untagged document — "Delhi CAG report," for one,
+confirmed live — reads identically to a real state-agnostic Act and stays
+in scope for every question regardless of which states it names, since
+nothing in `kb.documents` distinguishes "no rule set" from "a rule set with
+no state." A default UP-only question was not observed pulling in one of
+these (the FTS ranking still favors real matching content), but a broad or
+generic query can. Fixing this needs pdf-markdown-pipeline's own documents
+classified with a `rule_set`, not a change on this side — `ROADMAP.md`'s
+backlog names it rather than a heuristic guess from an untagged title, which
+would risk misclassifying a genuine UP document as another state's.
+
+Verifying candidate example questions for `sales_volumes` and `operations`
+surfaced two more stale-placeholder bugs, the same shape as the earlier
+`CL5CC`/license-code fixes: `schema_card.py`'s `VIEW_NOTES` for both views
+still carried metric-value guesses and a grain description written before
+the real NITI data existed, and none of it matched what's actually in the
+database. `sales_volumes`' note claimed `metric` was
+`'dispatch_bl' | 'consumption_bl' | 'cases'` and that the grain included
+`license_category` — live data shows `metric` is really a liquor type
+(`beer`, `country_liquor_cml`, `imfl`, `wine`, ...) and
+`license_category`/`license_category_id` is always blank, so the real grain
+is just district + financial year + metric. `operations`' note listed five
+metric values, none of which exist — the real set is fourteen enforcement
+metrics (`inspections_raids`, `convictions`, `deaths_illicit_liquor`,
+`illicit_liquor_seized_litres`, ...). Both notes now carry the confirmed
+live values. The same stale guesses had leaked into two of
+`FEW_SHOT_SQL_EXAMPLES` (`llm/prompts.py`): a dispatch-volume-trend example
+filtered on `metric = 'dispatch_bl'` (rewritten to sum across every metric
+instead, since no single dispatch-only metric exists) and an
+enforcement-raids example filtered on `metric = 'raids'` (corrected to
+`inspections_raids`) — both re-verified live (Lucknow's sales volume:
+33.4M BL in FY2014-15 to 78.3M BL in FY2025-26; raids: 242,857 to 836,717
+over the same span).
+
+A live report on the beer-revenue question — the correct real total, but
+narrated as ₹71,428.78 crore, a full order of magnitude too large — traced
+`format_inr`/`money_annotations`'s own fix (above) back to a bug in the
+fix itself. `money_annotations` only recognized a raw Python `int` or
+`float` as a convertible value; a `SUM()` over a Postgres `NUMERIC` column —
+exactly what a revenue total always is — comes back from `asyncpg` as
+`decimal.Decimal`, which that check silently excluded. The pre-converted
+line the model is told to copy verbatim was never generated for a single
+real revenue aggregate, so the model always fell back to doing the
+lakh/crore division itself, wrong, every time — confirmed live before the
+fix, and confirmed fixed after: the same question's tool result now carries
+`total_beer_revenue = ₹7,142.87 crore` correctly. `CHAT_SYSTEM_PROMPT` also
+told the model the lakh/crore formula directly ("one crore is
+₹1,00,00,000") with nothing steering it toward the pre-converted line
+instead — it now says explicitly to use that line verbatim and never
+divide the raw number itself.
+
+The same report's chart also failed differently than any earlier
+`make_chart` shape: the reply claimed a chart, then a fenced code block
+holding ordinary Python (matplotlib, not the Plotly contract this tool
+actually reads), then literal text — `{"name": "make_chart", "parameters":
+{"spec": "..."}}` — narrating the tool call itself rather than issuing a
+real one, with unescaped quotes inside its own `spec` string making even
+that fake call invalid Python. This is exactly the shape `_needs_retry`'s
+`'{"name"' in text` check exists to catch, but the retry that follows a
+chart claim (`_claims_unmade_chart`) checked only `_is_degenerate` on its
+own completion, never `_needs_retry` — so a chart-claim retry that itself
+degenerated into a narrated fake call streamed straight through with
+nothing to catch it. The completion check now calls `_needs_retry` (a
+superset of `_is_degenerate` already) instead, closing the gap for every
+retry branch, not just this one. Two live re-runs after both fixes and a
+restart confirm the correct figure every time and no narrated fake call
+either — the model still sometimes fails to produce usable follow-up prose
+or an actual `make_chart` call on this specific question, which the
+existing fallback already covers by returning the tool result's own
+(now correctly converted) summary rather than inventing an answer; this is
+the already-documented tool-calling reliability gap, not a new failure.
+
+That same evening surfaced how much further the pattern above had to run:
+a fresh live report on the identical beer-revenue question showed the
+correct figure, then a chart claim, then a literal `assistant\n\nLlama 3.1,
+running locally for this department` fragment — a stray piece of its own
+system prompt leaking into the reply — followed by the raw tool-result
+dump once both generation attempts degenerated. Every one of this session's
+`make_chart` fixes so far had patched a specific shape of the same root
+cause without removing it: `make_chart` asked Llama, an 8B general chat
+model, to both judge whether a chart would help and author real Plotly
+Python as a tool-call argument — a coding task, on top of an already
+overloaded turn. `make_chart` is no longer a tool the chat model can call
+at all. A chart is `chat/loop.py`'s own deterministic step now: right
+after a `run_sql_query` call succeeds with more than one row, if
+`ChatRequest.want_chart` is set — a real field carrying `web/`'s composer
+toggle, replacing the old text-appended hint the model had to notice and
+act on — `chat/tools.py`'s `auto_chart` plans the script through
+`settings.ollama_sql_model` (Qwen), reusing `/query`'s own
+`build_plot_prompt`/`PlotPlan` machinery and its reprompt-and-retry-once
+shape on a sandbox failure, exactly the Qwen-writes-code,
+Llama-converses split this file's own Decisions section already called
+for. Llama never decides whether to chart and never writes a line of it;
+`CHAT_SYSTEM_PROMPT` now says plainly there is no chart tool, and to
+mention a chart only when told one was attached. This also deleted the
+quote-escaping validator an earlier fix needed: Qwen's script arrives as
+validated `PlotPlan` structured output, the same path `/query` already
+trusts, not free-form text with its own escaping artifacts.
+
+Testing the rebuilt chart path against a real multi-row question (Chat's
+own "compare dispatched volume by shop category" example) surfaced two
+further bugs past the redesign itself, both pre-existing and shared with
+`/query`'s identical `plan_plot` prompt, just never exercised this way
+before. First, Qwen wrote `fig.write_json(path, output_type=...)` —
+`output_type` isn't a real keyword on Plotly's `write_json`, a
+hallucination the prompt's own wording left room for by never saying the
+call takes exactly one argument; it does now, and `python_engine.py`'s own
+sandbox preamble wraps `write_json` to silently drop any keyword the real
+function doesn't accept, so the same mistake stops failing the render
+outright regardless of whether the prompt fix alone would have been
+followed — the same tolerate-the-known-quirk pattern `chat/tools.py`'s own
+argument validators already use, applied to the sandbox side this time.
+Second, the resulting `TypeError` came back to the chat user as
+`"chart at line 6 column 1"` — a trailing location-pointer line, not the
+actual message — because `run_in_sandbox`'s "an exception's summary is its
+final printed line" rule, true for a plain Python traceback, isn't true
+for Plotly's own multi-line schema-validation `ValueError`, which puts its
+real description first and a location pointer last. The summary now
+starts at the last line matching `SomeError:`/`SomeException:` and keeps
+what follows it, capped, rather than assuming the message is always
+exactly one line.
+
+That fix's own search ran against `stdout_tail`, itself already sliced to
+the raw output's last 4000 characters before the search ever runs — a live
+Plotly schema-validation error turned out to run to several thousand
+characters on its own (reproduced directly: one hallucinated property on a
+single `add_bar()` call alone printed a "valid properties" listing several
+thousand characters long), long enough that the real `ValueError:` line
+landed entirely outside that pre-sliced window, leaving nothing for the
+search to find and silently reproducing the exact symptom the fix above
+was meant to close. The search now runs against the full, untruncated
+output; the final summary stays capped by line count and character count
+so a genuinely huge message still can't reach the user whole.
+
+The same chart still failed once more after that, on a completely
+different axis: the actual error wasn't Python or Plotly at all — GNU
+Octave's `error: bar: Y must be numeric`. `auto_chart` offered both engines
+through the same `_ENGINE_CAPABILITIES` dict `/query`'s own `plan_plot`
+stage uses, and Qwen picked Octave for this chart; Octave's own capability
+text already says it can never produce `plotly_json`, the one file
+`auto_chart` ever collects, so nothing that engine did — succeed or fail —
+could have produced a usable chat chart. A second, related instance
+surfaced right after: with Octave excluded, Qwen instead wrote a
+matplotlib script (`_ENGINE_CAPABILITIES["python"]` legitimately offers
+matplotlib too, for `/query`'s own static-export use case), which failed
+outright inside this sandbox on its own font loading (`Fontconfig error:
+Cannot load default config file`) — again, not something `auto_chart`
+could have used regardless. `auto_chart` no longer reuses `/query`'s
+shared, multi-engine capability text at all; `_chat_plot_prompt` names
+exactly one engine (Python) and one call
+(`fig.write_json(f"{OUT}/chart.plotly.json")`, no matplotlib, no other
+arguments), and the render request hardcodes `outputs=["plotly_json"]`
+regardless of what the model asks for. With all four fixes in — the
+`Decimal` check, the retry-completion gate, the sandbox search window, and
+the engine/output restriction — the same chart question finally rendered
+correctly, confirmed live, and re-verifying every SQL/chart demo question
+in `Ask::EXAMPLE_QUESTIONS`/`Chat::EXAMPLE_QUESTIONS` came back clean:
+correct figures, correct charts, no chart claims, no narrated fake calls.
+The remaining example (an MGQ knowledge question, `search_knowledge` only,
+untouched by this whole change) still has the already-documented "reads
+like a raw retrieval dump" polish gap from earlier in this file,
+deliberately left out of scope here since it never touched `run_sql_query`
+or a chart at all.
+
+Also added while this was live-tested: the sidebar's collapse/expand
+toggle was already fully wired (cookie + `localStorage` persistence, a
+server-side initial render from the cookie so there is no flash-of-wrong-
+state to guard against, the `sidebar-collapsed`/`sidebar-expanded` CSS,
+`window.toggleSidebar()`) except for the one piece that makes a collapsed,
+icon-only sidebar actually usable: nothing displayed the `data-tooltip`
+label a collapsed nav item already carried — `data-tooltip` is not a
+native browser tooltip attribute, so every icon was unlabeled once
+collapsed. `layout.blade.php` now carries the same fixed-position tooltip
+bubble the sibling apps (`excise-budget-tracker`) already use —
+`showTooltip`/`hideTooltip`/`initTooltips`, positioned from the hovered
+element's own bounding rect so it escapes the sidebar's own scroll
+clipping — plus `updateToggleTooltip()` keeping the collapse button's own
+label in sync with its current state after a click, which this app's
+version had been missing even though the button already showed the
+correct label on a fresh page load (via the server-rendered cookie
+check).
+
+A further round of live Chat testing found four more gaps. Asking which
+district generated the highest revenue in FY2025-26 — the department's own
+prepared question, already worked into `FEW_SHOT_SQL_EXAMPLES` once before
+— started failing with `column t1.shop_id does not exist`: the model
+joined `analytics.sro_shops` to something on a hallucinated `shop_id`
+column that view has never had, when the question needs no join at all
+(`district` and `total_revenue` both live on the view directly). Fixed with
+an explicit warning in the view's own schema note and a corrected worked
+example, both confirmed live. A knowledge question ("What does the excise
+policy say about MGQ?") got refused outright — "I can't provide
+information or guidance on potentially illegal activities, including tax
+evasion and money laundering" — even though `search_knowledge` had already
+returned genuine Country Liquor Rules text about licence fees and
+quotas; a safety-style misfire on ordinary government rule text, not a
+retrieval gap. The existing wrong-refusal retry only matched one specific
+canned phrase ("I only answer UP Excise questions"); it now also catches a
+general refusal opener following a successful tool call, and
+`CHAT_SYSTEM_PROMPT` states plainly that the knowledge base holds ordinary
+published rules, not guidance on illegal activity. Retested, the refusal
+was gone, but the answer read as a ten-point summary of everything
+retrieved rather than the one term actually asked about — the prompt now
+says to answer the specific term, not every rule the retrieved sections
+happen to also cover.
+
+Switching to a new conversation (or another existing one) right after
+asking a question left that question stuck reading "No response was
+generated for this message" even though the turn was genuinely still
+running server-side — every conversation-rail link is a plain `<a>`, not
+`wire:navigate`, so leaving mid-turn is a full page unload with no chance
+for the existing drop-recovery logic (`reconnectAndStream()`) to run at
+all, since that logic only reconnects from the same page. Reopening a
+conversation whose last message still reads as pending now makes one
+resume attempt automatically, the same `/resume` endpoint a dropped
+connection already uses, keyed off that message's own id. That auto-resume
+surfaced a second bug it made newly reachable: the composer's Enter key
+could still submit a follow-up while an earlier message was mid-resume,
+racing two streams over the same shared JS state and making the first
+message's already-correct answer appear to vanish on screen (the database
+itself was never actually affected). Enter now checks the same `streaming`
+flag the Send button already hides itself on.
+
+A compound follow-up in the same conversation ("break it down across all
+districts... also how much came from CL5CC vs composite shops") surfaced a
+last gap: `run_sql_query`'s tool result only ever previews and
+pre-converts the first 5 rows, so a 75-row per-district breakdown left the
+model with no correct total to cite for "across all districts" and it
+borrowed a different tool call's total from the same turn instead. A
+truncated result now also carries a genuine sum over every row, not just
+the preview, plus an explicit note to say "top 5 of 75" rather than
+presenting the preview as the complete list.
+
+A live retest of the same beer-revenue conversation surfaced a worse shape of
+the same follow-up gap: asked to break the total down by district and split
+it between CL5CC and composite shops, with two charts, the model called
+`run_sql_query` with the *original* question's own wording verbatim
+("Total revenue generated from beer sales across Uttar Pradesh in FY2025-26")
+instead of a question describing either breakdown, got back the same
+single-row total as before, and then wrote both a district breakdown and a
+CL5CC/composite split with specific rupee figures that appear nowhere in
+that tool result — invented outright, not derived from anything retrieved.
+The root cause: `history` (`ChatController::send`) carries only each earlier
+turn's final answer text, never the question actually sent to
+`run_sql_query` or the numbers it returned, so the model has no way to tell
+whether a follow-up's own ask was already covered by a prior call without
+being told directly. `CHAT_SYSTEM_PROMPT` now says so explicitly — a
+follow-up asking for a different breakdown needs its own fresh
+`run_sql_query` call describing exactly what this turn asks for, a question
+naming more than one breakdown needs one call per breakdown, and a figure
+with no tool result behind it this turn must not be stated at all. Past
+that, both fabricated charts were also never real: with only one
+`run_sql_query` call and its single-row result, `auto_chart` never ran (a
+single-row result silently skips charting, same as a genuine one-row
+answer), yet the reply claimed both a pie chart and a bar chart had been
+made. `_claims_unmade_chart`'s own phrase list only ever matched "chart
+showing"/"here is a chart"-shaped wording, not "we have created a pie
+chart" — a real gap in phrasing coverage, now covered alongside it.
+
+A compound question asking for a district's revenue and a liquor-type
+percentage breakdown in one turn failed with `ReadTimeout calling Ollama` at
+`plan_sql`, past every existing timeout margin. `journalctl -u ollama` showed
+both models being fully reloaded three times within that single turn — not
+staying resident the way raising `OLLAMA_MAX_LOADED_MODELS` to 2 was already
+meant to guarantee (above). The actual cause was a setting that raise never
+touched: `OLLAMA_KEEP_ALIVE=30s`, sized back when only one model slot
+existed, still evicts either model individually 30 seconds after its own
+last request regardless of a free second slot — and a compound turn's own
+gaps between calls (Postgres execution, tool-result handling, a heartbeat
+interval) routinely run longer than that. Each reload mid-turn stacked
+enough wall-clock time to cross `ollama_generate_timeout_seconds`.
+`OLLAMA_KEEP_ALIVE=-1` (never unload) replaces it — the RAM commitment
+`MAX_LOADED_MODELS=2` already makes rather than another fixed window the
+same race would eventually cross again (`EVALUATION.md` §2,
+`OPERATOR_SETUP.md` §Ollama runtime settings — keep-alive outlives a
+compound turn). Live: `systemctl show ollama.service -p Environment`
+confirms `OLLAMA_KEEP_ALIVE=-1` on the running service.
+
+A retest of that same compound question, past the timeout, surfaced two more
+real bugs on its own answer. First, the liquor-type breakdown only ever
+named beer and "country liquor" — the second bucket wrong by a factor of
+nearly 2.5x — because `FEW_SHOT_SQL_EXAMPLES` had one worked example for
+statewide beer revenue and nothing else, so the model invented a second
+CASE branch lumping every other shop_type into "country liquor" rather than
+breaking each one out. `analytics.sro_shops` has no liquor-type column at
+all — `shop_type` (COUNTRY_LIQUOR, COMPOSITE_SHOP, MODEL_SHOP, PRV,
+BHANG_SHOP, HBR) is the only category every row carries, and only
+COMPOSITE_SHOP and a `has_cl5cc` COUNTRY_LIQUOR shop split further into
+beer vs. their own other component — confirmed live for Lucknow FY2025-26,
+where `composite_lf_beer + composite_mgr_beer` and
+`composite_lf_fl + composite_mgr_fl` sum to exactly that shop_type's
+`total_revenue` with nothing left over, and the same holds for a
+`has_cl5cc` shop's `special_beer_lf + special_beer_mgr` against the rest of
+its own total. `schema_card.py`'s `sro_shops` note and a new worked example
+now cover the full seven-bucket breakdown (Beer, Foreign Liquor, Country
+Liquor, Model Shop, PRV, Bhang Shop, HBR) rather than beer alone, confirmed
+against the real database: ₹2,860.80 crore total for Lucknow FY2025-26,
+36.3% Country Liquor down to 0.1% Bhang Shop. Second, no chart followed even
+with the toggle on: the old example returned one row with two named
+columns, and `auto_chart` only fires on more than one row. The new example
+returns one row per type via `UNION ALL` instead of named columns, both
+answering "what type" directly and making the result chartable — the
+five-example beer-only question on Ask's and Chat's empty states is now this
+fuller question instead. The beer-only question stayed useful in its own
+right, so both lists now carry six examples rather than a straight swap.
+
+A live render of that fuller question surfaced two more gaps past the SQL
+fix itself. The chart rendered squeezed into the chat bubble's own
+`max-w-lg` width, the same constraint every chart card sits inside
+regardless of size — `chat.blade.php`'s persisted and live-streaming message
+bubbles now widen to `lg:max-w-2xl` when the message carries a chart, and
+both `chat.blade.php`'s inline live chart and `tool-call-card.blade.php`'s
+persisted one gained a taller `min-height` (380px, up from 280px). Second,
+the result's own `pct_of_total` column plotted flat at zero next to
+`revenue_inr` on the same y-axis — not a data bug, the tool result's own
+preview showed correct non-zero percentages; a raw amount in the billions
+and its own percentage-of-total share the same figures at two different
+scales, and one axis can't show both without the smaller series
+disappearing. `PLOT_SYSTEM_PROMPT` now says to chart only the column the
+question is actually asking about, leaving a derived percentage column for
+the table and the summary text rather than a second series on the same
+axis.
+
+A live retest of that same question, past the axis fix, failed differently:
+"sandbox violation: exit 1: KeyError: 'district'" on a result whose only two
+columns are `liquor_type` and `revenue_inr` — already filtered to Lucknow,
+with no `district` column left to reference at all. `PLOT_SYSTEM_PROMPT`
+had a real gap: the rule to plot only the columns a result actually has
+(`MCP_ENGINES.md` §Tools) had only ever lived in `CHAT_SYSTEM_PROMPT`, from
+back when Llama wrote chart scripts itself as a tool call, and never carried
+over to `PLOT_SYSTEM_PROMPT` once charting became this deterministic Qwen
+step reusing `/query`'s own `plan_plot` machinery — the shared prompt Qwen
+sees for every chart, chat or `/query`, never actually said this. The
+prompt's own example line naming "districts" as a typical bar-chart
+dimension made it worse here specifically: the question itself says
+"Lucknow district," so the model had every reason to reach for a column
+that isn't there. `PLOT_SYSTEM_PROMPT` now says directly that only the
+listed columns exist, regardless of what the question's own wording
+mentions, and the "districts/categories" example is now just "categories."
+`pipeline.py`'s `/query` plan_plot stage and chat's `auto_chart` are the
+only two callers of this prompt, both routing through the one
+`PLOT_SYSTEM_PROMPT` constant with no per-caller copy — the fix needed no
+second change anywhere for `/query`'s own chart step to carry it too.
+
+The retest past that fix surfaced a different hallucination on the same
+question: `run_sql_query` failed with `column d.source_shop_id does not
+exist` on a query against `analytics.dispatches` (aliased `d`) —
+`source_shop_id` is a real column, just on `analytics.sro_shops`, an
+unrelated view with no shared key. `schema_card.py`'s `VIEW_NOTES` for the
+two views sit next to each other and each names its own "shop identifier"
+column under a different name (`dispatches.shop_id`,
+`sro_shops.source_shop_id`) with nothing telling the model they aren't
+interchangeable — the same cross-contamination shape the `CL5CC`/license-
+code and `data_ref` fixes elsewhere in this file already closed for other
+near-miss column pairs. Both notes now say so directly, each naming the
+other view's differently-named identifier and stating plainly it does not
+exist on this one.
+
+Two of Chat's six example questions carried `'chart' => false`, matching
+`auto_chart`'s own more-than-one-row rule — each had a single-row worked
+`FEW_SHOT_SQL_EXAMPLES` query behind it, so there was nothing to chart even
+with the toggle on. "Which district generated the highest revenue in
+FY2025-26?" already ran a `GROUP BY district` returning all 75 districts,
+just never flagged for a chart; it now is. The beer-revenue question's own
+worked example summed both contributing shop-type buckets into one row —
+now `GROUP BY ROLLUP(bucket)` instead, the same pattern the shop-count
+example above it already uses, giving a Composite/Country Liquor (CL5CC)
+breakdown plus a SQL-computed Total row rather than one flat number,
+confirmed live: ₹6,740.18 crore composite + ₹402.69 crore CL5CC country
+liquor = ₹7,142.87 crore. Computing the Total in SQL rather than leaving it
+to the summarizing model to add two already-converted lakh/crore figures
+avoids the exact arithmetic mistake documented elsewhere in this file.
+
+A live screenshot of that same beer-revenue chart — the one with the long,
+question-derived title — showed the title text running off the right edge
+of the chart, live in the browser and identically in its PNG export.
+Plotly.js renders a chart title as a single unbroken line of SVG text with
+no wrapping of its own, and this project's static export (`static_render.py`,
+via kaleido) rasterizes the same JSON with the same Plotly.js renderer, so
+neither side ever wrapped a long title on its own. `python_engine.py` reads
+`chart.plotly.json` at one point already, before handing it to both the
+static renderer and the browser — `_wrap_long_title` breaks a title past 50
+characters into `<br>`-joined lines there, fixing both renderers from the
+one choke point rather than duplicating the logic in the frontend and in
+`static_render.py` separately.
+
+A live report on Ask's own prepared demo question ("how many country liquor
+and composite shops are in Lucknow in August 2026") — its `GROUP BY
+ROLLUP(lc.kind)` worked example above returns a small multi-row breakdown,
+chartable — failed twice in a row at the render stage with `AttributeError:
+'Figure' object has no attribute 'figure'`, past the one retry `pipeline.py`
+already gives a failed chart script. Matplotlib/pandas/seaborn plotting calls
+inconsistently return either a `Figure` or an `Axes` depending on which one
+was called, and only an `Axes` carries a `.figure` back-reference to its
+parent — a script that chains `.figure.savefig(...)` off whichever one it
+happened to get crashes exactly this way when it guessed `Figure`.
+`_ENGINE_CAPABILITIES["python"]` already told the model to call
+`plt.savefig(...)` for a static chart but never said not to chain `.figure`
+off a returned object first; it now says so directly, naming the exact
+exception text so a retry's own reprompt (which already includes the prior
+failure's message) reads as confirmation of a stated rule rather than a new
+mystery.
+
+A live report on a related question ("what was the total dispatch amount and
+volume for Lucknow in August 2026") failed at `run_sql` with `column
+d.dispatched_amount_inr does not exist` — `analytics.dispatches`' own
+`VIEW_NOTES` already names the real column (`duty_fee_inr`) directly, but
+nothing had ever shown the model a query actually using it, so it pattern-
+matched the `dispatched_bulk_litres`/`dispatched_cases`/`dispatched_bottles`
+prefix onto the one money column that breaks it. A new worked
+`FEW_SHOT_SQL_EXAMPLES` entry covers this exact amount-and-volume shape,
+confirmed live: ₹161.33 crore, 33,86,731.41 BL for Lucknow in August 2026 —
+consistent with every other case in this file where a plain prose note alone
+didn't stop a hallucinated column name but a matching worked example did.
+
+A live report of `visualizer.exciseup.in` erroring, while the four sibling
+apps' own Cloudflare Tunnels stayed up, traced to this app's tunnel unit
+alone: `journalctl --user -u excise-mcp-dashboard-tunnel` showed a transient
+systemd-resolved failure ("server misbehaving" looking up
+`argotunnel.com`) crashing `cloudflared` five times in under a second, then
+systemd's own restart-rate-limit giving up ("Start request repeated too
+quickly") and leaving the service dead even after DNS recovered seconds
+later — the same already-documented failure mode `OPERATOR_SETUP.md`'s
+recovery runbook covers, just not yet why only this app's tunnel hits it.
+The unit's own `Restart=on-failure` carried no `RestartSec`, which defaults
+to 100ms — fast enough to burn through systemd's default five-restart
+budget before a DNS blip this short ever has the chance to clear. All four
+sibling tunnel units already use `Restart=always` with `RestartSec=2`
+instead, spacing those same five restarts across roughly ten seconds — long
+enough for a blip this size to pass before the rate limit trips, which is
+why they never get stuck on it. `excise-mcp-dashboard-tunnel.service`
+(`OPERATOR_SETUP.md`'s own provisioning heredoc, and the live unit on this
+box) now matches that setting. A DNS outage that outlasts even that spacing
+still needs the manual `reset-failed` + `restart` recovery `OPERATOR_SETUP.md`
+already documents — this closes the specific blip duration seen live, not
+every duration.
+
+A live Ask question about country liquor shops that also sell beer failed at
+`run_sql` with `column "has_cl5cc" does not exist`. `has_cl5cc` is a column on
+`analytics.sro_shops` only. The beer-revenue worked example, which filters on
+it, was the only query in `FEW_SHOT_SQL_EXAMPLES` that used the column, and the
+model copied that filter onto `analytics.shops`, which has no such column. The
+shop's category is `license_category = 'CL5CC'` (Country Liquor with Beer) on
+`analytics.shops`; the live count for Lucknow is 29. A worked example now
+covers this shape, Ask's empty state lists the CL5CC question, and the `shops`
+note in `schema_card.py` states that `has_cl5cc` does not exist on that view.
+CL5C (plain Country Liquor, 560 shops in Lucknow) is a separate code in the same
+table and keeps its own worked example. The orchestrator change needs the
+standing `systemctl --user restart excise-orchestrator` step before it is live.
+
+Ask's CL5CC example asks for more than a count: the revenue of CL5CC shops in
+Lucknow for FY2025-26 split into country liquor and beer. Beer is
+`special_beer_lf + special_beer_mgr` and country liquor is the rest of
+`total_revenue`, both on `analytics.sro_shops` (`has_cl5cc` rows only). Live:
+₹21.74 crore country liquor, ₹4.13 crore beer, ₹25.87 crore total across 29
+shops. The worked example returns those three rows, with the total computed in
+SQL, so the answer names each part and the total. It is wrapped in a subquery
+because the SQL guard rejects a top-level `UNION`.
+
+The data supports a revenue split, not a consumption figure. Dispatch strength
+lines carry country-liquor strengths only, and `analytics.sales_volumes` holds
+beer volume at district level, not per shop. The summary and chat prompts now
+say so: a revenue split describes the revenue shops generated by selling, and an answer does not
+infer drinking habits from it. The same prompts state the specific figure
+without general claims of growth or significance, and do not end with a recap.
+
+Live checks of Ask's example questions found three summary-step errors. The
+CL5CC count was summarised as "one shop" because the summary prompt set the
+row count next to the sample rows with no label, so the model took the row
+count for the figure. The summary prompt now labels the row count as a count
+of rows, states that the figures are in the rows, and says only a row
+labelled "Total" is the total. The pre-converted money lines now carry their
+row label (`Total: revenue_inr = ₹2,860.80 crore`), so the model no longer
+matches a figure to the wrong row. The Lucknow revenue worked example now
+returns a Total row computed in SQL and is wrapped in a subquery for the
+guard. Two Ask questions were removed from the empty state because they
+failed on a live run: the CL5CC revenue split (a chart script raised
+`NameError`) and the Lucknow revenue split (a planner timeout on one run, a
+wrong total on another before the label fix). The country liquor and
+composite count still fails intermittently at render with a `SyntaxError` in
+the chart script; it passed on the other runs. The orchestrator changes need
+the standing `systemctl --user restart excise-orchestrator` before the live
+service uses them.
+
+A presentation for the Cabinet and the Chief Secretary is in `deck/`.
+`UP-Excise-Ask-the-Data-Demo.pptx` has 15 slides with speaker notes on each,
+with a PDF copy beside it. `images/` holds the six screenshots the slides use
+at full size; each screenshot on a slide links to its file by relative path,
+so the folder works from any location and operating system as long as
+`images/` stays next to the `.pptx`. `SLIDE-TRANSCRIPT.md` lists each slide's
+text, speaker notes, a description of every visual, screenshot alt text, and
+the facts each claim rests on, with instructions for a reviewer, so other
+models and department staff can improve the wording before the deck is
+final. `source/` holds the build scripts (`python3
+deck/source/build/build_deck.py` rebuilds the deck; `make_transcript.py`
+regenerates the transcript from it), the Tabler icons rendered to PNG, and
+the raw screenshots. The slides show the Ask shop-count, district-revenue,
+and beer-revenue examples, Chat's district-revenue example with its chart,
+and the Knowledge base and System health admin screens, all captured from the
+live site with Playwright (headless Chromium) using a login state saved from
+one manual email-OTP sign-in.
+
+The deck's colours come from the department flag (yellow over blue), softened
+to pastels, with the State Emblem and the Hindi department name as Unicode
+text (Nirmala UI) on the title slide. It follows the design guidelines'
+GIGW and UX4G rules for AA text contrast, sentence-case headings, and a
+Government of Uttar Pradesh identity line in every footer. The typeface is
+Calibri, because Inter is not installed on most office PCs. Slide 15, the
+decision request, is empty; the project lead supplies the ask after review.
+Two answer-quality failures seen while capturing, a rupee sign on a
+bulk-litre figure in Chat and an unsupported revenue sentence in one Ask
+summary, are in `ROADMAP.md`'s backlog. `SLIDE-TRANSCRIPT.md` contains real
+departmental figures; sending it to an outside model is the project lead's
+decision, since the no-egress rule below covers the application's own data
+path.
 
 ## What this project is
 
@@ -89,9 +2128,11 @@ Two more capabilities sit on the same LLM and UI:
   `DATA_PIPELINE.md` §Knowledge base and `MCP_ENGINES.md` §Chat and retrieval.
 - **A general chat window**, OpenWebUI-style: streaming conversation with the
   local model, conversation history, markdown/code rendering. The model calls
-  tools from inside the chat — `search_knowledge`, `run_sql_query`,
-  `make_chart` — so the same data-lake and knowledge access is available
-  conversationally, not only through the one-shot analytical form. Built
+  tools from inside the chat — `search_knowledge`, `run_sql_query` — so the
+  same data-lake and knowledge access is available conversationally, not only
+  through the one-shot analytical form. A chart is a deterministic step after
+  a successful `run_sql_query`, not a third tool the model calls or writes the
+  script for (`MCP_ENGINES.md` §Tools). Built
   natively in Livewire against the orchestrator's streaming endpoint; no
   Docker, no embedded OpenWebUI (`EVALUATION.md` §Chat integration).
 
@@ -158,6 +2199,8 @@ excise-mcp-dashboard/
                     - pdf-markdown-pipeline verified docs + admin .md uploads -> kb.*
   db/             SQL: schema (data + kb), read-only role grants, seed reference data
   deploy/         Apache vhost, cloudflared config, systemd --user units + timers
+  deck/           Cabinet demo presentation: .pptx, PDF, full-size screenshots,
+                  slide transcript, build scripts
   docs/           this set of Markdown files
   OPERATOR_SETUP.md   every sudo / install / Google-console step, copy-pasteable
 ```
@@ -177,6 +2220,17 @@ consumer appears.
   is the package to use, replacing the Python orchestrator rather than running
   beside it. Running OpenWebUI itself in Docker against the orchestrator's
   OpenAI-compatible endpoint stays a documented backlog option.
+- **Real-time transport: plain HTTP streaming now, Laravel Reverb the
+  documented upgrade.** Chat already streams live token-by-token over a
+  `fetch()` + `ReadableStream` reader against an ndjson response — no
+  WebSocket server needed for that. A genuine broadcast need (two people
+  watching the same conversation update live, say) is the trigger to add
+  one, not before; the Cloudflare Tunnel this box runs behind is meant for
+  testing and proof-of-concept work, with a dedicated server planned later,
+  and standing up a WebSocket server through a tunnel today would be
+  infrastructure ahead of any actual need. Reverb, specifically, over Pusher
+  or Ably — self-hosted and first-party, so it stays inside the no-egress
+  rule the same way everything else here does.
 - **Retrieval: Postgres full-text search first, `pgvector` as the documented
   upgrade.** The policy/acts corpus is small (a few hundred verified docs).
   Built-in `tsvector` + `websearch_to_tsquery` needs no extension and no
@@ -218,6 +2272,16 @@ consumer appears.
   heavy dependency, some with default telemetry, built around self-editing
   memory the model should not have. `EVALUATION.md` §Right-sizing item 14,
   `MCP_ENGINES.md` §Memory.
+- **Tool-calling reliability: fix the prompt and add a retry, don't fine-tune
+  the model.** Every tool-calling breakdown found in live chat use so far —
+  a bare `"{}"`, a narrated fake call, a hallucinated `null` argument,
+  guessed SQL written as prose — has closed with a `CHAT_SYSTEM_PROMPT`
+  wording fix plus a matching `chat/loop.py` retry, not a retrain.
+  LoRA/QLoRA fine-tuning is declined until that pattern stops working: it
+  needs a labeled dataset (no real transcript volume yet), training-grade
+  GPU headroom, and its own eval harness — a project on its own, for a
+  problem that a one-line prompt change has closed every time so far.
+  `EVALUATION.md` §Right-sizing item 16, `MCP_ENGINES.md` §Tools.
 - **XLSX export: `openspout/openspout`, matching the sibling apps.** It is
   already the one Excel library across the Laravel fleet —
   `upexcise-stats-dashboard`'s `ExportService` writes `.xlsx` with it,
@@ -228,6 +2292,18 @@ consumer appears.
   Maatwebsite Excel, neither of which appears anywhere in the fleet. `etl/`'s
   own `.xlsx` ingestion is a separate, already-settled choice: `openpyxl` on
   the Python side (`etl/etl/sources/excel.py`).
+- **A periodic source states its reporting month explicitly, as a CLI flag.**
+  `etl.source_registry.requires_period` + `etl.ingestion_runs.report_period`
+  (`DATA_PIPELINE.md` §Periodic sources without a per-row date): `etl sync
+  --source NAME --period 2026-08`, since this app's ETL is a scripted CLI
+  (`etl sync`, argparse) run by systemd timers. `excise-budget-tracker`'s
+  Livewire grant-import screen is the only sibling app with an equivalent
+  period picker — its own free-text `as_of_month`, stamped straight onto the
+  fact row it imports — and this port keeps the same idea of asking the
+  operator outright, in the shape this app's own ETL already takes. No source
+  needs this yet; it exists so the first one that does — a shops roster, a
+  monthly revenue/quota/enforcement figure — has a place to put its period
+  instead of falling back to `created_at`.
 
 ## Laravel conventions (`web/`)
 
@@ -293,9 +2369,11 @@ the 11/12 + Livewire 3 named in the original brief.
   query string) parsing the orchestrator's ndjson lines and appending
   assistant token deltas. Markdown + fenced code render client-side
   (`marked` + a highlighter from jsDelivr, on the CSP allowlist). Tool calls
-  the model makes (`run_sql_query`, `search_knowledge`, `make_chart`) render
-  as inline cards — the SQL, the retrieved snippets with links to
-  `docsrepo.exciseup.in`, the chart. History persists in `conversations` /
+  the model makes (`run_sql_query`, `search_knowledge`) render as inline
+  cards — the SQL, the retrieved snippets with links to
+  `docsrepo.exciseup.in` — and a chart, when `want_chart` asked for one and
+  `run_sql_query` returned more than one row, renders the same way despite
+  never being a tool call itself. History persists in `conversations` /
   `messages` / `message_tool_calls`. No streaming LLM logic in PHP — `web/`
   reads the orchestrator's `/chat` ndjson stream and pipes it through.
 - **Model picker**: a `config/models.php` registry (`key`, `label`, `role`,
@@ -472,9 +2550,10 @@ End with the co-author trailer the session is configured for.
   and a ledger entry; an orchestrator error renders the failed stage and still
   writes a ledger row.
 - Chat flow: a message streams assistant tokens from a mocked orchestrator;
-  a tool call in the stream (`run_sql_query`, `search_knowledge`,
-  `make_chart`) is persisted and rendered; conversation history loads and
-  resumes.
+  a tool call in the stream (`run_sql_query`, `search_knowledge`) is
+  persisted and rendered; a chart attached after `run_sql_query` (the
+  `want_chart` toggle) is persisted and rendered the same way; conversation
+  history loads and resumes.
 - Model picker: the dropdown lists only registry models the mocked `/health`
   reports pulled; a chosen model rides on the `/chat` call as `model`; a value
   outside the registry is refused.
