@@ -401,7 +401,7 @@ bullets(s, 7.0, 2.15, 5.5, [
     'Shop-level Bhang data has no source yet.',
     'Answers should be treated as a fast first reading, to be checked against the source for formal use.',
 ], 15, 10)
-notes(s, 'Being open about limits is deliberate. The cabinet will ask what can go wrong; this slide answers before they do.')
+notes(s, 'Being open about limits is deliberate. The audience will ask what can go wrong; this slide answers before they do.')
 
 # 14 --------------------------------------------------------------- roadmap
 s = new_slide('What comes next')
@@ -426,12 +426,12 @@ box(s, 0.6, 1.5, 12.1, 2.2, fill=TINT)
 badge(s, 'bulb', 0.9, 1.9, 0.9)
 text(s, 2.1, 1.7, 10.4, 1.9, ['This proof of concept shows that officers can get sourced answers from the '
      'department\'s own data in minutes, on the department\'s own server.',
-     'We ask the Cabinet and the Chief Secretary for a decision on the next step.'], 20, True, INK, spacing=8)
+     'We ask the respected authorities for a decision on the next step.'], 20, True, INK, spacing=8)
 text(s, 0.6, 4.1, 12.1, 0.5, 'Proposed next steps', 22, True, VIOLET)
 bullets(s, 0.6, 4.7, 12.1, [
     '1.  A pilot with a small group of district and division officers.',
     '2.  A high-performance GPU compute node.',
-    '3.  Monthly data feeds from the source systems.',
+    '3.  Monthly data feeds from the source systems and involved stakeholders.',
 ], 18, 8)
 notes(s, 'DECISION REQUEST: to be written after the review with the project lead. Replace the next steps '
          'above with the specific approval being sought.')
