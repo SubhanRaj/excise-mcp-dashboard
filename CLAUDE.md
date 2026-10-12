@@ -2077,7 +2077,7 @@ the chart script; it passed on the other runs. The orchestrator changes need
 the standing `systemctl --user restart excise-orchestrator` before the live
 service uses them.
 
-A presentation for the Cabinet and the Chief Secretary is in `deck/`.
+A presentation for the state's senior authorities is in `deck/`.
 `UP-Excise-Ask-the-Data-Demo.pptx` has 15 slides with speaker notes on each,
 with a PDF copy beside it. `images/` holds the six screenshots the slides use
 at full size; each screenshot on a slide links to its file by relative path,
@@ -2085,8 +2085,10 @@ so the folder works from any location and operating system as long as
 `images/` stays next to the `.pptx`. `SLIDE-TRANSCRIPT.md` lists each slide's
 text, speaker notes, a description of every visual, screenshot alt text, and
 the facts each claim rests on, with instructions for a reviewer, so other
-models and department staff can improve the wording before the deck is
-final. `source/` holds the build scripts (`python3
+models and department staff can improve the wording. The deck's wording has
+had one such review applied: long bullets split into separate lines, the
+speaker notes written in the first person plural, and plain statements in
+place of slogans. The Indus (Sarvam AI) wording review's draft is in git history (commit `e07d86c`); the current points from it are in the transcript's "Notes for the department". Each figure on the data slide carries its unit (records, shops, documents). `UP-Excise-Ask-the-Data-Demo-Short.pptx` (with a PDF) is an 8-slide cut of the same deck for a shorter slot: title, problem, what it does, the shop-count and revenue examples, safety, next steps and the decision request. It is copied from the full deck, so a wording change to the full deck needs the same change there. Every slide's heading is its title placeholder (`set_titles.py`, run by the builder), so PowerPoint's outline and the PDF bookmarks show the slide titles. The same script fills the document properties (title, author, subject, keywords, language). Export each PDF with `soffice --headless --convert-to 'pdf:impress_pdf_Export:{"UseTaggedPDF":{"type":"boolean","value":"true"},"ExportBookmarks":{"type":"boolean","value":"true"},"DisplayPDFDocumentTitle":{"type":"boolean","value":"true"}}'` so it is tagged, has bookmarks and shows its title in the viewer's title bar. `source/` holds the build scripts (`python3
 deck/source/build/build_deck.py` rebuilds the deck; `make_transcript.py`
 regenerates the transcript from it), the Tabler icons rendered to PNG, and
 the raw screenshots. The slides show the Ask shop-count, district-revenue,
@@ -2100,7 +2102,9 @@ to pastels, with the State Emblem and the Hindi department name as Unicode
 text (Nirmala UI) on the title slide. It follows the design guidelines'
 GIGW and UX4G rules for AA text contrast, sentence-case headings, and a
 Government of Uttar Pradesh identity line in every footer. The typeface is
-Calibri, because Inter is not installed on most office PCs. Slide 15, the
+Calibri, because Inter is not installed on most office PCs. The safety slide
+does not mention the Cloudflare Tunnel, since the tunnel belongs to this
+interim server and goes away with it. Slide 15, the
 decision request, is empty; the project lead supplies the ask after review.
 Two answer-quality failures seen while capturing, a rupee sign on a
 bulk-litre figure in Chat and an unsupported revenue sentence in one Ask
@@ -2199,7 +2203,7 @@ excise-mcp-dashboard/
                     - pdf-markdown-pipeline verified docs + admin .md uploads -> kb.*
   db/             SQL: schema (data + kb), read-only role grants, seed reference data
   deploy/         Apache vhost, cloudflared config, systemd --user units + timers
-  deck/           Cabinet demo presentation: .pptx, PDF, full-size screenshots,
+  deck/           Demo presentation for senior authorities: .pptx, PDF, full-size screenshots,
                   slide transcript, build scripts
   docs/           this set of Markdown files
   OPERATOR_SETUP.md   every sudo / install / Google-console step, copy-pasteable
