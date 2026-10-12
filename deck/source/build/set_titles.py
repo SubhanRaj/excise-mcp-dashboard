@@ -3,8 +3,11 @@
 The slides are drawn on the Blank layout, so PowerPoint's outline view, the slide
 navigator, accessibility readers and the PDF bookmarks see no title. This switches each
 slide to the Title Only layout and tags its heading text box as the title.
+It also fills the document properties (title, author, subject, keywords, language) that
+PowerPoint's File > Info and the PDF's document title read.
 Usage: python3 set_titles.py FILE.pptx [FILE.pptx ...]   (edits in place)
 """
+import datetime
 import sys
 from lxml import etree
 from pptx import Presentation
@@ -35,8 +38,26 @@ def mark_titles(prs):
         sh.name = 'Title'
 
 
+def set_properties(prs, short=False):
+    c = prs.core_properties
+    c.title = 'Ask the Data: proof of concept' + (' (short version)' if short else '')
+    c.subject = 'Demonstration of plain-language questions answered from the Department of Excise\'s own data'
+    c.author = 'Department of Excise, Government of Uttar Pradesh'
+    c.keywords = 'Uttar Pradesh; Excise; Ask the Data; proof of concept; analytics'
+    c.category = 'Presentation'
+    c.comments = 'Speaker notes are on every slide.'
+    c.language = 'en-IN'
+    c.created = datetime.datetime.now()
+    c.revision = (c.revision or 0) + 1
+    for s in prs.slides:  # English text is en-IN; the Hindi runs already carry hi-IN
+        for r in s._element.iter(qn('a:rPr')):
+            if 'lang' not in r.attrib:
+                r.set('lang', 'en-IN')
+
+
 if __name__ == '__main__':
     for f in sys.argv[1:]:
         p = Presentation(f)
         mark_titles(p)
+        set_properties(p, short=f.endswith('-Short.pptx'))
         p.save(f)
