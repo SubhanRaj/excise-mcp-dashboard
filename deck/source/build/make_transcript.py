@@ -20,7 +20,7 @@ CONTEXT = {
 3: ("Say in plain words what the system does, and name its three parts.",
     "Three cards with icons: a speech bubble with a question mark (Ask), a chat bubble (Chat), a bookshelf (Knowledge library).",
     "None.",
-    "The system runs on a server in the department's own office. No question or figure is sent to an outside AI service."),
+    "The system runs on the departmental server and is completely local. No external AI service provider and no closed-source or proprietary tool is used; all models run locally."),
 4: ("The one picture the audience should remember: how a question becomes an answer.",
     "Four pale blue boxes joined by gold arrows, left to right: 1 You ask (question icon), 2 The system understands (brain icon), 3 The data answers (database icon), 4 You see the result (bar chart icon). A pale yellow bar underneath carries the closing sentence.",
     "None.",
@@ -28,7 +28,7 @@ CONTEXT = {
 5: ("Show one real question answered end to end, with a figure the audience can check.",
     "Left: the question and four short points. Right: a screenshot of the Ask page.",
     "Screenshot of the Ask page for the question 'How many country liquor and composite shops are in Lucknow in August 2026?'. A bar chart titled 'Number of Country Liquor and Composite Shops in Lucknow in August 2026' (y-axis 'Number of Shops') shows three bars: Composite 417, Country Liquor 589, Total 1,006. Below the chart is a two-sentence summary reading 'There are 589 country liquor shops and 417 composite shops in Lucknow in August 2026. The total number of such shops is 1006, with a combined shop count of 1006 across these categories.' (the second sentence repeats the total; a known wording slip), then a three-row table (Composite 417, Country Liquor 589, Total 1006), a collapsed 'Generated SQL' panel, and a thumbs up / thumbs down feedback row.",
-    "Lucknow, August 2026: 1,006 shops in total, 589 country liquor and 417 composite. Source: the IESCMS monthly dispatch report, one row per transport pass, loaded for Lucknow for August 2026 only. 'Composite' means a Foreign Liquor and Beer licence (code FL5DB). Country liquor includes CL5C and CL5CC."),
+    "Lucknow, August 2026: 1,006 shops in total, 589 country liquor and 417 composite. Source: the monthly dispatch report from the Integrated Excise Supply Chain Management System (IESCMS), one row per transport pass, loaded for Lucknow for August 2026 only. 'Composite' means a Foreign Liquor and Beer licence (code FL5DB). Country liquor includes CL5C and CL5CC."),
 6: ("Show two money questions answered, one by district and one for a product.",
     "Two Ask-page screenshots side by side, each with its question above and a one-sentence reading below.",
     "Left screenshot: Ask page for 'Which district generated the highest revenue in FY2025-26?'. A bar chart titled 'Highest Revenue by District in FY2025-26' shows 75 districts, falling steeply from Lucknow on the left; the y-axis reaches 30B rupees. A summary names Lucknow at ₹2,860.80 crore, then Gautam Buddha Nagar at ₹2,622.48 crore and Kanpur Nagar at ₹2,068.48 crore. A 75-row table starts with Lucknow. Right screenshot: Ask page for 'How much revenue was generated from beer sale across Uttar Pradesh in FY 2025-26?'. A bar chart titled 'Revenue from Beer Sale in Uttar Pradesh FY 2025-26' shows three bars: Composite Shop, Country Liquor (CL5CC), Total. A summary and a three-row table follow.",
@@ -40,7 +40,7 @@ CONTEXT = {
 8: ("Show how much data is already loaded, so the audience knows this is built on real department data.",
     "Six tiles, each with an icon and a large number, in two rows of three.",
     "None.",
-    "9,322 dispatch records (Lucknow, August 2026, from IESCMS). 28,405 shops with FY2025-26 revenue across all 75 districts. 3,455 district revenue records, 3,812 sales-volume records by liquor type and year, and 11,124 enforcement records (raids, seizures, convictions), all from the eight NITI workbooks. More than 330 acts, rules and policy documents in the knowledge library. The data bank is a copy; the source systems are untouched."),
+    "9,322 dispatch records (Lucknow, August 2026, from the Integrated Excise Supply Chain Management System). 28,405 shops with FY2025-26 revenue across all 75 districts. 3,455 district revenue records, 3,812 sales-volume records by liquor type and year, and 11,124 enforcement records (raids, seizures, convictions), all from the Rajkosh and Koshwani portal data. More than 330 acts, rules and policy documents in the knowledge library. The data bank is a copy; the source systems are untouched."),
 9: ("Name the two models and what each one does, in terms a non-technical person can repeat.",
     "Two large pale blue cards: Llama 3.1 (8 billion) and Qwen 2.5 Coder (7 billion), each with an icon. A pale yellow bar underneath gives the two reasons: two models, and local.",
     "None.",
@@ -60,11 +60,11 @@ CONTEXT = {
 13: ("Be open about what went wrong and what is not yet possible. This slide answers the cabinet's hardest question first.",
     "Two pale blue cards: 'What we learned' (blue heading) and 'Limits today' (gold heading).",
     "None.",
-    "A model once gave a confident wrong answer; an empty result is now reported as empty. District revenue after 2018 in the NITI workbooks is booked at the central treasury in Lucknow, so it overstates Lucknow; it was cross-checked against shop-level revenue and the system now uses that source. A money conversion done by the model was once wrong by ten times; conversions are now done in code. Limits: no graphics card so answers take one to three minutes; shop-level monthly detail is loaded for Lucknow for August 2026 only; no source yet for shop-level Bhang data; answers are a fast first reading to be checked against the source for formal use."),
+    "A model once gave a confident wrong answer; an empty result is now reported as empty. District revenue after 2018 in the Rajkosh and Koshwani portal data is booked at the central treasury in Lucknow, so it overstates Lucknow; it was cross-checked against shop-level revenue and the system now uses that source. A money conversion done by the model was once wrong by ten times; conversions are now done in code. Limits: no graphics card so answers take one to three minutes; shop-level monthly detail is loaded for Lucknow for August 2026 only; no source yet for shop-level Bhang data; answers are a fast first reading to be checked against the source for formal use."),
 14: ("Show where this goes next.",
-    "Four cards in a two-by-two grid with icons: Faster hardware, More data, Saved analyses and reports, Wider access.",
+    "Four cards in a two-by-two grid with icons: High-performance compute, More data, Saved analyses and reports, Wider access.",
     "None.",
-    "Faster hardware means a dedicated server with a graphics card. Saved analyses, reports and wider access by district and division officers are planned, not built."),
+    "High-performance compute means a high-performance computing (HPC) node with high-end GPU servers, which can run larger, more capable models and shorten response times. Saved analyses, reports and wider access by district and division officers are planned, not built."),
 15: ("State the decision the cabinet is being asked to make.",
     "A tinted box with a lightbulb icon holds the main sentence; a short numbered list sits below.",
     "None.",
@@ -114,7 +114,7 @@ some will read it as a second language.
 
 - Every number, name, date and licence code in the 'Locked facts' lines stays as written.
 - Do not add a statistic, a benefit, or a capability that is not in this file.
-- Keep the department's own terms: IESCMS, NITI workbooks, CL5C, CL5CC, FL5DB, MGQ.
+- Keep the department's own terms: Integrated Excise Supply Chain Management System (IESCMS), Rajkosh and Koshwani portals, CL5C, CL5CC, FL5DB, MGQ.
 - Slide 15's decision request is deliberately empty. Do not invent one.
 
 ## Length limits
@@ -124,9 +124,10 @@ A bullet: at most 25 words. Speaker notes: at most 90 words per slide.
 
 ## Terms used in this deck
 
-- IESCMS: the department's live system for excise licences and transport passes.
-- NITI workbooks: eight district-level Excel workbooks from the NITI Aayog data exercise
-  (revenue, sales volume, enforcement, shops, brands, prices, policy).
+- IESCMS: the Integrated Excise Supply Chain Management System, the department's live system
+  for excise licences and transport passes.
+- Rajkosh and Koshwani portal data: the department's district-level records of revenue, sales
+  volume, enforcement, shops, brands, prices and policy.
 - Country liquor (CL5C), country liquor with beer (CL5CC): retail shop types.
 - Composite shop (FL5DB): a foreign liquor and beer retail licence.
 - MGQ: minimum guaranteed quantity.
@@ -157,7 +158,7 @@ one-line reason. Do not return design or layout suggestions.
 
 1. Are the shop-type definitions (country liquor, CL5CC, composite) worded the way the
    department would say them?
-2. Is 'IESCMS' the right way to describe the source of the dispatch report?
+2. Is the Integrated Excise Supply Chain Management System named correctly as the source of the dispatch report?
 3. Are the safety statements on slide 10 acceptable as written for a cabinet audience?
 4. Is slide 13 frank enough, or too frank?
 5. What should slide 15 ask for?
