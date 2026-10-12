@@ -2088,7 +2088,7 @@ the facts each claim rests on, with instructions for a reviewer, so other
 models and department staff can improve the wording. The deck's wording has
 had one such review applied: long bullets split into separate lines, the
 speaker notes written in the first person plural, and plain statements in
-place of slogans. Each figure on the data slide carries its unit (records, shops, documents). `UP-Excise-Ask-the-Data-Demo-Short.pptx` (with a PDF) is an 8-slide cut of the same deck for a shorter slot: title, problem, what it does, the shop-count and revenue examples, safety, next steps and the decision request. It is copied from the full deck, so a wording change to the full deck needs the same change there. `source/` holds the build scripts (`python3
+place of slogans. Each figure on the data slide carries its unit (records, shops, documents). `UP-Excise-Ask-the-Data-Demo-Short.pptx` (with a PDF) is an 8-slide cut of the same deck for a shorter slot: title, problem, what it does, the shop-count and revenue examples, safety, next steps and the decision request. It is copied from the full deck, so a wording change to the full deck needs the same change there. Every slide's heading is its title placeholder (`set_titles.py`, run by the builder), so PowerPoint's outline and the PDF bookmarks show the slide titles. `source/` holds the build scripts (`python3
 deck/source/build/build_deck.py` rebuilds the deck; `make_transcript.py`
 regenerates the transcript from it), the Tabler icons rendered to PNG, and
 the raw screenshots. The slides show the Ask shop-count, district-revenue,

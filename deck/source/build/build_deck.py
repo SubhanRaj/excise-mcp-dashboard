@@ -8,6 +8,7 @@ from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE
 from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 from pptx.oxml.ns import qn
+from set_titles import mark_titles
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)          # deck/source
@@ -448,5 +449,6 @@ bullets(s, 0.6, 4.7, 12.1, [
 notes(s, 'DECISION REQUEST: to be written after the review with the project lead. Replace the next steps '
          'above with the specific approval being sought.')
 
+mark_titles(prs)
 prs.save(OUT)
 print('saved', OUT, 'slides:', len(prs.slides._sldIdLst))
