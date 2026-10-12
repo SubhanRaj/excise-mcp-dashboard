@@ -41,6 +41,15 @@ BLANK = prs.slide_layouts[6]
 state = {'n': 0}
 
 
+def unit_run(shape, unit):
+    """Append a smaller unit word after a big figure."""
+    p = shape.text_frame.paragraphs[0]
+    r = p.add_run()
+    r.text = ' ' + unit
+    r.font.size, r.font.bold, r.font.name = Pt(18), False, FONT
+    r.font.color.rgb = VIOLET
+
+
 def text(slide, x, y, w, h, s, size=18, bold=False, color=INK, align=PP_ALIGN.LEFT,
          anchor=MSO_ANCHOR.TOP, spacing=None, hindi=False):
     tb = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
@@ -293,19 +302,20 @@ notes(s, 'Click the screenshot to open it full size. Point at the chart, then th
 # 9 ---------------------------------------------------------------- data
 s = new_slide('The data behind the answers')
 tiles = [
-    ('truck' if False else 'receipt', '9,322', 'dispatch records for Lucknow, August 2026, from the Integrated Excise Supply Chain Management System'),
-    ('pin', '28,405', 'shops with FY2025-26 revenue, across all 75 districts'),
-    ('rupee', '3,455', 'district revenue records from the Rajkosh and Koshwani portal data'),
-    ('chart', '3,812', 'sales-volume records by liquor type and year'),
-    ('shield', '11,124', 'enforcement records: raids, seizures, convictions'),
-    ('books', '330+', 'acts, rules and policy documents in the knowledge library'),
+    ('truck' if False else 'receipt', '9,322', 'records', 'dispatch records for Lucknow, August 2026, from the Integrated Excise Supply Chain Management System'),
+    ('pin', '28,405', 'shops', 'shops with FY2025-26 revenue, across all 75 districts'),
+    ('rupee', '3,455', 'records', 'district revenue records from the Rajkosh and Koshwani portal data'),
+    ('chart', '3,812', 'records', 'sales-volume records by liquor type and year'),
+    ('shield', '11,124', 'records', 'enforcement records: raids, seizures, convictions'),
+    ('books', '330+', 'documents', 'acts, rules and policy documents in the knowledge library'),
 ]
-for i, (ic, n, label) in enumerate(tiles):
+for i, (ic, n, unit, label) in enumerate(tiles):
     col, row = i % 3, i // 3
     x, y = 0.6 + col * 4.1, 1.5 + row * 2.45
     box(s, x, y, 3.85, 2.2)
     badge(s, ic, x + 0.25, y + 0.25, 0.7)
     text(s, x + 1.1, y + 0.2, 2.6, 0.8, n, 34, True, VIOLET, anchor=MSO_ANCHOR.MIDDLE)
+    unit_run(s.shapes[-1], unit)
     text(s, x + 0.25, y + 1.1, 3.4, 1.0, label, 14, False, INK)
 text(s, 0.6, 6.45, 12.1, 0.5, 'All of it is held on the department\'s own server, in a database the AI can read but never change.',
      16, True, GREEN)

@@ -2088,7 +2088,7 @@ the facts each claim rests on, with instructions for a reviewer, so other
 models and department staff can improve the wording. The deck's wording has
 had one such review applied: long bullets split into separate lines, the
 speaker notes written in the first person plural, and plain statements in
-place of slogans. `source/` holds the build scripts (`python3
+place of slogans. Each figure on the data slide carries its unit (records, shops, documents). `source/` holds the build scripts (`python3
 deck/source/build/build_deck.py` rebuilds the deck; `make_transcript.py`
 regenerates the transcript from it), the Tabler icons rendered to PNG, and
 the raw screenshots. The slides show the Ask shop-count, district-revenue,

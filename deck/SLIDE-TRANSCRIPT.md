@@ -255,17 +255,17 @@ one-line reason. Do not return design or layout suggestions.
 
 **On-slide text** (in reading order):
 
-- 9,322
+- 9,322 records
 - dispatch records for Lucknow, August 2026, from the Integrated Excise Supply Chain Management System
-- 28,405
+- 28,405 shops
 - shops with FY2025-26 revenue, across all 75 districts
-- 3,455
+- 3,455 records
 - district revenue records from the Rajkosh and Koshwani portal data
-- 3,812
+- 3,812 records
 - sales-volume records by liquor type and year
-- 11,124
+- 11,124 records
 - enforcement records: raids, seizures, convictions
-- 330+
+- 330+ documents
 - acts, rules and policy documents in the knowledge library
 - All of it is held on the department's own server, in a database the AI can read but never change.
 
