@@ -12,6 +12,10 @@ behind it, from the department's own data, on the department's own server.
 This file holds the words of every slide, the speaker notes, a description of every picture,
 and the facts behind each claim. The design is final: pale blue and pale yellow from the department flag, on white, with the State Emblem. Only the wording is open to improvement.
 
+A shorter 8-slide version of the deck exists for a limited slot. It uses slides 1, 2, 3, 5, 6,
+10, 14 and 15 of this file unchanged, so a wording change to one of those slides applies to
+both decks.
+
 ## Audience
 
 Senior officers and ministers. They are experienced in public administration, not in software.
