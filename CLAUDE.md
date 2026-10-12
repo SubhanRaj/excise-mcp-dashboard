@@ -2077,6 +2077,38 @@ the chart script; it passed on the other runs. The orchestrator changes need
 the standing `systemctl --user restart excise-orchestrator` before the live
 service uses them.
 
+A presentation for the Cabinet and the Chief Secretary is in `deck/`.
+`UP-Excise-Ask-the-Data-Demo.pptx` has 15 slides with speaker notes on each,
+with a PDF copy beside it. `images/` holds the six screenshots the slides use
+at full size; each screenshot on a slide links to its file by relative path,
+so the folder works from any location and operating system as long as
+`images/` stays next to the `.pptx`. `SLIDE-TRANSCRIPT.md` lists each slide's
+text, speaker notes, a description of every visual, screenshot alt text, and
+the facts each claim rests on, with instructions for a reviewer, so other
+models and department staff can improve the wording before the deck is
+final. `source/` holds the build scripts (`python3
+deck/source/build/build_deck.py` rebuilds the deck; `make_transcript.py`
+regenerates the transcript from it), the Tabler icons rendered to PNG, and
+the raw screenshots. The slides show the Ask shop-count, district-revenue,
+and beer-revenue examples, Chat's district-revenue example with its chart,
+and the Knowledge base and System health admin screens, all captured from the
+live site with Playwright (headless Chromium) using a login state saved from
+one manual email-OTP sign-in.
+
+The deck's colours come from the department flag (yellow over blue), softened
+to pastels, with the State Emblem and the Hindi department name as Unicode
+text (Nirmala UI) on the title slide. It follows the design guidelines'
+GIGW and UX4G rules for AA text contrast, sentence-case headings, and a
+Government of Uttar Pradesh identity line in every footer. The typeface is
+Calibri, because Inter is not installed on most office PCs. Slide 15, the
+decision request, is empty; the project lead supplies the ask after review.
+Two answer-quality failures seen while capturing, a rupee sign on a
+bulk-litre figure in Chat and an unsupported revenue sentence in one Ask
+summary, are in `ROADMAP.md`'s backlog. `SLIDE-TRANSCRIPT.md` contains real
+departmental figures; sending it to an outside model is the project lead's
+decision, since the no-egress rule below covers the application's own data
+path.
+
 ## What this project is
 
 An on-premise conversational analytics tool for UP Excise departmental figures
@@ -2167,6 +2199,8 @@ excise-mcp-dashboard/
                     - pdf-markdown-pipeline verified docs + admin .md uploads -> kb.*
   db/             SQL: schema (data + kb), read-only role grants, seed reference data
   deploy/         Apache vhost, cloudflared config, systemd --user units + timers
+  deck/           Cabinet demo presentation: .pptx, PDF, full-size screenshots,
+                  slide transcript, build scripts
   docs/           this set of Markdown files
   OPERATOR_SETUP.md   every sudo / install / Google-console step, copy-pasteable
 ```

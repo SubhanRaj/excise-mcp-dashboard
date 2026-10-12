@@ -695,6 +695,23 @@ PDF / XLSX / ZIP with the data vintage on it.
   to run larger or better models, removing the single-CPU-inference
   ceiling that shapes most of this file's model-choice and concurrency
   decisions today
+- **Chat writes a rupee sign on a bottle-litre figure.** Asking Chat
+  "Compare dispatched volume by shop category in Lucknow for August 2026"
+  (conversation `01m4qgd2zx7czmvwm0y7t7cpkb`, 2026-10-12) returned an answer
+  listing `₹1,948,050 bl`, `₹1,058,561 bl`, and so on. Those are volumes in
+  bulk litres from `total_bl`; the SQL result carries no money. Not yet
+  traced to the model's own wording or to `money_annotations`
+  (`orchestrator/app/llm/prompts.py`) treating the column as money. Check the
+  tool result for that turn before changing a prompt.
+- **Ask's summary can state a comparison the query never made.** The
+  country-liquor and composite shop count (query `01m4qfzv2ezqrwdj6mw49gf8yb`,
+  2026-10-12) correctly returned 589, 417, and a total of 1,006, but its
+  summary added "The country liquor shops generated the most revenue among
+  these types." The result holds counts only; nothing in it measures revenue.
+  The summarize step reads only the rows it was given, so the sentence came
+  from the model, the same class of failure `SUMMARY_SYSTEM_PROMPT` already
+  guards against for an empty result. A rerun of the same question the same day
+  did not repeat it, so it is intermittent.
 - **Classify pdf-markdown-pipeline's untagged documents by state.** 115 of
   the knowledge base's 309 `kb.documents.state IS NULL` rows have no
   `rule_set_id` at all upstream, rather than a `rule_set` that is genuinely
