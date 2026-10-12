@@ -166,6 +166,20 @@ one-line reason. Do not return design or layout suggestions.
 4. Is slide 13 frank enough, or too frank?
 5. What should slide 15 ask for?
 
+## Notes for the department
+
+A wording review by Indus (Sarvam AI's assistant, 12 October 2026) fed the current wording.
+Its draft is in the repository history (`SLIDE-TRANSCRIPT-REVISED.md`, commit `e07d86c`).
+Two points from it still apply:
+
+- Two statements are absolute and worth being ready to defend: slide 3, "No external AI
+  service provider and no closed-source or proprietary tool is used", and slide 9, "Nothing is
+  sent to an outside service". Both are locked facts. The interim server is reached through a
+  secure tunnel, which the deck does not mention because it goes away with that server.
+- Slide 13 states the limits plainly: a wrong answer, a wrong conversion and an overstated
+  Lucknow figure. It has not been softened. Whether that is too frank is the department's
+  decision (question 4).
+
 ---
 
 """
