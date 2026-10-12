@@ -93,12 +93,13 @@ one-line reason. Do not return design or layout suggestions.
 ---
 
 
-## Slide 1: Government of Uttar Pradesh
+## Slide 1: Title slide
 
 **Purpose.** Open the talk and name the project in one line.
 
 **On-slide text** (in reading order):
 
+- Government of Uttar Pradesh
 - Department of Excise
 - उत्तर प्रदेश आबकारी विभाग
 - Ask the Data

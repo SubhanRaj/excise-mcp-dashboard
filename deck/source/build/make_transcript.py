@@ -184,7 +184,7 @@ prs = Presentation(PPTX)
 parts = [HEADER]
 for i, slide in enumerate(prs.slides, 1):
     texts = slide_text(slide)
-    title, body = texts[0], texts[1:]
+    title, body = (('Title slide', texts) if i == 1 else (texts[0], texts[1:]))
     note = slide.notes_slide.notes_text_frame.text.strip() if slide.has_notes_slide else ''
     purpose, visual, alt, facts = CONTEXT[i]
     parts.append(f"## Slide {i}: {title}\n")
