@@ -48,7 +48,12 @@ adds a few hundred MB of shared buffers plus page cache).
 
 **All Ollama inference is CPU-only** (llama.cpp AVX2 / AVX-512 path on the
 i7-13700). This is the single biggest constraint on model choice and on
-expected concurrency.
+expected concurrency, and the reason a slow turn (a SQL plan alone has taken
+over two minutes on a real question) is a recurring theme through
+`CLAUDE.md`'s own build log, not an occasional fluke. This box is a proof
+of concept, not the intended long-term home — `ROADMAP.md`'s backlog names
+moving to dedicated data-center compute with a real GPU as the step that
+removes this constraint once the approach itself is validated here.
 
 ### Disk
 
@@ -136,16 +141,28 @@ Sources: [Qwen2.5-LLM blog](https://qwenlm.github.io/blog/qwen2.5-llm/),
   3.1 support Ollama tool-calling, which the chat loop needs.
 - Keep both pulled; the orchestrator selects per task by default (SQL/plot ->
   Qwen, chat/narration -> Llama). Neither is DeepSeek-derived.
-- **Model registry + UI picker.** The allowed models are a config registry
-  (`key`, `label`, `role`, Ollama tag), the same pattern as
+- **Model registry, one chat model today.** The allowed models are a config
+  registry (`key`, `label`, `role`, Ollama tag), the same pattern as
   `~/Sites/pdf-markdown-pipeline`'s `config/ocr.php` and its "Run OCR" dropdown.
-  The chat composer shows a picker over the registry entries that `/health`
-  confirms are pulled; the choice rides on the `/chat` call as `model` and is
-  validated server-side against the registry. The one-shot analytical form
-  keeps an advanced `model` override alongside `engine`. Default follows the
-  task; switching mid-session costs a reload (`OLLAMA_MAX_LOADED_MODELS=1`),
-  surfaced in the UI. Adding Gemma to the picker is one registry line plus
-  `ollama pull gemma2:9b-instruct-q4_K_M` (~5.8 GB).
+  `web/config/models.php` carries one `role: sql` entry (the coder model,
+  reachable only through the one-shot form's advanced override, never the
+  chat picker) and one `role: chat` entry (Llama 3.1) — the chat composer's
+  own picker only renders when more than one `role: chat` entry exists, so
+  today it stays hidden and every chat turn runs on the one configured
+  default. A second `role: chat` entry was tried live (Qwen 2.5 3B/1.5B,
+  ~2026-09-23) and reverted the same day: `web/`'s `<select>` sends the
+  registry's short key (`"llama3.1"`), but the orchestrator's `_select_model`
+  validates the full Ollama tag (`"llama3.1:8b-instruct-q4_K_M"`) against
+  `OLLAMA_ALLOWED_MODELS` — nothing translates one to the other, so picking
+  any option, including re-picking the default, failed the call outright.
+  Past that bug, a second resident chat model needs a third
+  `OLLAMA_MAX_LOADED_MODELS` slot to keep a mid-session switch free the way
+  the coder/chat pair already is (§RAM budget) — an accepted RAM cost the
+  box's already-tight 2-model budget makes worth deciding deliberately, not
+  shipping as groundwork ahead of an actual second chat model being wanted.
+  A future second `role: chat` entry (Gemma, a smaller Qwen) needs the key/tag
+  fix and the `MAX_LOADED_MODELS` bump done together, not the registry line
+  alone.
 - **Embedding model (only if `KB_EMBEDDINGS_ENABLED`)**:
   `nomic-embed-text` (768-dim, ~275 MB) or `bge-m3` (1024-dim, ~600 MB,
   better on mixed English/Hindi). Adds its footprint on top of whichever LLM
@@ -154,17 +171,57 @@ Sources: [Qwen2.5-LLM blog](https://qwenlm.github.io/blog/qwen2.5-llm/),
 
 ### Runtime settings
 
-- `OLLAMA_KEEP_ALIVE=30s` — unload the model between queries so the RAM returns
-  to the sandboxed plot process and PostgreSQL. Low concurrency makes the
-  reload cost acceptable.
-- `OLLAMA_NUM_PARALLEL=1`, `OLLAMA_MAX_LOADED_MODELS=1` — serialize. The box
-  cannot run two 7B decodes plus a plot process plus Postgres at once.
-- Expect **5–15 tokens/s** decode CPU-only at 3.0 GHz cap, ~10–25 tok/s
-  uncapped. A typical query (SQL + a short script + a one-paragraph summary)
-  is 15–45 s wall-clock. This is fine for a handful of internal analysts; it
-  is not a many-concurrent-user service. The web layer must queue requests,
-  not fan them out.
-- No GPU flags. Confirm `ollama ps` shows `100% CPU`.
+- `OLLAMA_KEEP_ALIVE=-1` — never unload a resident model. `30s` was the
+  original value, sized for `OLLAMA_MAX_LOADED_MODELS=1`'s single-model era;
+  once that was raised to 2 specifically to keep both models resident for a
+  whole chat turn (below), a 30s keep-alive still evicted either one on any
+  gap between calls longer than that — Postgres execution time, tool-result
+  handling, a heartbeat interval — reloading it mid-turn regardless of a free
+  slot being available. A live compound question hit three such reloads in
+  one turn and ran past `ollama_generate_timeout_seconds` as a result
+  (`OPERATOR_SETUP.md` §Ollama runtime settings — keep-alive outlives a
+  compound turn). `-1` matches the RAM commitment `MAX_LOADED_MODELS=2`
+  already makes rather than picking another fixed window the same race would
+  eventually cross again.
+- `OLLAMA_NUM_PARALLEL=1` — one decode at a time; the box cannot run two 7B
+  decodes plus a plot process plus Postgres at once.
+- `OLLAMA_MAX_LOADED_MODELS=2` — `qwen2.5-coder:7b` and `llama3.1:8b` stay
+  resident (§RAM budget below); a third `role: chat` model in the picker
+  needs this bumped again, alongside `OLLAMA_ALLOWED_MODELS` and the
+  short-key/Ollama-tag fix above.
+  Live chat turns needing a tool call were swapping between the two on every
+  call at `MAX_LOADED_MODELS=1`, and a full turn took 1–3 minutes as a
+  result.
+- Decode is memory-bandwidth-bound, not clock- or thread-bound: measured
+  directly against this box's real Ollama instance, `qwen2.5-coder:7b` and
+  `llama3.1:8b` both land at **~9 tokens/s** regardless of CPU frequency cap
+  (3.0 GHz capped and fully uncapped measured within noise of each other —
+  the CPU is not the bottleneck) and regardless of thread count past 16 (24
+  threads is consistently *slower* than 16, the signature of threads
+  contending over RAM bandwidth once it's saturated, not adding compute
+  capacity). `tokens/s × model size on disk` comes out to a roughly constant
+  ~35–40 GB/s across every model size tested, confirming the ceiling is this
+  box's RAM bandwidth: `qwen2.5:3b` (~2.0 GB) measured ~19 tok/s,
+  `qwen2.5:1.5b` (~1.0 GB) measured ~35 tok/s, both at `num_thread=16`. A
+  typical 7B/8B query (SQL + a short script + a one-paragraph summary) is
+  15–45 s wall-clock at ~9 tok/s; a compound multi-tool-call turn can run
+  past two minutes, which is what the orchestrator's two Ollama call timeouts
+  (`app/config.py`'s `ollama_generate_timeout_seconds`, 480 s for SQL/plot
+  planning, and `ollama_chat_timeout_seconds`, 300 s for a live chat turn)
+  and chat's heartbeat pings size against. This is fine for a handful of
+  internal analysts; it is
+  not a many-concurrent-user service. The web layer must queue requests, not
+  fan them out.
+- No GPU flags. Confirm `ollama ps` shows `100% CPU`. This box's integrated
+  GPU is deliberately dropped (`OLLAMA_IGPU_ENABLE` unset) — untested whether
+  enabling it would help, since it shares the same system RAM the CPU path
+  is already bandwidth-limited by.
+- `config/models.php`'s chat picker also offers `qwen2.5:3b-instruct-q4_K_M`
+  and `qwen2.5:1.5b-instruct-q4_K_M` as faster, lower-quality alternatives to
+  `llama3.1:8b` for conversation — chat and summarization tolerate a weaker
+  model; the schema-aware SQL planner (`ollama_sql_model`) does not and stays
+  fixed on `qwen2.5-coder:7b` regardless of which chat model is picked, so a
+  faster chat pick does not weaken SQL accuracy.
 
 ### JSON reliability approach
 
@@ -184,10 +241,15 @@ model, and only if embeddings are turned on:
 |---|---|---|
 | One 7–8B model (swapped per task), `MAX_LOADED_MODELS=1` | ~6–7 GB | yes, with margin |
 | + `nomic-embed-text` when embeddings on | ~6.5–7.5 GB | yes |
-| Two 7–8B models pinned (`MAX_LOADED_MODELS=2`, no swap) | ~12–13 GB | tight — only if swap latency in chat proves annoying, and accept less room for a concurrent plot + Postgres |
+| **Two 7–8B models pinned (`MAX_LOADED_MODELS=2`, no swap) — current** | ~12–13 GB | tight — accept less room for a concurrent plot + Postgres |
 
-Keep `MAX_LOADED_MODELS=1`. The chat's coder<->chat model swap between a tool
-call and the reply costs a reload; at this concurrency that is acceptable.
+Live chat turns needing a tool call swap the coder model in for `plan_sql`
+and the chat model back in for the reply — at `MAX_LOADED_MODELS=1` this
+made a full turn take 1–3 minutes, mostly reload time rather than decode.
+`MAX_LOADED_MODELS=2` pins both, so a turn only pays for decode. This box's
+30 GiB has room for the ~12–13 GB both models cost resident; a concurrent
+plot render and Postgres still fit, just with less spare margin than the
+one-model-at-a-time setup had.
 
 ## 2b. Retrieval: FTS first, `pgvector` as the documented upgrade
 
@@ -217,7 +279,7 @@ The ask is an OpenWebUI-style chat window. Options weighed:
 | Approach | What it costs | Verdict |
 |---|---|---|
 | **Embed OpenWebUI** (Docker) behind a second subdomain, point its OpenAI endpoint at the orchestrator | `apt install docker` (absent), a second web app with its own SQLite/Postgres and its own auth/users to reconcile with the app login, a second tunnel, container updates | Rejected — a whole parallel app and Docker for a UI we can build |
-| **Native Livewire chat** against the orchestrator's `/chat` SSE stream | one more Livewire component + an Alpine SSE reader + `marked`/highlighter from the CDN already on the CSP | **Chosen** — reuses the auth, the layout system, the ledger, the deploy path |
+| **Native Livewire chat** against the orchestrator's `/chat` streamed ndjson response | one more Livewire component + a `fetch()`/`ReadableStream` reader + `marked`/highlighter from the CDN already on the CSP | **Chosen** — reuses the auth, the layout system, the ledger, the deploy path |
 | **Move LLM logic into PHP** with `prism-php/prism` (Ollama support, streaming, tool calls) | a capable package, but it duplicates the orchestrator's tool loop in a second language and splits the "who talks to Ollama" responsibility | Not now — noted as the path if the orchestrator is ever dropped |
 
 The orchestrator already is the MCP client and owns the SQL guard, the
@@ -344,7 +406,7 @@ From `~/Sites/upexcise-stats-dashboard`, `~/Sites/UP-excise-mailer`,
 | OTP-login + magic-link onboarding/reset auth | `upexcise-stats-dashboard/app/Http/Controllers/Auth/*`, `app/Mail/*`, Fortify wiring in `FortifyServiceProvider` | Port near-verbatim — internal-tool auth |
 | `SecurityHeaders` middleware (CSP, HSTS, `X-Frame-Options`, `X-Robots-Tag` noindex prefixes) | same, `app/Http/Middleware/SecurityHeaders.php` | Port; extend CSP with the FastAPI origin + Plotly/Chart.js CDN |
 | `LogMutation` middleware + `activity_logs` + `ActivityLog::record()` | same | Port as-is — audit every non-GET |
-| RBAC: flat `role` + `privileges` JSON + `designations` preset table | same, `app/Models/{User,Designation}.php` | Trim to `Admin` / `Analyst`; this tool has fewer surfaces |
+| RBAC: flat `role` + `privileges` JSON + `designation_id` + free-text `post` + `designations` preset table | same, `app/Models/{User,Designation}.php` | Trim to `Admin` / `Analyst` and four privileges; keep `designation_id`/`post`/`designations` at full shape — confirmed as the pattern four sibling apps converge on, not scope this tool should cut |
 | Rate-limiter definitions | `upexcise-stats-dashboard/app/Providers/AppServiceProvider.php` | Port `login`/`two-factor`/`password-reset`; add `ask`, `chat` |
 | IST display macro + auth-event audit listeners | same `AppServiceProvider.php` — `Carbon::macro('ist')` (store UTC, convert at display), `Login` / `Logout` -> `activity_logs` | Port both; every user-facing timestamp calls `->ist()` |
 | Cleave.js money input (`numeralThousandsGroupStyle: 'lakh'`, visible + hidden input, `wire:ignore`) | `excise-budget-tracker/resources/views/components/currency-input.blade.php` (cleave.js@1.6.0 from jsDelivr) | Reuse for the few money inputs (schedule config, report metadata); add jsDelivr `cleave.js` to the CSP |
@@ -608,6 +670,54 @@ Recommendations, each reversible:
     analytics tool, not a feature. Keep memory human-curated and the model
     read-only against it. No rolling-summary chain either until real
     transcripts overflow the working set.
+
+15. **Power BI: two cheap paths now documented, cloud push declined.** Several
+    UP Excise officers already use Power BI Desktop day to day. Three shapes
+    were weighed:
+
+    | Path | What it needs | Verdict |
+    |---|---|---|
+    | **CSV / XLSX export** of a result or saved analysis | Nothing Power-BI-specific — `ROADMAP.md` Milestone 7's `ExportService` output already opens in Power BI's own *Get Data → Text/CSV* / *Excel workbook* import | **Already planned** (Milestone 7) |
+    | **Power BI Desktop connected directly to Postgres** | A new named, read-only Postgres role scoped to `analytics.*` + `kb.*` (the same surface `excise_ro` reads, a separate role so BI access is never conflated with the AI path's grants or its audit trail) | **Documented as a Backlog item** — `ROADMAP.md` Backlog, `ARCHITECTURE.md` Diagram 5, `DATA_PIPELINE.md` §BI access. Same shape as the existing "Tailscale + DBeaver" backlog line, generalised to any BI client, Power BI Desktop included |
+    | **A `.pbix` template / custom Power BI connector** | Power BI Desktop authoring is Windows-only — nothing else in this stack touches that toolchain; a shareable custom connector needs Microsoft's M-language + certification path if distributed beyond one desktop | **Declined until a named analyst asks for a specific reusable report.** The direct-Postgres path above already lets anyone build their own connection in Power BI Desktop in minutes with no template; a `.pbix` only saves that, at the cost of an entire unmaintained second toolchain. Revisit if that cost/benefit changes |
+
+    **Power BI *Service* (the cloud product — published datasets, scheduled
+    cloud refresh, embedded web reports) is declined outright, not just
+    deferred.** It requires sending departmental data to Microsoft's SaaS
+    tenant, which is a direct conflict with "No document or query leaves the
+    box" (`CLAUDE.md` hard constraints) — the only outbound paths this project
+    allows are the Cloudflare Tunnel and, for a connected user, the Google API.
+    Enabling it would need an explicit, named no-egress exception approved
+    before any code is written.
+
+    The two accepted paths cost nothing until built: CSV/XLSX rides on
+    Milestone 7's existing export work, and the read-only BI role is a `CREATE
+    ROLE` + two `GRANT`s away, following `db/roles.sql`'s existing pattern for
+    `excise_ro`. Toggle either on when an officer actually asks to connect.
+
+16. **Tool-calling reliability: prompt wording and a retry backstop, not a
+    fine-tune.** Llama 3.1 8B's tool-calling template has broken down several
+    distinct ways in live use — a bare `"{}"` on a trivial message, a fake
+    tool call narrated as text, a hallucinated `null` argument, and (most
+    recently) guessed SQL against a table that doesn't exist, written out in
+    prose instead of a real `run_sql_query` call (`MCP_ENGINES.md` §Tools).
+    Every one of these was fixed the same way: tighten `CHAT_SYSTEM_PROMPT`
+    to name the failure directly, and add a matching check in
+    `chat/loop.py` that holds back the degenerate reply and retries once —
+    the same retry-once shape `guard_sql`/`run_sql` already use for a bad
+    first attempt.
+
+    LoRA/QLoRA fine-tuning the chat model on this app's own tool-call
+    transcripts is declined for now. It needs a labeled dataset (this app
+    doesn't yet have enough real chat volume to build one), a GPU with
+    training headroom well past what inference needs, and an eval harness to
+    confirm a tune doesn't regress plain conversation — a project of its own,
+    against a class of failure the prompt-and-retry pattern above has so far
+    always closed within one code change. Revisit only if a specific failure
+    mode keeps recurring after its matching prompt/retry fix ships, or once
+    `messages` / `message_tool_calls` holds enough real transcript volume to
+    build a training set from actual departmental questions rather than
+    guessed ones.
 
 The full four-engine, MCP-server, heuristic-router design stays documented in
 `ARCHITECTURE.md` and `MCP_ENGINES.md` as the target shape if requirements grow.
