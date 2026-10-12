@@ -55,7 +55,7 @@ The data bank is `excise_bank` on the local cluster (`18/main`, port 5432,
 |---|---|---|
 | `excise_owner` | owns the schema; `CREATE`/`ALTER` | migrations only, run by the operator |
 | `excise_etl` | `INSERT`/`UPDATE`/`DELETE` on data tables + `etl.*`; no DDL | `etl/` cron jobs |
-| `excise_ro` | `SELECT` on `analytics.*` only; `default_transaction_read_only = on` | the orchestrator (the AI path) |
+| `excise_ro` | `SELECT` on `analytics.*` + `kb.*` + `etl.*`; `default_transaction_read_only = on` | the orchestrator (the AI path) |
 
 ### Provisioning script (`db/roles.sql`)
 
@@ -77,16 +77,18 @@ ALTER DEFAULT PRIVILEGES FOR ROLE excise_owner IN SCHEMA public, kb, etl
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO excise_etl;
 -- no CREATE: excise_etl cannot add or drop tables
 
--- Read-only AI role: analytics views + the knowledge base, nothing else
+-- Read-only AI role: analytics views, the knowledge base, and etl's own
+-- bookkeeping tables (ingestion_runs, quarantine) — never the base data
+-- tables etl writes into, which stay behind analytics.* views only.
 CREATE ROLE excise_ro LOGIN PASSWORD :'ro_pw';
 GRANT CONNECT ON DATABASE excise_bank TO excise_ro;
-GRANT USAGE ON SCHEMA analytics, kb TO excise_ro;
-GRANT SELECT ON ALL TABLES IN SCHEMA analytics, kb TO excise_ro;
-ALTER DEFAULT PRIVILEGES FOR ROLE excise_owner IN SCHEMA analytics, kb
+GRANT USAGE ON SCHEMA analytics, kb, etl TO excise_ro;
+GRANT SELECT ON ALL TABLES IN SCHEMA analytics, kb, etl TO excise_ro;
+ALTER DEFAULT PRIVILEGES FOR ROLE excise_owner IN SCHEMA analytics, kb, etl
     GRANT SELECT ON TABLES TO excise_ro;
 
 -- excise_ro must not see base data or write anywhere
-REVOKE ALL ON SCHEMA public, etl FROM excise_ro;
+REVOKE ALL ON SCHEMA public FROM excise_ro;
 REVOKE CREATE ON SCHEMA public, kb, analytics FROM PUBLIC;   -- no ad-hoc object creation by anyone
 REVOKE ALL ON DATABASE excise_bank FROM PUBLIC;
 
@@ -102,6 +104,14 @@ ALTER ROLE excise_ro SET search_path = analytics, kb;
 (FTS or `pgvector`) is a read; the model cannot write to the knowledge base.
 Ingestion writes as `excise_etl` only. The retrieval query always adds
 `WHERE d.withdrawn_at IS NULL`.
+
+`etl.*` is also `SELECT`-only to `excise_ro`, but scoped to
+`etl.ingestion_runs` and `etl.quarantine` only — the audit trail of what a
+run wrote and skipped, read by the admin ETL visibility screen
+(`/admin/etl`, privilege `etl.view`) through two orchestrator routes,
+`GET /etl/runs` and `GET /etl/quarantine`. It does not extend to the base
+data tables `etl` ingests into; those stay reachable only through
+`analytics.*` views.
 
 ### Why each layer
 
@@ -159,7 +169,11 @@ read-only and least-privilege:
   write. Created by the operator (`OPERATOR_SETUP.md` §Knowledge base). The
   sync reads `documents` joined to `sections`/`rule_sets`/`departments`,
   filtered to `visibility='public' AND status='verified' AND deleted_at IS
-  NULL`. A non-public or non-verified document is never read.
+  NULL AND (rule_sets.state IS NULL OR rule_sets.state = 'Uttar Pradesh')`.
+  A non-public or non-verified document is never read, and neither is one
+  filed under another state's rule set — that repository also holds ten
+  other states' excise policies as comparative reference material, out of
+  scope for this UP-only tool.
 - **Markdown files** — `~/Sites/pdf-markdown-pipeline/storage/app/public/`,
   group-read for the ETL user. The sync only opens paths taken from a matched
   `documents.markdown_path`; it never lists the tree or follows a path with
@@ -178,10 +192,19 @@ read-only and least-privilege:
 ### Network
 
 `postgresql.conf` keeps `listen_addresses = 'localhost'` for this project. If
-DBeaver-over-Tailscale access to `excise_bank` is ever wanted, follow
+direct BI-client access to `excise_bank` is ever wanted — DBeaver, Power BI
+Desktop, or any SQL client, over Tailscale — follow
 `~/Sites/infra-notes/postgres-tailscale-remote-access.md` exactly — bind the
 Tailscale IP, scope the `ufw` rule to `tailscale0`, add a `pg_hba.conf` line
 for a **named read-only role only**, never `all`/`admin` over the tailnet.
+`DATA_PIPELINE.md` §BI access has the role grant (`excise_bi_ro`, a copy of
+`excise_ro`'s grants under its own name — never the same role the orchestrator
+uses). This path bypasses the orchestrator entirely: no SQL guard, no sandbox,
+no request-id logging, because it's a human running their own query, not the
+AI. Once it exists, add its connections to the audit checklist below. Power BI
+*Service* (the cloud product) is not this — publishing or scheduling a refresh
+there sends data off the box, which the no-egress hard constraint in
+`CLAUDE.md` rules out.
 
 ## 2. Code-execution sandbox
 
@@ -256,6 +279,16 @@ bwrap \
 - `--die-with-parent` — if the orchestrator worker dies, the sandbox child
   dies with it.
 
+The command above is the Python engine's; the Octave engine's tail is
+`octave-cli --no-gui --norc --eval "source('/scratch/chart.m')"` instead, over
+a generated `data.m` rather than the Parquet file, with two additions found
+only by testing a real render: `--setenv LANG C.utf8` (Ghostscript's iconv
+step, reached via Octave's gnuplot print path, fails outright in the C/POSIX
+locale `--clearenv` otherwise leaves), and a conditional read-only
+`--ro-bind /etc/fonts /etc/fonts` (gnuplot's cairo print terminals need it for
+text rendering). Neither widens the writable surface or touches the network;
+`sandbox/bwrap.py`'s `_build_command` has the exact per-engine invocation.
+
 ### Resource limits
 
 Applied to the child before `exec` (via `resource.setrlimit` in a
@@ -278,8 +311,9 @@ the cgroup limits and is preferred over `preexec_fn` rlimits where available.
 ### What the script can and cannot do
 
 Can: read `/scratch/data.parquet`, use `pandas`/`numpy`/`scipy`/`matplotlib`/
-`seaborn`/`plotly`/`kaleido`, write `chart.{png,svg,pdf,plotly.json}` into
-`/scratch`, print to stdout (last 4 KB is captured).
+`seaborn`/`plotly`, write `chart.{png,svg,pdf,plotly.json}` into `/scratch`,
+print to stdout (last 4 KB is captured). The script never calls `kaleido`
+itself — see below.
 
 Cannot: open a socket, resolve a hostname, read anything under `/home`,
 `/etc` (beyond `/etc/alternatives`), `/root`, `/var` (beyond its own scratch),
@@ -287,12 +321,77 @@ write outside `/scratch`, spawn more than 16 procs, run longer than 15 s, use
 more than ~1 GB, `import` a package not in the pinned venv, escalate
 privilege, or see the orchestrator's environment.
 
+A failed script's captured stdout reaches the chat user verbatim, as the
+failed tool call's own result — a Python traceback from a site-packages
+frame carries this box's real path (`bwrap` binds the venv in at its own
+host path, not a sandboxed alias), which a live `make_chart` failure showed
+the department's directory layout to whoever was chatting. `run_in_sandbox`
+strips that host venv path out of the message it raises before it reaches
+the tool result; the unmodified traceback stays in the structlog line,
+operator-only (`MCP_ENGINES.md` §Tools).
+
+### Static image export — outside the sandbox, on purpose
+
+`fig.write_image()` (Plotly's own static export, via `kaleido`) drives a
+real headless browser — too heavy and too slow to launch fresh inside this
+sandbox for every chart, and a live render showed it repeatedly OOM-killing
+the render's cgroup instead of just erroring. `python_engine.py` rejects a
+script that calls it, before a sandboxed process ever runs
+(`MCP_ENGINES.md` §1 Python).
+
+Instead, `engines/static_render.py` keeps one browser open for the
+orchestrator's whole lifetime and reuses it for every chart that needs a
+static export. This is the one place the design deliberately steps outside
+"every LLM-generated script runs under the sandbox" — because it is not
+running a script. It only ever rasterizes an already-produced,
+schema-shaped `chart.plotly.json`; no LLM-authored code reaches it, and it
+never receives the SQL result, the user's question, or anything else
+model-influenced beyond the finished chart spec.
+
+Two properties keep it from ever touching the operator's real browser:
+
+- **A fresh profile every launch.** `choreographer` (kaleido's browser
+  driver) always passes its own `--user-data-dir` pointing at a private
+  temp directory — never the operator's `~/.config/google-chrome`,
+  bookmarks, cookies, or signed-in Google account. This holds regardless of
+  which browser binary is launched.
+- **Chromium preferred over Chrome.** `_find_browser_path()` looks for an
+  installed `chromium`/`chromium-browser` binary first (`OPERATOR_SETUP.md`
+  §Chart rendering — an operator step, not automatic; installing it needs
+  `sudo`), falling back to the box's existing Google Chrome only if
+  Chromium isn't present. Either way the profile isolation above applies.
+
+`enable_sandbox=False` (`--no-sandbox`) is `choreographer`'s own default,
+kept explicit here rather than weakened: Chrome's *internal* sandbox
+protects a host from a hostile *webpage*, which doesn't apply to a fixed
+local HTML harness rendering a JSON spec with no navigation and no network
+call of its own — and that internal sandbox routinely fails to initialize
+inside an outer namespace sandbox like `bwrap`'s regardless, the same
+reason Docker/CI headless-Chrome setups disable it.
+
 ### After the render
 
 The orchestrator copies the declared outputs out of `/scratch` to the Laravel
 `local` disk (the `chart_artifacts` path), then removes the scratch dir. A
 sweeper (systemd timer) deletes any `/var/tmp/excise-charts/*` older than 1 h
 in case a crash left one behind.
+
+The `excise-sandbox-*.scope` unit itself needs the same guarantee twice
+over. `systemd-run --scope` execs straight into the `timeout`/`bwrap` chain,
+so the awaiting `asyncio.subprocess.Process` is that scope's own main PID —
+but cancelling the coroutine that awaits it (a `/query` client disconnect, an
+explicit `/chat` turn cancellation, or the orchestrator shutting down) does
+not by itself kill the process, confirmed
+live: a chart render left running past a `systemctl restart` kept its memory
+cgroup alive for several minutes until it happened to hit its own
+`MemoryMax`. `run_in_sandbox` now kills the process explicitly on
+`CancelledError` before re-raising, which tears the scope down immediately.
+That only covers a cancellable shutdown; a `SIGKILL` (systemd's own
+stop-sigterm timeout expiring) gives the orchestrator no chance to run that
+handler at all, so `stop_orphaned_sandbox_scopes()` runs once at startup and
+stops any `excise-sandbox-*.scope` still active from a run that ended that
+way — the next orchestrator process sweeps up after the last one instead of
+leaving it to its own wallclock timeout or memory cap.
 
 ### `/etc/sudoers.d/excise-sandbox` (draft, operator applies with `visudo`)
 
@@ -365,18 +464,71 @@ from the sibling. Rate limiters `login` / `two-factor` / `password-reset`
 ported (`AppServiceProvider`).
 
 Roles: `Admin` (manage users, see all ledgers, manage the ETL source registry)
-and `Analyst` (ask questions, see own ledger, export). RBAC copied and trimmed
-from the sibling.
+and `Analyst` (ask questions, see own ledger, export). The full shape —
+`role` + `privileges` JSON + `designation_id` (FK to a `designations` preset
+table) + a free-text `post` column — is ported from the pattern
+`excise-budget-tracker`, `UP-excise-mailer`, and `upexcise-stats-dashboard`
+converged on independently, trimmed to this app's two roles and seven
+privileges (`web/plan/webui.md` §6 has the full design and the seeded
+designation data). A `designations.default_privileges` preset is copied onto
+`users.privileges` at account creation, not live-linked — editing a user's
+privileges afterward doesn't stay tied to their designation.
 
 The tunnel is the only inbound path — `cloudflared` dials out over loopback, no
 firewall port is opened, and Apache binds `127.0.0.1:8084`. The orchestrator's
 `/health` is loopback-only and never passes through the tunnel.
 
+### Pulse and Telescope — locked to Admin regardless of `APP_ENV`
+
+Both ship a default authorization that grants access to anyone at all —
+including an unauthenticated request — when `app()->environment('local')` is
+true. That's this box's real `APP_ENV` (nothing here runs as `production`
+yet), and the app is simultaneously reachable by the entire internet through
+the Cloudflare Tunnel, so the shipped default would leave both dashboards
+open to any visitor. Neither is left at that default:
+
+- **Telescope**: `TelescopeServiceProvider::authorization()` (`app/Providers/
+  TelescopeServiceProvider.php`) is overridden entirely, not just its
+  `gate()` — the vendor scaffold's `authorization()` calls
+  `app()->environment('local') || Gate::check('viewTelescope', ...)`, so
+  overriding `gate()` alone leaves that `||` bypass in place. The override
+  calls `Telescope::auth()` directly: `$request->user()?->isAdmin() ?? false`,
+  no environment check at all. Request-parameter and header redaction
+  (`_token`, `password`, `otp`, cookies, `Authorization`) is applied
+  unconditionally for the same reason — the scaffold's version only ran
+  outside `local` env.
+- **Pulse** has no equivalent auth-closure hook to override, only a
+  `Gate::define('viewPulse', ...)` ability that Pulse's own service provider
+  also defines a default for on the same `environment('local')` basis —
+  redefining the same ability name from `AppServiceProvider` would work only
+  if it runs after Pulse's own registration, which isn't guaranteed. Instead
+  `config/pulse.php`'s `middleware` array gets `'auth'` and the existing
+  `IsAdmin` middleware ahead of Pulse's own `Authorize::class`, which enforces
+  admin-only access unconditionally regardless of that registration order.
+
+Verified against real accounts, not just read from the source: a signed-in
+non-admin gets 403 on both `/pulse` and `/telescope`; an Admin gets 200.
+
+Both packages also bundle `laravel/sentinel`, a middleware that runs before
+session/auth starts and denies any request reaching them through a trusted
+reverse proxy from a public IP while `APP_ENV=local` — a guard against a
+local-only dashboard leaking through a forgotten tunnel. This box's tunnel
+exposure is deliberate, so the heuristic is a false positive here: it denied
+a genuinely signed-in Admin with a 401, ahead of the `IsAdmin` /
+`Telescope::auth()` checks above, not in place of them.
+`AppServiceProvider::configureSentinel()` registers a `Sentinel::extend()`
+driver for `pulse` and `telescope` that always authorizes, leaving those
+checks as the only real gate. Flipping `APP_ENV` away from `local` instead
+would silently break Pulse further: its own default `viewPulse` gate
+(`fn ($user = null) => $app->environment('local')`) would deny everyone,
+Admin included, the moment the environment stopped reading as `local`.
+
 ### Headers, logging, rate limits
 
 - Port `SecurityHeaders` middleware: CSP allowing Tailwind Play CDN, jsDelivr
   (Chart.js / Plotly, the chat's `marked` + highlighter), Google Fonts, and
-  `connect-src 'self'` for the SSE endpoints; HSTS; `X-Frame-Options: DENY`;
+  `connect-src 'self'` for the streaming endpoints (`fetch()`-based, ndjson —
+  not `EventSource`, so no separate origin to allow); HSTS; `X-Frame-Options: DENY`;
   `X-Content-Type-Options: nosniff`; `Referrer-Policy: same-origin`;
   `X-Robots-Tag: noindex` on the whole site (this is not a public dashboard).
 - Port `LogMutation` — an `activity_logs` row for every non-GET authenticated
@@ -395,6 +547,14 @@ firewall port is opened, and Apache binds `127.0.0.1:8084`. The orchestrator's
 - The orchestrator refuses any `/query` or `/chat` call whose bearer token
   does not match `ORCH_BEARER_TOKEN` (constant-time compare), logs the
   request-id, and never logs the token or the DB password.
+- `web/`'s `GET /api/schema-notes` runs the opposite direction — the
+  orchestrator calling into web/, to read the data dictionary's admin-edited
+  schema notes (`DATA_PIPELINE.md` §Row visibility for the AI path) — behind
+  `VerifyOrchestratorToken`, a constant-time compare against the same shared
+  `ORCH_BEARER_TOKEN` / `ORCHESTRATOR_TOKEN` value the outbound direction
+  already uses. A blank request token never reaches the comparison — it's
+  rejected outright first, so a misconfigured empty token on either side
+  fails closed instead of matching by accident.
 - Chat rendering: assistant Markdown is rendered client-side with output
   sanitised (no raw HTML passthrough); a fenced code block is display-only,
   never executed in the browser. Retrieved knowledge snippets are shown as
@@ -498,6 +658,7 @@ so a `queries` row links to its logs.
 | Knowledge upload / withdraw | `activity_logs` + `kb_uploads.status` | the "Knowledge base" screen |
 | ETL runs and quarantined rows | `etl.ingestion_runs` / `etl.quarantine` (Postgres) | `etl/` |
 | Orchestrator request/response, stage transitions, errors | `structlog` JSON to the systemd journal, `request_id` on every line | the orchestrator |
+| BI-client connections (`excise_bi_ro`, future — §1 Network) | PostgreSQL's own `log_connections`/`log_disconnections` — no `queries` row, since this path never touches the orchestrator | PostgreSQL, once the role exists |
 
 - **Never logged**: bearer tokens, DB passwords, Google OAuth tokens, full
   result row sets (a preview only), document text.

@@ -8,7 +8,7 @@ Cloudflare Tunnel, sharing one PostgreSQL data bank.
 | Unit | Runtime | Port | Exposure | Job |
 |---|---|---|---|---|
 | `web/` | Laravel 13 + Livewire 4, PHP 8.5, Apache vhost | 8084 | via Cloudflare Tunnel; app email-OTP login is the gate | Analytical form + OpenWebUI-style chat window + admin (users, connected Google sources, knowledge base); auth; query ledger; exports; background jobs |
-| `orchestrator/` | Python 3.12 + FastAPI, uvicorn | 8085 | `127.0.0.1` only | MCP client to Ollama; one-shot SQL pipeline; streaming chat with a tool loop (`run_sql_query`, `search_knowledge`, `make_chart`); knowledge retrieval; engine router; sandbox launcher |
+| `orchestrator/` | Python 3.12 + FastAPI, uvicorn | 8085 | `127.0.0.1` only | MCP client to Ollama; one-shot SQL pipeline; streaming chat with a bounded tool loop (`run_sql_query`, `search_knowledge`) plus a deterministic chart step after a successful query; knowledge retrieval; engine router; sandbox launcher |
 | `etl/` | Python 3.12 CLI, run by cron / systemd timers | — | Google API (ingestion only) | Sheets / Drive / Docs / Excel / CSV -> Postgres data tables; pdf-markdown-pipeline verified docs + admin `.md` uploads + Google Docs -> `kb.*` |
 | PostgreSQL 18 | system service | 5432 | `127.0.0.1` (+ Tailscale later if needed) | The excise data bank (`analytics.*`) and the knowledge base (`kb.*`) — read-only for the AI path |
 | Ollama | system service | 11434 | `127.0.0.1` | Local LLM inference + embeddings, CPU-only |
@@ -24,8 +24,8 @@ timestamps are stored UTC and rendered in IST (`Asia/Kolkata`).
 1. Analyst signs in through the app's email-OTP login and types a question in
    the left pane.
 2. Livewire dispatches a `RunExciseQuery` job (Laravel queue, `database`
-   driver) and opens an SSE stream for stage updates. The web worker is not
-   blocked.
+   driver) and opens a `fetch()`-based poll of a plain route for stage
+   updates. The web worker is not blocked.
 3. The job calls `POST http://127.0.0.1:8085/query` on the orchestrator with a
    bearer token (shared secret) and the question plus recent conversation
    turns.
@@ -53,25 +53,45 @@ timestamps are stored UTC and rendered in IST (`Asia/Kolkata`).
 `Querying database -> Running analysis -> Rendering chart -> Complete`, plus a
 terminal `Failed: <stage>`. The orchestrator emits each transition on its
 response as it goes (chunked) or the job polls a `/query/{id}/status`
-endpoint; Laravel relays them to the browser over SSE, with `wire:poll` as the
-fallback if SSE behaves badly through the tunnel.
+endpoint; the job writes each stage onto its `queries` row, and a plain
+Laravel route the browser polls via `fetch()` reads that row for changes,
+with `wire:poll` as the fallback if the tunnel handles the fetch-based
+polling badly.
 
 ### Request path for a chat message
 
 1. Analyst opens the chat window, picks or starts a conversation, sends a
-   message. Livewire posts it and opens an SSE reader.
-2. `web/` calls `POST http://127.0.0.1:8085/chat` (bearer token) with the
-   message and the trimmed conversation history.
+   message. Livewire dispatches a `fetch()` `POST` to a plain route and reads
+   the response body incrementally via `ReadableStream` — not the browser's
+   native `EventSource`, which only issues `GET` and would put the message in
+   a query string.
+2. That route calls `POST http://127.0.0.1:8085/chat` (bearer token) with the
+   message, the trimmed conversation history, and a `turn_id` (the assistant
+   message's own ULID), and pipes the orchestrator's response straight through
+   as it arrives.
 3. The orchestrator runs the tool loop (`MCP_ENGINES.md` §Chat and retrieval):
    the model streams text; when it needs data it calls `run_sql_query` (same
    guard + read-only run as the one-shot path), for the law it calls
-   `search_knowledge` (FTS over `kb.chunks`, optionally vector), for a picture
-   it calls `make_chart` (same `bwrap` sandbox). Each tool call and result is
-   an SSE event.
-4. `web/` relays the SSE stream to the browser and persists `messages` +
-   `message_tool_calls`; a chart is stored as a `chart_artifacts` row.
+   `search_knowledge` (FTS over `kb.chunks`, optionally vector). A chart is
+   not a tool the model calls — `chat/loop.py` renders one itself (same
+   `bwrap` sandbox, Qwen writing the script) right after a `run_sql_query`
+   call succeeds with more than one row, whenever the composer's chart
+   toggle asked for one. Each tool call and result is one line of the
+   streamed newline-delimited JSON response (the same `application/x-ndjson`
+   format `/query` already uses). The turn itself runs independently of this
+   one HTTP request, keyed by `turn_id`, so it keeps going even if this
+   connection ends before the turn does.
+4. `web/` persists `messages` + `message_tool_calls` as lines arrive; a chart
+   is stored as a `chart_artifacts` row.
 5. Cited knowledge chunks render with a link to `docsrepo.exciseup.in`; SQL
    the model ran renders as an inline, copyable card.
+6. If step 2's connection ends before the turn does — Cloudflare's edge caps
+   a connection's total duration at roughly 100 seconds, tighter than a slow
+   compound question can always finish inside — the browser reconnects by the
+   same `turn_id` (`POST /chat/{conversation}/messages/{message}/resume`) and
+   replays the turn's full history from the orchestrator's own record of it,
+   rather than losing the turn's progress. `MCP_ENGINES.md` §Resuming a
+   dropped turn.
 
 ### Output artifact lifecycle
 
@@ -80,7 +100,8 @@ charts, table previews, summaries, the generated SQL — is an app artifact in
 `web/`'s MariaDB plus files on the `local` disk, never written back to
 Postgres.
 
-1. A `/query` or chat `make_chart` run writes a `queries` / `message` row and
+1. A `/query` run, or a chat turn's own deterministic chart step, writes a
+   `queries` / `message` row and
    `chart.{plotly.json,png,svg,pdf}` under
    `web/storage/app/artifacts/<query-ulid>/`.
 2. An unsaved run's files are swept after `ARTIFACT_TTL_DAYS`.
@@ -123,7 +144,18 @@ needed" on the admin screen. `SECURITY.md` §Google OAuth.
 - **Tunnel -> Apache (8084)**: the only inbound path; no firewall port opened
   (`cloudflared` dials out over `lo`).
 - **Laravel -> orchestrator (8085)**: loopback only, bearer token, request-id
-  correlation. The orchestrator refuses any request without the token.
+  correlation. The orchestrator refuses any request without the token. A chat
+  turn's identity on this boundary is its `turn_id`, which stays valid past
+  the HTTP connection that started it — `web/` reattaches to a turn already
+  in progress by sending its known `turn_id` on a fresh `POST /chat`, and
+  cancels one outright with `POST /chat/turn/{turn_id}/cancel`.
+  `MCP_ENGINES.md` §Resuming a dropped turn.
+- **Orchestrator -> Laravel (8084)**: the one call running the opposite
+  direction — `GET /api/schema-notes`, the orchestrator reading the data
+  dictionary's admin-edited schema notes. Loopback only, gated by
+  `VerifyOrchestratorToken`, a constant-time compare against the same
+  shared bearer token — the caller is a server process with no session to
+  authenticate.
 - **Orchestrator -> PostgreSQL**: dedicated `LOGIN` role, `SELECT` only,
   `default_transaction_read_only = on`, statement timeout. DDL/DML refused by
   the engine.
@@ -143,6 +175,14 @@ needed" on the admin screen. `SECURITY.md` §Google OAuth.
 - **`web/` -> pdf-markdown-pipeline data**: read-only. A scoped MariaDB user
   (`SELECT` on `pdf_markdown_pipeline_local` only) and group-read on that
   project's `storage/app/public` Markdown tree. No write path.
+- **BI client -> PostgreSQL (future, not built)**: Diagram 5. A separate named
+  read-only role (`excise_bi_ro` or one per officer), `SELECT` on
+  `analytics.*` + `kb.*` only, same as `excise_ro` — but a distinct role so a
+  human's direct query is never conflated with the AI path's own grant or
+  audit trail. No orchestrator, no guard, no sandbox in this path; Power BI
+  Desktop (or any SQL client) connects straight to Postgres. Power BI Service
+  (cloud) is out of scope — it would be egress, ruled out by `CLAUDE.md`'s
+  no-egress hard constraint.
 
 ### Failure behavior
 
@@ -155,13 +195,14 @@ output from the LLM.
 
 ### Not in the first build
 
-Octave / MATLAB / Mathematica engines, an MCP server in front of Postgres, a
-complexity-based routing heuristic, `pgvector` semantic retrieval, and an
-embedded OpenWebUI. The interfaces accommodate all of them; `EVALUATION.md`
-§Right-sizing explains why they wait. `ROADMAP.md` Milestone 3 builds the
-knowledge base on Postgres FTS; Milestone 4 adds Octave behind the same
-`IVisualizationEngine`; `pgvector` is a config flag plus a backfill if the
-Milestone 6 quality check calls for it.
+MATLAB / Mathematica engines, an MCP server in front of Postgres, a
+complexity-based routing heuristic, `pgvector` semantic retrieval, an embedded
+OpenWebUI, and Power BI access (Diagram 5). The interfaces accommodate all of
+them; `EVALUATION.md` §Right-sizing explains why they wait. `ROADMAP.md`
+Milestone 3 built the knowledge base on Postgres FTS; Milestone 4 built the
+Octave engine behind the same `IVisualizationEngine`; `pgvector` is a config
+flag plus a backfill if the Milestone 6 quality check calls for it; Power BI
+Desktop access is a new read-only role away, toggled on when an officer asks.
 
 ## Component diagrams
 
@@ -173,7 +214,7 @@ gate (no Access), the knowledge base, the chat window with a model picker,
 Google OAuth, and the output store. 1U is the system flow, 2U the enforcement
 layers, 3 the chat and ingestion paths, 4 the output artifact lifecycle.
 
-### Diagram 1 (as supplied in the brief): comprehensive system flow
+### Diagram 1 (as supplied in the brief): system flow
 
 ```mermaid
 flowchart TD
@@ -244,9 +285,10 @@ flowchart TD
 
 > Implementation note: the first build wires `Web -> FastAPI -> Ollama`,
 > `FastAPI -> PG` (direct `asyncpg`, read-only role, no separate
-> `postgres-mcp-server` process), and `Adapter -> PyEngine` only. The Octave,
-> MATLAB, and Wolfram paths and the standalone Postgres MCP server are drawn
-> here as the target shape; see `EVALUATION.md` §Right-sizing and `ROADMAP.md`.
+> `postgres-mcp-server` process), and `Adapter -> PyEngine` plus
+> `Adapter -> OctaveEngine`. The MATLAB and Wolfram paths and the standalone
+> Postgres MCP server are drawn here as the target shape; see
+> `EVALUATION.md` §Right-sizing and `ROADMAP.md`.
 
 ### Diagram 1U (updated): system flow as this repo specifies it
 
@@ -295,18 +337,18 @@ flowchart TD
             EtlKB["kb sources<br/>pdf-pipeline / uploads / Docs"]:::app
         end
 
-        OctEng["engines/octave_engine.py<br/>Milestone 4"]:::off
+        OctEng["engines/octave_engine.py<br/>octave-cli, gnuplot cairo terminals"]:::viz
         MatEng["matlab / wolfram adapters<br/>stub, flag-off"]:::off
     end
 
     GAPI[["Google Drive / Sheets / Docs API<br/>read-only scopes"]]:::edge
-    PDFP[("pdf-markdown-pipeline<br/>MariaDB + public .md<br/>verified + public only")]:::db
+    PDFP[("pdf-markdown-pipeline<br/>MariaDB + public .md<br/>verified + public + UP only")]:::db
 
     User <-->|HTTPS| CF
     CF <-->|reverse proxy| WebTier
     Ask -->|dispatch| Queue
     Queue -->|"/query bearer"| OneShot
-    Chat <-->|"/chat SSE bearer"| Loop
+    Chat <-->|"/chat ndjson bearer"| Loop
     Admin --- MDB
     Ask --- MDB
     Chat --- MDB
@@ -339,8 +381,8 @@ flowchart TD
     OneShot -.->|"sql + rows + chart + summary"| WebTier
 ```
 
-> Grey dashed nodes (Octave, MATLAB, Wolfram) are not in the first build.
-> Everything else is covered by the `ROADMAP.md` milestones.
+> Grey dashed nodes (MATLAB, Wolfram) are not in the first build. Everything
+> else is covered by the `ROADMAP.md` milestones.
 
 ### Diagram 2 (as supplied in the brief): execution security & read-only sandbox
 
@@ -384,7 +426,7 @@ flowchart LR
 
     subgraph Gen["LLM output — untrusted"]
         SQL["Generated SQL<br/>from /query or the chat run_sql_query tool"]:::gen
-        Script["Generated plot script<br/>Python today, Octave later"]:::gen
+        Script["Generated plot script<br/>Python or Octave"]:::gen
         Q["User question text<br/>for knowledge search"]:::gen
     end
 
@@ -430,15 +472,15 @@ flowchart TD
     classDef ext fill:#d97706,stroke:#b45309,stroke-width:2px,color:#fff
 
     User(["Analyst"]):::client
-    Chat["Livewire Chat window<br/>SSE stream, markdown + code render, model picker"]:::app
+    Chat["Livewire Chat window<br/>fetch+ReadableStream (ndjson), markdown + code render, model picker"]:::app
     Orch["FastAPI orchestrator<br/>chat tool loop, model registry"]:::app
     Ollama(("Ollama<br/>chat + coder + embed, CPU")):::ai
 
     subgraph Tools["Tools the model calls"]
         T1["search_knowledge"]:::app
         T2["run_sql_query<br/>same guard + read-only role"]:::app
-        T3["make_chart<br/>same bwrap sandbox"]:::app
     end
+    T3["chart step<br/>Qwen-authored, same bwrap sandbox —<br/>deterministic after run_sql_query, not model-chosen"]:::app
 
     subgraph Bank["PostgreSQL data bank"]
         AN[("analytics.* views<br/>published rows")]:::db
@@ -451,7 +493,7 @@ flowchart TD
         E3["gdocs / gdrive sync"]:::app
     end
 
-    PDFP[("pdf-markdown-pipeline<br/>MariaDB + public .md files<br/>public + verified only")]:::db
+    PDFP[("pdf-markdown-pipeline<br/>MariaDB + public .md files<br/>public + verified + UP only")]:::db
     UP["Admin .md uploads<br/>web/ kb-uploads disk"]:::app
     G[["Google Drive / Sheets / Docs"]]:::ext
 
@@ -489,7 +531,7 @@ flowchart TD
     classDef store fill:#0284c7,stroke:#0369a1,stroke-width:2px,color:#fff
     classDef off fill:#94a3b8,stroke:#64748b,stroke-width:1px,color:#fff,stroke-dasharray:4 3
 
-    Run["/query or chat make_chart"]:::app
+    Run["/query, or a chat turn's<br/>own chart step"]:::app
     Q[("queries / messages + chart_artifacts<br/>SQL, engine, model, tables_used, timings,<br/>rows_preview, spec (Plotly JSON) — all MariaDB")]:::db
     Files[["local disk<br/>chart.png / svg / pdf (rendered blobs)"]]:::store
     Sweep["sweeper timer<br/>unsaved runs &gt; ARTIFACT_TTL_DAYS"]:::off
@@ -523,6 +565,40 @@ flowchart TD
 > A refresh re-runs the saved `recipe` through the same `/query` path, so it
 > passes the same guard, read-only role, and sandbox. `analysis_runs` is the
 > trend history — same question, successive data vintages.
+
+### Diagram 5: Power BI access path (documented, not built)
+
+Not part of the current build — a Backlog item (`ROADMAP.md` Backlog,
+`EVALUATION.md` §Right-sizing item 15, `DATA_PIPELINE.md` §BI access). Shown
+here so the trust boundary is clear before it's ever turned on: a BI client
+reads the same published views the AI path reads, through its own named
+read-only role, entirely outside the orchestrator — no guard, no sandbox, no
+LLM in this path, because none of that applies to a human running their own
+query in Power BI Desktop.
+
+```mermaid
+flowchart LR
+    classDef app fill:#059669,stroke:#047857,stroke-width:2px,color:#fff
+    classDef db fill:#dc2626,stroke:#b91c1c,stroke-width:2px,color:#fff
+    classDef ai fill:#7c3aed,stroke:#6d28d9,stroke-width:2px,color:#fff
+    classDef off fill:#94a3b8,stroke:#64748b,stroke-width:1px,color:#fff,stroke-dasharray:4 3
+
+    O["orchestrator<br/>guard + sandbox + LLM"]:::ai
+    RO[("excise_ro<br/>SELECT analytics.* + kb.*")]:::db
+    PG[("PostgreSQL<br/>analytics.* + kb.* views")]:::db
+    BIRole[("excise_bi_ro (future)<br/>SELECT analytics.* + kb.* — named per officer,<br/>never excise_ro's own grant")]:::off
+    PBID["Power BI Desktop (future)<br/>an officer's own machine"]:::off
+    CSV["CSV / XLSX export (Milestone 7)<br/>already planned, no new role needed"]:::app
+
+    O --> RO --> PG
+    PBID -.->|future, toggleable| BIRole -.-> PG
+    PG --> CSV
+```
+
+> Power BI *Service* (cloud publish/refresh/embed) is deliberately absent from
+> this diagram — it would send data off the box, which the no-egress hard
+> constraint in `CLAUDE.md` rules out without an explicit, separately-approved
+> exception.
 
 ## Cross-references
 
