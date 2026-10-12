@@ -4,6 +4,8 @@ Department of Excise, Uttar Pradesh
 Files
   UP-Excise-Ask-the-Data-Demo.pptx   The presentation (15 slides, speaker notes on each).
   UP-Excise-Ask-the-Data-Demo.pdf    The same slides as a PDF, for a machine without PowerPoint.
+  UP-Excise-Ask-the-Data-Demo-Short.pptx / .pdf
+                                     An 8-slide version for a shorter slot (same slides, same notes).
   SLIDE-TRANSCRIPT.md                The words of every slide, for editing the language.
   images/                            Every screenshot used, at full size (3200 x 2000 pixels).
 

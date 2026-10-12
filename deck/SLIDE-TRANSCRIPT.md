@@ -12,6 +12,10 @@ behind it, from the department's own data, on the department's own server.
 This file holds the words of every slide, the speaker notes, a description of every picture,
 and the facts behind each claim. The design is final: pale blue and pale yellow from the department flag, on white, with the State Emblem. Only the wording is open to improvement.
 
+A shorter 8-slide version of the deck exists for a limited slot. It uses slides 1, 2, 3, 5, 6,
+10, 14 and 15 of this file unchanged, so a wording change to one of those slides applies to
+both decks.
+
 ## Audience
 
 Senior officers and ministers. They are experienced in public administration, not in software.
@@ -88,6 +92,20 @@ one-line reason. Do not return design or layout suggestions.
 3. Are the safety statements on slide 10 acceptable as written for a senior-leadership audience?
 4. Is slide 13 frank enough, or too frank?
 5. What should slide 15 ask for?
+
+## Notes for the department
+
+A wording review by Indus (Sarvam AI's assistant, 12 October 2026) fed the current wording.
+Its draft is in the repository history (`SLIDE-TRANSCRIPT-REVISED.md`, commit `e07d86c`).
+Two points from it still apply:
+
+- Two statements are absolute and worth being ready to defend: slide 3, "No external AI
+  service provider and no closed-source or proprietary tool is used", and slide 9, "Nothing is
+  sent to an outside service". Both are locked facts. The interim server is reached through a
+  secure tunnel, which the deck does not mention because it goes away with that server.
+- Slide 13 states the limits plainly: a wrong answer, a wrong conversion and an overstated
+  Lucknow figure. It has not been softened. Whether that is too frank is the department's
+  decision (question 4).
 
 ---
 
@@ -255,17 +273,17 @@ one-line reason. Do not return design or layout suggestions.
 
 **On-slide text** (in reading order):
 
-- 9,322
+- 9,322 records
 - dispatch records for Lucknow, August 2026, from the Integrated Excise Supply Chain Management System
-- 28,405
+- 28,405 shops
 - shops with FY2025-26 revenue, across all 75 districts
-- 3,455
+- 3,455 records
 - district revenue records from the Rajkosh and Koshwani portal data
-- 3,812
+- 3,812 records
 - sales-volume records by liquor type and year
-- 11,124
+- 11,124 records
 - enforcement records: raids, seizures, convictions
-- 330+
+- 330+ documents
 - acts, rules and policy documents in the knowledge library
 - All of it is held on the department's own server, in a database the AI can read but never change.
 
