@@ -1,4 +1,4 @@
-"""Build the cabinet demo deck. Run: python3 build/build_deck.py"""
+"""Build the demo deck. Run: python3 build/build_deck.py"""
 import os
 import shutil
 from PIL import Image
@@ -178,12 +178,13 @@ text(s, 2.8, 0.75, 9.5, 0.5, 'Government of Uttar Pradesh', 22, False, INK)
 text(s, 2.8, 1.25, 9.5, 0.7, 'Department of Excise', 36, True, BLUE)
 text(s, 2.8, 1.95, 9.5, 0.5, 'उत्तर प्रदेश आबकारी विभाग', 22, False, INK, hindi=True)
 text(s, 0.8, 3.0, 11.5, 1.2, 'Ask the Data', 60, True, BLUE)
-text(s, 0.8, 4.15, 8.2, 1.4, 'Questions in plain language, answered from the department\'s own figures '
-     'and rules, on the department\'s own server', 24, False, INK)
+text(s, 0.8, 4.15, 9.0, 1.6, ['Ask a question in plain language.',
+     'The answer comes from the department\'s own figures and rules, on the department\'s own server.'],
+     24, False, INK, spacing=6)
 text(s, 0.8, 6.55, 11.5, 0.5, 'Proof of concept', 18, False, BLUE)
-notes(s, 'Welcome. This is a working proof of concept, not a mock-up. Everything shown in the demo '
-         'slides came from the live system running in the department\'s office, answering real questions '
-         'against real department data.')
+notes(s, 'Welcome. This is a working proof of concept, not a mock-up. Everything in the demo slides came '
+         'from the live system running in the department\'s office. It answered real questions against '
+         'real department data.')
 
 # 2 ---------------------------------------------------------------- problem
 s = new_slide('The problem: a simple question can take days')
@@ -191,7 +192,7 @@ cards = [
     ('sheet', 'Figures sit in many files', 'Revenue, dispatch, shop and enforcement figures are held in separate '
      'workbooks, reports and portals.'),
     ('clock', 'Each question needs an analyst', 'An officer asks, an analyst finds the files, builds the table and '
-     'sends it back. A new angle on the same question starts the cycle again.'),
+     'sends it back. A new angle starts the cycle again.'),
     ('books', 'Rules live in another place', 'Acts, rules and policy orders are published as documents. '
      'Linking a rule to a figure is done by hand.'),
 ]
@@ -201,10 +202,10 @@ for i, (ic, h, b) in enumerate(cards):
     badge(s, ic, x + 0.3, 1.9)
     text(s, x + 0.25, 2.9, 3.4, 0.8, h, 22, True, VIOLET)
     text(s, x + 0.25, 3.7, 3.4, 1.6, b, 16, False, INK)
-text(s, 0.6, 5.55, 12.1, 1.2, 'An officer who needs a number for a meeting today should be able to get it today, '
-     'with the source shown, without waiting for a report to be prepared.', 20, True, INK)
-notes(s, 'Set the scene in the department\'s own terms. Examples to mention: a district total needed before a '
-         'review meeting; a rule position needed alongside a figure.')
+text(s, 0.6, 5.55, 12.1, 1.2, 'An officer who needs a number for a meeting today should get it today, '
+     'with its source, without waiting for a report.', 20, True, INK)
+notes(s, 'Set the scene in the department\'s own terms. Two examples to mention: a district total needed before '
+         'a review meeting, and a rule position needed alongside a figure.')
 
 # 3 ---------------------------------------------------------------- what it does
 s = new_slide('What this proof of concept does')
@@ -221,10 +222,11 @@ for i, (ic, h, b) in enumerate(three):
     badge(s, ic, x + 0.3, 2.85)
     text(s, x + 1.25, 2.95, 2.5, 0.6, h, 24, True, VIOLET, anchor=MSO_ANCHOR.MIDDLE)
     text(s, x + 0.3, 3.9, 3.35, 1.7, b, 17, False, INK)
-text(s, 0.6, 5.85, 12.1, 1.0, 'It runs on the departmental server, completely local. No external AI service provider and no '
-     'closed-source or proprietary tool is used; all models run locally.', 19, True, GREEN)
-notes(s, 'Three entry points, one engine. Ask is for a single well-formed question. Chat is for exploring. '
-         'The knowledge library lets the same chat quote the department\'s published rules.')
+text(s, 0.6, 5.85, 12.1, 1.0, ['It runs on the departmental server, completely local.',
+     'No external AI service provider and no closed-source or proprietary tool is used. All models run locally.'],
+     19, True, GREEN, spacing=4)
+notes(s, 'We built three entry points on one engine. Ask takes a single well-formed question. Chat is for '
+         'exploring. The knowledge library lets the same chat quote the department\'s published rules.')
 
 # 4 ---------------------------------------------------------------- how an answer is made
 s = new_slide('How an answer is made')
@@ -255,12 +257,12 @@ text(s, 0.6, 1.25, 4.3, 0.9, '"How many country liquor and composite shops are i
 bullets(s, 0.6, 2.35, 4.3, [
     'Total: 1,006 shops.',
     'Split: 589 country liquor and 417 composite.',
-    'The total is counted by the database itself, not added up by the AI.',
+    'The database counts the total; the AI does not add it up.',
     'Source: the monthly dispatch report from the Integrated Excise Supply Chain Management System (IESCMS).',
 ], 16, 12)
 shot(s, 'ask-1-view.png', 5.15, 1.3, 7.6, 5.55, left_px=1360, top_px=145, link='slide-05-shop-count.png')
 notes(s, 'Click the screenshot to open it full size. Read the question aloud, then point to the total and the two parts. This question was chosen because '
-         'it has a split and a total. Earlier versions gave only one combined number; we fixed that so each part is shown.')
+         'it has a split and a total. Earlier versions gave one combined number; we fixed that so each part is shown.')
 
 # 6 ---------------------------------------------------------------- demo ask 2
 s = new_slide('Live example: revenue by district and for a product')
@@ -308,7 +310,7 @@ for i, (ic, n, label) in enumerate(tiles):
 text(s, 0.6, 6.45, 12.1, 0.5, 'All of it is held on the department\'s own server, in a database the AI can read but never change.',
      16, True, GREEN)
 notes(s, 'These are the row counts loaded so far. The data bank is a copy; the source systems are untouched. '
-         'More sources can be added without changing how officers ask questions.')
+         'We can add more sources without changing how officers ask questions.')
 
 # 10 --------------------------------------------------------------- models
 s = new_slide('The AI models')
@@ -327,11 +329,11 @@ for i, (ic, h, sub, b) in enumerate([
     text(s, x + 1.3, 2.95, 4.4, 0.4, sub, 15, False, DARK_GOLD)
     text(s, x + 0.3, 3.65, 5.3, 1.5, b, 17, False, INK)
 box(s, 0.6, 5.5, 12.1, 1.3, fill=PASTEL_YELLOW, line=GOLD)
-text(s, 0.85, 5.55, 11.6, 1.2, ['Why two models: a conversational model and a code-writing model are each better at their own task.',
-     'Why local: the department\'s questions and figures never leave the building.'], 17, True, BLUE,
+text(s, 0.85, 5.55, 11.6, 1.2, ['A conversational model and a code-writing model each do their own job better, so we use two.',
+     'Both run locally: the department\'s questions and figures never leave the building.'], 17, True, BLUE,
      anchor=MSO_ANCHOR.MIDDLE, spacing=4)
 notes(s, 'Both models are open weights, run through Ollama on the office server. Neither is a DeepSeek model. '
-         'The server has no GPU today, which is why answers take one to three minutes.')
+         'The server has no graphics card today, so answers take one to three minutes.')
 
 # 11 --------------------------------------------------------------- safety
 s = new_slide('Safety and control')
@@ -348,7 +350,6 @@ for i, (ic, h, b) in enumerate(layers):
     badge(s, ic, 0.8, y + 0.1, 0.75)
     text(s, 1.75, y + 0.05, 3.3, 0.85, h, 21, True, VIOLET, anchor=MSO_ANCHOR.MIDDLE)
     text(s, 5.0, y + 0.05, 7.6, 0.85, b, 16, False, INK, anchor=MSO_ANCHOR.MIDDLE)
-text(s, 0.6, 6.72, 12.1, 0.3, 'The only outside connection is the secure tunnel that lets officers reach the site.', 13, False, GREY)
 notes(s, 'Each layer works on its own: if one failed, the next would still stop a harmful action. '
          'Be ready for the question "can it change our data?" The answer is no: the database itself refuses any write from this account.')
 
@@ -378,10 +379,11 @@ for i, (ic, h, b) in enumerate(steps):
     badge(s, ic, x + 0.8, 1.85, 0.75)
     text(s, x + 0.08, 2.75, 2.2, 0.7, h, 17, True, VIOLET, PP_ALIGN.CENTER)
     text(s, x + 0.12, 3.45, 2.1, 2.0, b, 14, False, INK, PP_ALIGN.CENTER)
-text(s, 0.6, 5.8, 12.1, 1.0, 'The automated tests cover the safety checks, the data loaders and the chat flow. '
-     'Live testing against real questions found problems the tests could not, and each one was fixed and recorded.', 17, False, INK)
-notes(s, 'Mention that the build followed a written plan with milestones, and that every live failure found in '
-         'testing is documented. Honest testing is part of the case for trusting the results.')
+text(s, 0.6, 5.8, 12.1, 1.0, ['The automated tests cover the safety checks, the data loaders and the chat flow.',
+     'Live testing on real questions found problems the tests could not. Each one was fixed and recorded.'],
+     17, False, INK, spacing=4)
+notes(s, 'We followed a written plan with milestones, and every live failure found in testing is documented. '
+         'Honest testing is part of the case for trusting the results.')
 
 # 13 --------------------------------------------------------------- limits
 s = new_slide('What we learned, and the limits today')
@@ -389,7 +391,7 @@ box(s, 0.6, 1.4, 5.95, 5.4)
 text(s, 0.85, 1.5, 5.5, 0.5, 'What we learned', 22, True, VIOLET)
 bullets(s, 0.85, 2.15, 5.5, [
     'A language model can give a confident wrong answer. We added checks so an empty result is reported as empty.',
-    'District revenue after 2018 in the Rajkosh and Koshwani portal data is booked at the central treasury in Lucknow. '
+    'District revenue after 2018 in the Rajkosh and Koshwani portal data is booked at the central treasury in Lucknow.',
     'We cross-checked against shop-level revenue and now point the system to the correct source.',
     'Money conversions are done in code. A model got one crore figure wrong by ten times.',
 ], 15, 10)
@@ -401,7 +403,7 @@ bullets(s, 7.0, 2.15, 5.5, [
     'Shop-level Bhang data has no source yet.',
     'Answers should be treated as a fast first reading, to be checked against the source for formal use.',
 ], 15, 10)
-notes(s, 'Being open about limits is deliberate. The audience will ask what can go wrong; this slide answers before they do.')
+notes(s, 'We are open about limits deliberately. The audience will ask what can go wrong; this slide answers first.')
 
 # 14 --------------------------------------------------------------- roadmap
 s = new_slide('What comes next')

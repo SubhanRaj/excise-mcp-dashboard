@@ -48,7 +48,7 @@ CONTEXT = {
 10: ("Answer 'can it change our data?' and 'who can see what?' before anyone asks.",
     "Five rows, each with a round icon, a short name and one sentence: Sign-in, Read-only data, Checked queries, Locked box for charts, Full record.",
     "None.",
-    "Sign-in is an emailed one-time code; roles are Admin and Analyst. The AI uses a database account that can read but not change anything; the database itself refuses a write. Every query is inspected and only a single read request passes. Chart code runs in an isolated space with no network and limits on time and memory. Every question, query and action is logged. The only outside connection is the secure tunnel through which officers reach the site."),
+    "Sign-in is an emailed one-time code; roles are Admin and Analyst. The AI uses a database account that can read but not change anything; the database itself refuses a write. Every query is inspected and only a single read request passes. Chart code runs in an isolated space with no network and limits on time and memory. Every question, query and action is logged."),
 11: ("Show that administrators have real controls, not only users.",
     "Two screenshots side by side with a one-line caption under each.",
     "Left screenshot: the Knowledge base admin page, with an 'Upload a document' form (title, Markdown file, Upload button), a 'Pending uploads' table with one row 'UP Excise shop types and license codes', and an 'Ingested corpus' table of policy documents such as 'Excise Policy Uttar Pradesh 2020-21', each marked Active. Right screenshot: the System health page with four tiles (Orchestrator Reachable, Queue 0 pending, Load average, Memory available 12.8 of 30.1 GB), and tables of AI usage for one-shot queries and for chat.",
@@ -138,7 +138,6 @@ A bullet: at most 25 words. Speaker notes: at most 90 words per slide.
 ## Known weak spots in the current wording
 
 - Slides 2 and 3 lean on lists of three. Vary where a different number is true.
-- Slide 9's 'Why two models' bar reads like a slogan; make it a plain statement.
 - Slide 13 is the most important slide for trust. Keep it frank, without apology or spin.
 
 ## What to send back
