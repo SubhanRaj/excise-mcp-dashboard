@@ -124,6 +124,76 @@ ollama ps                                     # UNTIL should read ~30 seconds fr
 
 ---
 
+## §Ollama runtime settings — pin both models (found live)
+
+Live chat turns needing a tool call swap `qwen2.5-coder:7b` in for `plan_sql`
+and `llama3.1:8b` back in for the reply — at `OLLAMA_MAX_LOADED_MODELS=1`
+this evicts one to load the other on every swap, and a full turn took 1–3
+minutes as a result, mostly reload time. `EVALUATION.md` §2's own RAM budget
+already priced pinning both models at once (~12–13 GB against this box's
+30 GiB) as the fix for exactly this:
+
+```bash
+sudo sed -i 's/OLLAMA_MAX_LOADED_MODELS=1/OLLAMA_MAX_LOADED_MODELS=2/' /etc/systemd/system/ollama.service
+sudo systemctl daemon-reload
+sudo systemctl restart ollama
+```
+
+Verify both models stay resident through a full chat turn instead of one
+evicting the other:
+
+```bash
+systemctl show ollama.service -p Environment
+# Environment=... OLLAMA_MAX_LOADED_MODELS=2
+curl -s http://127.0.0.1:11434/api/generate -d '{"model":"qwen2.5-coder:7b-instruct-q4_K_M","prompt":"hi","stream":false}' >/dev/null
+curl -s http://127.0.0.1:11434/api/generate -d '{"model":"llama3.1:8b-instruct-q4_K_M","prompt":"hi","stream":false}' >/dev/null
+ollama ps
+# both models listed, both still resident — one no longer evicts the other
+```
+
+---
+
+## §Ollama runtime settings — keep-alive outlives a compound turn (found live)
+
+A live compound chat question ("revenue and a liquor-type breakdown for one
+district") failed with a `ReadTimeout calling Ollama` at the `plan_sql`
+stage after several minutes. `journalctl -u ollama` showed both models being
+fully reloaded three separate times within that one turn (`"disabling mmap
+for llama-server load"`, a 3-7s reload each), not staying resident the way
+`OLLAMA_MAX_LOADED_MODELS=2` (above) was meant to guarantee.
+`OLLAMA_KEEP_ALIVE=30s` is why: it evicts *each* model individually 30s
+after its own last request regardless of how many of the 2 slots are free,
+and a compound turn's own gaps between calls (Postgres execution, the
+Python-side tool-result handling, a heartbeat interval) routinely exceed
+30s. `MAX_LOADED_MODELS=2` was raised specifically so both models stay
+resident for a whole turn (above) — a short keep-alive defeats that on every
+gap, and the reload time stacking up mid-turn is what pushed this question
+past `ollama_generate_timeout_seconds` (480s).
+
+```bash
+sudo sed -i 's/OLLAMA_KEEP_ALIVE=30s/OLLAMA_KEEP_ALIVE=-1/' /etc/systemd/system/ollama.service
+sudo systemctl daemon-reload
+sudo systemctl restart ollama
+```
+
+`-1` means never unload — consistent with `MAX_LOADED_MODELS=2` already
+committing this box's RAM to keeping both models resident permanently
+(`EVALUATION.md` §RAM budget), rather than picking another fixed duration
+that would just move the same race to a longer window.
+
+Verify both models survive an idle gap longer than the old 30s:
+
+```bash
+systemctl show ollama.service -p Environment
+# Environment=... OLLAMA_KEEP_ALIVE=-1 OLLAMA_NUM_PARALLEL=1 OLLAMA_MAX_LOADED_MODELS=2
+curl -s http://127.0.0.1:11434/api/generate -d '{"model":"qwen2.5-coder:7b-instruct-q4_K_M","prompt":"hi","stream":false}' >/dev/null
+sleep 45
+ollama ps
+# both models still listed with no reload in between
+```
+
+---
+
 ## §Data bank (Milestone 1)
 
 **Create the database and apply the SQL scripts** (they are written in `db/`
@@ -172,7 +242,62 @@ PGPASSWORD='CHANGE_ME_ro' psql -h 127.0.0.1 -U excise_ro -d excise_bank -c \
 PGPASSWORD='CHANGE_ME_ro' psql -h 127.0.0.1 -U excise_ro -d excise_bank -c \
   "select * from public.revenues;"                    # ERROR: permission denied for table revenues
 PGPASSWORD='CHANGE_ME_ro' psql -h 127.0.0.1 -U excise_ro -d excise_bank -c \
-  "select * from etl.ingestion_runs;"                 # ERROR: permission denied for schema etl
+  "select * from etl.ingestion_runs;"                  # works
+```
+
+**Grant `excise_ro` read on `etl.*`** (Milestone 5's admin ETL visibility
+screen; `db/roles.sql` now includes this, but the box was already
+provisioned from an earlier run of it, and re-running the whole file would
+fail on `CREATE ROLE excise_ro` already existing — apply just the new grant).
+Applied and confirmed live — `excise_ro` reads `etl.*` and `/admin/etl`
+shows real ingestion runs instead of its fallback banner:
+
+```bash
+sudo -u postgres psql -d excise_bank -c \
+  "GRANT USAGE ON SCHEMA etl TO excise_ro;
+   GRANT SELECT ON ALL TABLES IN SCHEMA etl TO excise_ro;
+   ALTER DEFAULT PRIVILEGES FOR ROLE excise_owner IN SCHEMA etl GRANT SELECT ON TABLES TO excise_ro;"
+```
+
+**`analytics.license_categories`** (found missing while tracing a live SQL
+failure back to the source IESCMS report, which carries a wholesale license
+type and a separate retail one on every row — nothing before this let the
+model look up what a code like `FL2` or `CL5DB` actually means, or which ones
+are wholesale-only. Applied and confirmed live — all 12 codes read back
+correctly, and the orchestrator has picked up the matching `VIEW_NOTES`
+entry. `db/analytics_views.sql` is safe to re-run — `CREATE OR REPLACE VIEW`
+and its own trailing grants are idempotent):
+
+```bash
+sudo -u postgres psql -d excise_bank -f ~/Sites/excise-mcp-dashboard/db/analytics_views.sql
+```
+
+Verify:
+
+```bash
+PGPASSWORD='CHANGE_ME_ro' psql -h 127.0.0.1 -U excise_ro -d excise_bank -c \
+  "select code, name, kind from analytics.license_categories order by code;"
+```
+
+**Add `kb.documents.state`** (the other-state knowledge base labeling
+change — `db/schema.sql` now has this column, so a fresh provision picks it
+up on its own; this box's database was already provisioned from an earlier
+run of `schema.sql` and needed the column added directly). Applied and
+confirmed live — `kb.documents.state` exists, the re-sync backfilled 26 rows
+onto it, and a direct query shows 13 states represented across the corpus:
+
+```bash
+sudo -u postgres psql -d excise_bank -c "ALTER TABLE kb.documents ADD COLUMN IF NOT EXISTS state TEXT;"
+```
+
+Then re-run the pdf-markdown-pipeline sync so every existing row picks up its
+own `rule_sets.state` value (the sync's own "unchanged content" check also
+looks at `state` now, so this backfills every already-synced document, not
+just new ones — same precedent as the earlier `effective_from` backfill):
+
+```bash
+cd ~/Sites/excise-mcp-dashboard/etl && source .venv/bin/activate
+python -m etl sync --source pdf_pipeline_docs
 ```
 
 **Create the read-only MariaDB user for the pdf-markdown-pipeline sync**
@@ -180,14 +305,17 @@ PGPASSWORD='CHANGE_ME_ro' psql -h 127.0.0.1 -U excise_ro -d excise_bank -c \
 
 ```bash
 sudo mariadb <<'SQL'
-CREATE USER 'excise_mcp_kb_ro'@'127.0.0.1' IDENTIFIED BY 'CHANGE_ME_kb_ro';
+CREATE USER IF NOT EXISTS 'excise_mcp_kb_ro'@'127.0.0.1' IDENTIFIED BY '2002';
+ALTER USER 'excise_mcp_kb_ro'@'127.0.0.1' IDENTIFIED BY '2002';
 GRANT SELECT ON pdf_markdown_pipeline_local.* TO 'excise_mcp_kb_ro'@'127.0.0.1';
 FLUSH PRIVILEGES;
 SQL
 ```
 
-Put `CHANGE_ME_kb_ro` in `etl/.env` as `KB_RO_MYSQL_PASSWORD` (`etl/.env.example`
-has the full set of `KB_RO_MYSQL_*` vars). Also give the ETL user group read on
+Put `2002` in `etl/.env` as `KB_RO_MYSQL_PASSWORD` (`etl/.env.example` has the
+full set of `KB_RO_MYSQL_*` vars) — `CREATE USER IF NOT EXISTS` plus a
+following `ALTER USER` covers both a first-time grant and resetting an
+already-existing one to this password. Also give the ETL user group read on
 the pipeline's Markdown tree:
 
 ```bash
@@ -200,7 +328,7 @@ ls -ld ~/Sites/pdf-markdown-pipeline/storage/app/public
 Verify:
 
 ```bash
-mariadb -h127.0.0.1 -u excise_mcp_kb_ro -p'CHANGE_ME_kb_ro' \
+mariadb -h127.0.0.1 -u excise_mcp_kb_ro -p'2002' \
   -e "SELECT visibility,status,COUNT(*) FROM pdf_markdown_pipeline_local.documents GROUP BY 1,2;"
 ```
 
@@ -217,6 +345,113 @@ SQL
 
 Then `etl/.venv/bin/python -m etl sync --source pdf_pipeline_docs` (`etl/README.md`
 §Knowledge base has the module notes).
+
+**Apply the `dispatches` / `dispatch_strength_lines` tables** (Milestone 5:
+`etl/sources/iescms_dispatch.py`, `DATA_PIPELINE.md` §Dispatches). All three
+scripts are idempotent — re-running the full file only adds what's new:
+
+```bash
+cd ~/Sites/excise-mcp-dashboard/db
+sudo -u postgres psql -d excise_bank -f schema.sql
+sudo -u postgres psql -d excise_bank -f analytics_views.sql
+sudo -u postgres psql -d excise_bank -f seed_reference.sql
+```
+
+**Register an IESCMS shop-wise dispatch report as a source, then sync it**
+(one registry row per report file — the layout, `fl` or `cl`, rides in
+`source_ref` after `#`, the same way the plain excel source's sheet name
+does):
+
+```bash
+PGPASSWORD='CHANGE_ME_etl' psql -h 127.0.0.1 -U excise_etl -d excise_bank <<'SQL'
+INSERT INTO etl.source_registry (name, source, source_ref, target_table, schedule, enabled)
+VALUES
+  ('iescms_dispatch_fl_202608', 'iescms_dispatch',
+   '/home/subhan/Sites/excise-mcp-dashboard/scripts_and_data/sample_data/Shop_Wise_Dispatch_Report_WH_to_Retail-FL5D,FL4A,FL4C,FL5B,FL5DB.CL5CC___12_Sep_2026_110221.xlsx#fl',
+   'dispatches', 'manual', true),
+  ('iescms_dispatch_cl_202608', 'iescms_dispatch',
+   '/home/subhan/Sites/excise-mcp-dashboard/scripts_and_data/sample_data/Country_Liquor_Shop_Wise_Dispatch_Report_12_Sep_2026_233114.xlsx#cl',
+   'dispatches', 'manual', true)
+ON CONFLICT (name) DO NOTHING;
+SQL
+
+cd ~/Sites/excise-mcp-dashboard/etl
+.venv/bin/python -m etl sync --source iescms_dispatch_fl_202608
+.venv/bin/python -m etl sync --source iescms_dispatch_cl_202608
+```
+
+Verify:
+
+```bash
+PGPASSWORD='CHANGE_ME_ro' psql -h 127.0.0.1 -U excise_ro -d excise_bank -c \
+  "SELECT count(*), sum(dispatched_bulk_litres) FROM analytics.dispatches;"
+psql -h 127.0.0.1 -U excise_etl -d excise_bank -c \
+  "SELECT status, rows_seen, rows_upserted, rows_quarantined FROM etl.ingestion_runs \
+   WHERE source = 'iescms_dispatch' ORDER BY id DESC LIMIT 2;"
+```
+
+A `schedule` of `'manual'` (not a real cron expression) is a note to the
+operator, not something `etl` itself reads — there's no systemd timer for
+this source, since a new month's export is a file an operator downloads and
+registers by hand, not a feed `etl` pulls on its own. Re-running it (on
+purpose, or swept up in an `etl sync --all`) is harmless either way: the
+loader upserts on `indent_number`, so a second pass over the same file
+changes no row counts.
+
+**Apply the `sro_shops` table** (`etl/sources/sro_shops.py`, `DATA_PIPELINE.md`
+§SRO shop revenue snapshot). Applied and confirmed live — 28,405 shops
+across all 75 districts, ₹554.6 billion statewide for FY2025-26:
+
+```bash
+cd ~/Sites/excise-mcp-dashboard/db
+sudo -u postgres psql -d excise_bank -f schema.sql
+sudo -u postgres psql -d excise_bank -f analytics_views.sql
+```
+
+**Register an SRO backup as a source, then sync it** (the snapshot's own
+financial year rides in `source_ref` after `#`, the same way an IESCMS
+report's `fl`/`cl` layout does above):
+
+```bash
+PGPASSWORD='CHANGE_ME_etl' psql -h 127.0.0.1 -U excise_etl -d excise_bank <<'SQL'
+INSERT INTO etl.source_registry (name, source, source_ref, target_table, schedule, enabled)
+VALUES ('sro_shops_fy2025_26', 'sro_shops',
+  '/home/subhan/Projects/up-excise-spatial-revenue-optimizer/backups/d1-prod-backup-2026-09-23.sql#FY2025-26',
+  'sro_shops', 'manual', true)
+ON CONFLICT (name) DO NOTHING;
+SQL
+
+cd ~/Sites/excise-mcp-dashboard/etl
+.venv/bin/python -m etl sync --source sro_shops_fy2025_26
+```
+
+The first live run quarantined 862 rows on two SRO district-name spellings
+this schema doesn't share — `Rae Bareli` / `Siddharth Nagar` against
+`Raebareli` / `Siddharthnagar`. Fixed the same way any district spelling
+mismatch here is, by adding the alias and re-running the sync (upserts on
+`(district_id, source_shop_id, financial_year_id)`, so a re-run costs
+nothing already-imported):
+
+```bash
+PGPASSWORD='CHANGE_ME_etl' psql -h 127.0.0.1 -U excise_etl -d excise_bank <<'SQL'
+INSERT INTO etl.district_aliases (alias, district_id) VALUES
+  ('Rae Bareli', (SELECT id FROM districts WHERE name = 'Raebareli')),
+  ('Siddharth Nagar', (SELECT id FROM districts WHERE name = 'Siddharthnagar'))
+ON CONFLICT (alias) DO NOTHING;
+SQL
+```
+
+A later year's SRO backup registers as its own `etl.source_registry` row
+(a new `name`, the new backup file's path, the new `#FYyyyy-yy`) rather than
+overwriting this one — `sro_shops` keeps every year's snapshot as its own
+set of rows, not just the latest.
+
+Verify:
+
+```bash
+PGPASSWORD='CHANGE_ME_ro' psql -h 127.0.0.1 -U excise_ro -d excise_bank -c \
+  "SELECT count(*), count(DISTINCT district), sum(total_revenue) FROM analytics.sro_shops;"
+```
 
 ---
 
@@ -331,6 +566,20 @@ Verify:
 .venv/bin/pytest
 ```
 
+Runs as a persistent `--user` service, no `sudo` needed — `web/` calls it over
+loopback HTTP, so nothing in `/ask` or `/chat` works until this is up:
+
+```bash
+cp ~/Sites/excise-mcp-dashboard/deploy/excise-orchestrator.service \
+   ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now excise-orchestrator.service
+```
+
+Verify: `systemctl --user status excise-orchestrator.service` shows
+`active (running)`; `curl http://127.0.0.1:8085/health` returns
+`{"status": "ok", ...}` with `ollama`/`postgres` both `ok`.
+
 ---
 
 ## §Sandbox execution route (Milestone 2)
@@ -363,6 +612,28 @@ sudo visudo -f /etc/sudoers.d/excise-sandbox
 
 Never `tee`/hand-edit a sudoers file — `visudo` validates before saving
 (`~/Sites/infra-notes/cpu-thermal-and-apache-procfs.md` records why).
+
+---
+
+## §Chart rendering (Milestone 2, optional)
+
+Static chart export (PNG/SVG/PDF) runs through a persistent, isolated
+browser the orchestrator starts once at boot (`engines/static_render.py`,
+`SECURITY.md` §Static image export). It already works against the box's
+existing Google Chrome — no action needed. Installing open-source Chromium
+instead is optional and preferred:
+
+```bash
+sudo apt install chromium-browser
+```
+
+The orchestrator looks for `chromium`/`chromium-browser` on `PATH` first and
+only falls back to Chrome if neither is installed; no config change or
+restart-order dependency either way — just install it and restart
+`excise-orchestrator.service` (`systemctl --user restart
+excise-orchestrator.service`) to pick it up. Either browser gets a fresh,
+private profile per launch (never the operator's own Chrome profile or
+signed-in account — `SECURITY.md` has the detail).
 
 ---
 
@@ -447,6 +718,48 @@ mariadb -h127.0.0.1 -u excise_mcp_dashboard_local -p'CHANGE_ME_web_db' \
 curl -s http://127.0.0.1:8084/health                   # {"app":"Excise Data Visualization","status":"ok"}
 ```
 
+**The first admin account.** A fresh `users` table is empty, and the Admin →
+Users screen that creates accounts is itself behind an existing Admin login
+— nothing self-registers. Bootstrap the first one from a shell:
+
+```bash
+cd ~/Sites/excise-mcp-dashboard/web
+php artisan tinker --execute="
+  \$user = App\Models\User::create([
+      'name' => 'Your Name', 'username' => 'your_username', 'email' => 'you@example.com',
+      'role' => 'Admin', 'privileges' => [],
+      'password' => Hash::make(Str::random(40)), 'email_verified_at' => null,
+  ]);
+  \$url = URL::temporarySignedRoute('onboarding.show', now()->addHours(72), ['user' => \$user->id]);
+  Mail::to(\$user->email)->send(new App\Mail\AccountOnboarding(\$user, \$url));
+"
+```
+
+This is the same path `Admin → Users → Add User` uses for every account after
+this one — a placeholder password plus a 72-hour signed onboarding link, not
+a real password set here. With `MAIL_MAILER=log` (the default) the link lands
+in `storage/logs/laravel.log`; with Resend configured (§ above) it reaches
+the real inbox. Every later account goes through the Users screen once this
+one can sign in.
+
+---
+
+## §web/ queue worker (Milestone 5, Phase 1)
+
+`RunExciseQuery` (the Ask flow's one-shot `/query` job) runs on `QUEUE_CONNECTION=database`
+— nothing processes it until this worker is running. No `sudo` needed, `--user` units only:
+
+```bash
+cp ~/Sites/excise-mcp-dashboard/deploy/excise-mcp-dashboard-queue.service \
+   ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now excise-mcp-dashboard-queue.service
+```
+
+Verify: `systemctl --user status excise-mcp-dashboard-queue.service` shows `active (running)`;
+submitting a question on `/ask` moves a `queries` row from `pending` through `running` to
+`complete` within a few seconds (watch it with `php artisan tinker` or the MariaDB CLI).
+
 ---
 
 ## §Apache vhost (Milestone 5)
@@ -468,6 +781,9 @@ sudo tee /etc/apache2/sites-available/excise-mcp-dashboard.conf >/dev/null <<'EO
 <VirtualHost 127.0.0.1:8084>
     ServerName visualizer.exciseup.in
     DocumentRoot /home/subhan/Sites/excise-mcp-dashboard/web/public
+
+    php_admin_value max_execution_time 1800
+    php_admin_value output_buffering 0
 
     <Directory /home/subhan/Sites/excise-mcp-dashboard/web/public>
         Options -Indexes +FollowSymLinks
@@ -523,6 +839,60 @@ defines `/health` plus Fortify's own routes.)
 
 ---
 
+## §Apache PHP execution timeout (Milestone 5, found live)
+
+A compound chat question (several `run_sql_query` calls plus a chart, each a
+full LLM round trip) can run past Apache's default 300s
+`max_execution_time` before the orchestrator ever gets to send a
+`{"done": ...}` or a clean `{"error": ...}` line. The request just stops,
+and the browser shows it as a dropped connection with no answer and no error
+banner. `run_chat` (`orchestrator/app/chat/loop.py`) now sends a
+`{"ping": true}` line every 15s a tool call is still running, and
+`OrchestratorClient::chatStream()`'s own Guzzle timeout is uncapped to match
+— `read_timeout` catches a genuinely dead connection instead, so
+`max_execution_time` becomes a backstop against a truly hung request and can
+stay generous. This app runs on Apache's `mod_php` (no FPM pool);
+`deploy/apache-vhost.conf` sets it with `php_admin_value`, scoped to this
+app's own `<VirtualHost>`. The shared `/etc/php/8.5/apache2/php.ini` also
+serves four sibling apps on this same Apache instance, so an edit there
+would move their ceiling too.
+
+A live compound-question test still dropped through the Cloudflare Tunnel
+after this fix, well before the orchestrator finished — the access log
+showed only a couple KB delivered on a turn that ran over two minutes
+server-side. The shared php.ini's `output_buffering = 4096` was the reason:
+`ChatController::send()`'s `ob_flush()`/`flush()` calls empty PHP's own
+buffer into that one, so nothing crosses the socket until it fills, and a
+15s heartbeat ping sits there instead of reaching the wire. Cloudflare reads
+the resulting silence as a dead connection and cuts it, regardless of how
+generous `max_execution_time` is. `output_buffering` is `PHP_INI_PERDIR` —
+`ini_set()` in application code cannot turn it off, only a php.ini,
+`.htaccess`, or vhost directive can — so `deploy/apache-vhost.conf` now sets
+`php_admin_value output_buffering 0` alongside `max_execution_time`, same
+scope and same reason:
+
+```bash
+sudo bash ~/Sites/excise-mcp-dashboard/deploy/root-setup.sh
+```
+
+(Re-running it reinstalls the vhost file and reloads Apache — safe, the same
+idempotent script §Apache vhost above already covers.)
+
+Verify:
+
+```bash
+grep -E 'max_execution_time|output_buffering' /etc/apache2/sites-available/excise-mcp-dashboard.conf
+# php_admin_value max_execution_time 1800
+# php_admin_value output_buffering 0
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8084/health  # 200
+```
+
+Then re-run the compound question through the real tunnel URL, not
+`127.0.0.1` directly — the loopback hop never went through Cloudflare, so it
+never showed this failure either.
+
+---
+
 ## §Cloudflare Tunnel (Milestone 6)
 
 Run as your user (the account cert in `~/.cloudflared/cert.pem` covers
@@ -537,6 +907,7 @@ cloudflared tunnel route dns --overwrite-dns <uuid> visualizer.exciseup.in
 cat > ~/.cloudflared/excise-mcp-config.yml <<EOF
 tunnel: <uuid>
 credentials-file: /home/subhan/.cloudflared/<uuid>.json
+protocol: http2
 
 ingress:
   - hostname: visualizer.exciseup.in
@@ -552,7 +923,8 @@ After=network-online.target
 
 [Service]
 ExecStart=/usr/local/bin/cloudflared tunnel --config /home/subhan/.cloudflared/excise-mcp-config.yml run
-Restart=on-failure
+Restart=always
+RestartSec=2
 
 [Install]
 WantedBy=default.target
@@ -572,8 +944,81 @@ systemctl --user status excise-mcp-dashboard-tunnel
 curl -s -o /dev/null -w '%{http_code}\n' https://visualizer.exciseup.in/    # 302 to /login (the app's own auth)
 ```
 
+A visitor hitting Cloudflare error 530 means this tunnel process itself isn't
+running — check `systemctl --user status excise-mcp-dashboard-tunnel` for
+`inactive (dead)`. `Restart=always` with `RestartSec=2` matches the four
+sibling apps' own tunnel units and is what lets a transient DNS failure on
+the box (systemd-resolved returning "server misbehaving" for a moment) pass
+without taking the service down: five restarts 2s apart span systemd's
+default 10s `StartLimitIntervalSec` window closely enough that a blip
+clearing within a few seconds never reaches the default `StartLimitBurst=5`
+restart-rate-limit. Leave `RestartSec` set — without it `Restart` defaults
+to 100ms, which burns through that same five-restart budget in under a
+second on the exact same blip and leaves the service dead with "Start
+request repeated too quickly" until told otherwise, confirmed live. A DNS
+outage long enough to still cross the rate limit needs the same manual
+recovery as before:
+
+```bash
+systemctl --user reset-failed excise-mcp-dashboard-tunnel.service
+systemctl --user restart excise-mcp-dashboard-tunnel.service
+systemctl --user status excise-mcp-dashboard-tunnel   # confirm active (running)
+```
+
 The site is public on the subdomain; the app's Fortify email-OTP login is the
 only gate, the same as the other four apps. No Cloudflare Access step.
+
+`protocol: http2` above (`journalctl --user -u excise-mcp-dashboard-tunnel`)
+is a fix, not part of the original setup: cloudflared defaults to QUIC over
+UDP, and this box's network path was silently dropping idle QUIC sessions —
+`"failed to accept QUIC stream: timeout: no recent network activity"` in the
+tunnel's own log, 66 times over 48 hours, worse on the sibling apps' tunnels
+(over 500 times each, same error). A request caught mid-stream when this
+happens doesn't get a clean error back to the browser; the connection just
+goes silent, which is what a "connection was interrupted" or a chat turn
+stuck on its typing indicator forever actually was in every case traced back
+this far. Forcing HTTP/2 over TCP avoids the UDP path entirely. If a tunnel
+still shows this error after adding the line, confirm it actually
+registered with `protocol=http2` and not `protocol=quic`:
+
+```bash
+journalctl --user -u excise-mcp-dashboard-tunnel --since "5 minutes ago" | grep "Registered tunnel connection"
+```
+
+---
+
+## §Monitoring: system health, Pulse, Telescope (Milestone 5)
+
+Admin -> System health (`/admin/system-health`) needs nothing beyond the
+migrations already applied by `php artisan migrate` — it reads the existing
+`jobs`/`failed_jobs` tables, `/proc`, and `sys_getloadavg()` directly.
+
+`/pulse` and `/telescope` are both locked to `isAdmin()` regardless of
+`APP_ENV` (`SECURITY.md` has the reasoning — both packages default to
+allowing anyone through when the environment is `local`, which this box's
+real `APP_ENV` is, while also being genuinely public through the tunnel).
+Nothing to configure beyond what's already committed; verify after a deploy:
+
+```bash
+# as a non-admin, then an admin — see OPERATOR_SETUP.md's own account
+curl -s -o /dev/null -w '%{http_code}\n' https://visualizer.exciseup.in/pulse
+curl -s -o /dev/null -w '%{http_code}\n' https://visualizer.exciseup.in/telescope
+```
+
+Telescope records every request/query/job by design and has no size cap on
+its own — `telescope:prune` is scheduled daily (`routes/console.php`,
+48-hour retention), but Laravel's scheduler only actually runs if something
+calls `schedule:run` every minute. Nothing does yet on this box — add once:
+
+```bash
+crontab -e
+# add this line:
+* * * * * cd /home/subhan/Sites/excise-mcp-dashboard/web && php artisan schedule:run >> /dev/null 2>&1
+```
+
+Verify: `php artisan schedule:list` shows `telescope:prune`; after the cron
+line is in place, `SELECT count(*) FROM telescope_entries` should stop
+growing unbounded once entries pass 48 hours old.
 
 ---
 
@@ -601,6 +1046,68 @@ systemctl --user restart excise-orchestrator
 
 ---
 
+## §Reset chat/Ask history (as needed)
+
+A full reset of every `queries` and `conversations` row — used after a heavy
+testing session, or to clear stuck rows left behind by a tunnel/connection
+drop (`§Cloudflare Tunnel`, above). It exports every question actually asked
+(Ask's `prompt` column and every chat message with `role = 'user'`, across
+all users) to a plain text file first, so nothing is lost even though the
+rows themselves are gone for good — a soft delete alone would leave the
+`chart_artifacts` rows and their rendered PNG/SVG/PDF files behind, since
+that table is a polymorphic owner with no DB-level foreign key to either
+`queries` or `message_tool_calls` (the same reason `Ask::forceDeleteQuery()`
+and `Chat::forceDeleteConversation()` clean it up by hand).
+
+```bash
+cd ~/Sites/excise-mcp-dashboard/web
+php artisan tinker
+```
+
+```php
+$lines = [];
+foreach (\App\Models\Query::withTrashed()->orderBy('created_at')->get() as $q) {
+    $lines[] = "[ask] {$q->created_at} (user {$q->user_id}, status {$q->status}): {$q->prompt}";
+}
+foreach (\App\Models\Message::where('role', 'user')->orderBy('created_at')->get() as $m) {
+    $lines[] = "[chat] {$m->created_at} (conversation {$m->conversation_id}): {$m->content}";
+}
+file_put_contents('/home/subhan/asked_questions.txt', implode("\n", $lines) . "\n");
+
+// Stop anything still mid-flight before the wipe.
+\App\Models\Query::whereIn('status', ['pending', 'running'])->update([
+    'status' => 'failed', 'error_message' => 'Cancelled by operator during a full reset.',
+]);
+
+$toolCallIds = \App\Models\MessageToolCall::withTrashed()->pluck('id');
+\App\Models\ChartArtifact::withTrashed()
+    ->where(fn ($q) => $q->where('owner_type', \App\Models\Query::class)
+        ->orWhere(fn ($q2) => $q2->where('owner_type', \App\Models\MessageToolCall::class)->whereIn('owner_id', $toolCallIds)))
+    ->get()
+    ->each(function (\App\Models\ChartArtifact $a) {
+        foreach (['png_path', 'svg_path', 'pdf_path'] as $c) {
+            if ($a->$c) \Illuminate\Support\Facades\Storage::disk('local')->delete($a->$c);
+        }
+        $a->forceDelete();
+    });
+
+\App\Models\Query::withTrashed()->forceDelete();
+\App\Models\Conversation::withTrashed()->forceDelete(); // cascades messages -> message_tool_calls via DB FK
+```
+
+This only touches `web/`'s own MariaDB (the operational store); the
+Postgres data bank (`excise_bank`) is never part of a reset. If the reset
+follows a tunnel drop or a stuck turn, restart the app's own services too so
+nothing half-finished is still running in the background:
+
+```bash
+systemctl --user restart excise-orchestrator excise-mcp-dashboard-queue
+sudo systemctl restart ollama          # unloads every resident model; the
+                                        # next request reloads whichever it needs
+```
+
+---
+
 ## Quick index
 
 | Need | Section | Milestone |
@@ -615,3 +1122,4 @@ systemctl --user restart excise-orchestrator
 | Create `excise_mcp_dashboard_local` MariaDB DB + user | §web/ skeleton | 5 |
 | Apache vhost + `ReadWritePaths` | §Apache | 5 |
 | `cloudflared tunnel` + systemd unit | §Tunnel | 6 |
+| Wipe test chat/Ask history, keep the asked questions | §Reset chat/Ask history | — |

@@ -8,7 +8,7 @@ Cloudflare Tunnel, sharing one PostgreSQL data bank.
 | Unit | Runtime | Port | Exposure | Job |
 |---|---|---|---|---|
 | `web/` | Laravel 13 + Livewire 4, PHP 8.5, Apache vhost | 8084 | via Cloudflare Tunnel; app email-OTP login is the gate | Analytical form + OpenWebUI-style chat window + admin (users, connected Google sources, knowledge base); auth; query ledger; exports; background jobs |
-| `orchestrator/` | Python 3.12 + FastAPI, uvicorn | 8085 | `127.0.0.1` only | MCP client to Ollama; one-shot SQL pipeline; streaming chat with a tool loop (`run_sql_query`, `search_knowledge`, `make_chart`); knowledge retrieval; engine router; sandbox launcher |
+| `orchestrator/` | Python 3.12 + FastAPI, uvicorn | 8085 | `127.0.0.1` only | MCP client to Ollama; one-shot SQL pipeline; streaming chat with a bounded tool loop (`run_sql_query`, `search_knowledge`) plus a deterministic chart step after a successful query; knowledge retrieval; engine router; sandbox launcher |
 | `etl/` | Python 3.12 CLI, run by cron / systemd timers | — | Google API (ingestion only) | Sheets / Drive / Docs / Excel / CSV -> Postgres data tables; pdf-markdown-pipeline verified docs + admin `.md` uploads + Google Docs -> `kb.*` |
 | PostgreSQL 18 | system service | 5432 | `127.0.0.1` (+ Tailscale later if needed) | The excise data bank (`analytics.*`) and the knowledge base (`kb.*`) — read-only for the AI path |
 | Ollama | system service | 11434 | `127.0.0.1` | Local LLM inference + embeddings, CPU-only |
@@ -66,19 +66,32 @@ polling badly.
    native `EventSource`, which only issues `GET` and would put the message in
    a query string.
 2. That route calls `POST http://127.0.0.1:8085/chat` (bearer token) with the
-   message and the trimmed conversation history, and pipes the orchestrator's
-   response straight through as it arrives.
+   message, the trimmed conversation history, and a `turn_id` (the assistant
+   message's own ULID), and pipes the orchestrator's response straight through
+   as it arrives.
 3. The orchestrator runs the tool loop (`MCP_ENGINES.md` §Chat and retrieval):
    the model streams text; when it needs data it calls `run_sql_query` (same
    guard + read-only run as the one-shot path), for the law it calls
-   `search_knowledge` (FTS over `kb.chunks`, optionally vector), for a picture
-   it calls `make_chart` (same `bwrap` sandbox). Each tool call and result is
-   one line of the streamed newline-delimited JSON response (the same
-   `application/x-ndjson` format `/query` already uses).
+   `search_knowledge` (FTS over `kb.chunks`, optionally vector). A chart is
+   not a tool the model calls — `chat/loop.py` renders one itself (same
+   `bwrap` sandbox, Qwen writing the script) right after a `run_sql_query`
+   call succeeds with more than one row, whenever the composer's chart
+   toggle asked for one. Each tool call and result is one line of the
+   streamed newline-delimited JSON response (the same `application/x-ndjson`
+   format `/query` already uses). The turn itself runs independently of this
+   one HTTP request, keyed by `turn_id`, so it keeps going even if this
+   connection ends before the turn does.
 4. `web/` persists `messages` + `message_tool_calls` as lines arrive; a chart
    is stored as a `chart_artifacts` row.
 5. Cited knowledge chunks render with a link to `docsrepo.exciseup.in`; SQL
    the model ran renders as an inline, copyable card.
+6. If step 2's connection ends before the turn does — Cloudflare's edge caps
+   a connection's total duration at roughly 100 seconds, tighter than a slow
+   compound question can always finish inside — the browser reconnects by the
+   same `turn_id` (`POST /chat/{conversation}/messages/{message}/resume`) and
+   replays the turn's full history from the orchestrator's own record of it,
+   rather than losing the turn's progress. `MCP_ENGINES.md` §Resuming a
+   dropped turn.
 
 ### Output artifact lifecycle
 
@@ -87,7 +100,8 @@ charts, table previews, summaries, the generated SQL — is an app artifact in
 `web/`'s MariaDB plus files on the `local` disk, never written back to
 Postgres.
 
-1. A `/query` or chat `make_chart` run writes a `queries` / `message` row and
+1. A `/query` run, or a chat turn's own deterministic chart step, writes a
+   `queries` / `message` row and
    `chart.{plotly.json,png,svg,pdf}` under
    `web/storage/app/artifacts/<query-ulid>/`.
 2. An unsaved run's files are swept after `ARTIFACT_TTL_DAYS`.
@@ -130,7 +144,18 @@ needed" on the admin screen. `SECURITY.md` §Google OAuth.
 - **Tunnel -> Apache (8084)**: the only inbound path; no firewall port opened
   (`cloudflared` dials out over `lo`).
 - **Laravel -> orchestrator (8085)**: loopback only, bearer token, request-id
-  correlation. The orchestrator refuses any request without the token.
+  correlation. The orchestrator refuses any request without the token. A chat
+  turn's identity on this boundary is its `turn_id`, which stays valid past
+  the HTTP connection that started it — `web/` reattaches to a turn already
+  in progress by sending its known `turn_id` on a fresh `POST /chat`, and
+  cancels one outright with `POST /chat/turn/{turn_id}/cancel`.
+  `MCP_ENGINES.md` §Resuming a dropped turn.
+- **Orchestrator -> Laravel (8084)**: the one call running the opposite
+  direction — `GET /api/schema-notes`, the orchestrator reading the data
+  dictionary's admin-edited schema notes. Loopback only, gated by
+  `VerifyOrchestratorToken`, a constant-time compare against the same
+  shared bearer token — the caller is a server process with no session to
+  authenticate.
 - **Orchestrator -> PostgreSQL**: dedicated `LOGIN` role, `SELECT` only,
   `default_transaction_read_only = on`, statement timeout. DDL/DML refused by
   the engine.
@@ -189,7 +214,7 @@ gate (no Access), the knowledge base, the chat window with a model picker,
 Google OAuth, and the output store. 1U is the system flow, 2U the enforcement
 layers, 3 the chat and ingestion paths, 4 the output artifact lifecycle.
 
-### Diagram 1 (as supplied in the brief): comprehensive system flow
+### Diagram 1 (as supplied in the brief): system flow
 
 ```mermaid
 flowchart TD
@@ -317,7 +342,7 @@ flowchart TD
     end
 
     GAPI[["Google Drive / Sheets / Docs API<br/>read-only scopes"]]:::edge
-    PDFP[("pdf-markdown-pipeline<br/>MariaDB + public .md<br/>verified + public only")]:::db
+    PDFP[("pdf-markdown-pipeline<br/>MariaDB + public .md<br/>verified + public + UP only")]:::db
 
     User <-->|HTTPS| CF
     CF <-->|reverse proxy| WebTier
@@ -454,8 +479,8 @@ flowchart TD
     subgraph Tools["Tools the model calls"]
         T1["search_knowledge"]:::app
         T2["run_sql_query<br/>same guard + read-only role"]:::app
-        T3["make_chart<br/>same bwrap sandbox"]:::app
     end
+    T3["chart step<br/>Qwen-authored, same bwrap sandbox —<br/>deterministic after run_sql_query, not model-chosen"]:::app
 
     subgraph Bank["PostgreSQL data bank"]
         AN[("analytics.* views<br/>published rows")]:::db
@@ -468,7 +493,7 @@ flowchart TD
         E3["gdocs / gdrive sync"]:::app
     end
 
-    PDFP[("pdf-markdown-pipeline<br/>MariaDB + public .md files<br/>public + verified only")]:::db
+    PDFP[("pdf-markdown-pipeline<br/>MariaDB + public .md files<br/>public + verified + UP only")]:::db
     UP["Admin .md uploads<br/>web/ kb-uploads disk"]:::app
     G[["Google Drive / Sheets / Docs"]]:::ext
 
@@ -506,7 +531,7 @@ flowchart TD
     classDef store fill:#0284c7,stroke:#0369a1,stroke-width:2px,color:#fff
     classDef off fill:#94a3b8,stroke:#64748b,stroke-width:1px,color:#fff,stroke-dasharray:4 3
 
-    Run["/query or chat make_chart"]:::app
+    Run["/query, or a chat turn's<br/>own chart step"]:::app
     Q[("queries / messages + chart_artifacts<br/>SQL, engine, model, tables_used, timings,<br/>rows_preview, spec (Plotly JSON) — all MariaDB")]:::db
     Files[["local disk<br/>chart.png / svg / pdf (rendered blobs)"]]:::store
     Sweep["sweeper timer<br/>unsaved runs &gt; ARTIFACT_TTL_DAYS"]:::off

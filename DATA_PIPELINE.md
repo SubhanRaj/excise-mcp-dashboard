@@ -117,7 +117,7 @@ CREATE TABLE sales_volumes (               -- dispatches / supply-chain volume
     district_id        BIGINT NOT NULL REFERENCES districts(id),
     financial_year_id  BIGINT NOT NULL REFERENCES financial_years(id),
     license_category_id BIGINT REFERENCES license_categories(id),
-    metric             TEXT NOT NULL,       -- 'dispatch_bl' | 'consumption_bl' | 'cases'
+    metric             TEXT NOT NULL,       -- liquor type: 'beer' | 'country_liquor_cml' | 'imfl' | 'wine' | ...
     quantity           NUMERIC(18,3) NOT NULL,
     unit               TEXT NOT NULL,       -- 'BL' (bulk litres) | 'cases'
     published_at       TIMESTAMPTZ NULL,
@@ -180,6 +180,146 @@ CREATE TABLE shop_years (                  -- quota / settlement per shop per FY
     -- visibility inherited from shops.published_at; shop_years has no published_at
 );
 ```
+
+### Dispatches (IESCMS wholesale-to-retail transport-pass log)
+
+`sales_volumes` above holds one row per district+year+category — the annual
+reconciled NITI figure. This is a different, finer-grained source: IESCMS
+(the department's live supply-chain system) exports a shop-wise dispatch
+report per month, one row per individual transport pass/indent, not an
+aggregate. A country-liquor indent's quantities come broken down by liquor
+strength (25% V/V, 36% V/V, ...); a foreign-liquor indent's don't, so that
+breakdown lives in a child table instead of six columns a foreign-liquor row
+never fills in.
+
+```sql
+CREATE TABLE dispatches (
+    id                       BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    district_id              BIGINT NOT NULL REFERENCES districts(id),
+    financial_year_id        BIGINT NOT NULL REFERENCES financial_years(id),
+    shop_id                  BIGINT NOT NULL REFERENCES shops(id),          -- retail side
+    wholesale_license_type   CITEXT NOT NULL,     -- 'FL2' | 'CL2', as printed on the wholesale license
+    wholesale_license_number TEXT NOT NULL,
+    wholesale_entity_name    TEXT NOT NULL,
+    circle_sector            CITEXT,
+    indent_number            TEXT NOT NULL UNIQUE,
+    indent_received_at       TIMESTAMPTZ,
+    indent_accepted_at       TIMESTAMPTZ,
+    transport_pass_issued_at TIMESTAMPTZ,
+    tp_reference_no          TEXT,
+    requested_cases          NUMERIC(18,3),       -- NULL for a country-liquor indent: see dispatch_strength_lines
+    requested_bottles        NUMERIC(18,3),       -- foreign-liquor indents only
+    requested_bulk_litres    NUMERIC(18,3),       -- NULL for a country-liquor indent: see dispatch_strength_lines
+    dispatched_cases         NUMERIC(18,3),
+    dispatched_bottles       NUMERIC(18,3),
+    dispatched_bulk_litres   NUMERIC(18,3) NOT NULL,
+    duty_fee_inr             NUMERIC(18,2) NOT NULL,
+    published_at             TIMESTAMPTZ NULL,
+    source_ref               TEXT,
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+    deleted_at               TIMESTAMPTZ NULL
+);
+
+CREATE TABLE dispatch_strength_lines (     -- country-liquor per-strength breakdown
+    id                     BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    dispatch_id            BIGINT NOT NULL REFERENCES dispatches(id) ON DELETE CASCADE,
+    strength_label         TEXT NOT NULL,        -- '25% V/V' | '36% V/V' | '42.8% V/V 100 ML' | ...
+    requested_cases        NUMERIC(18,3),
+    requested_bulk_litres  NUMERIC(18,3),
+    dispatched_cases       NUMERIC(18,3),
+    dispatched_bulk_litres NUMERIC(18,3),
+    UNIQUE (dispatch_id, strength_label)
+    -- visibility inherited from dispatches.published_at, same as shop_years from shops
+);
+```
+
+`etl/sources/iescms_dispatch.py` reads both report layouts (`read_fl_rows`,
+`read_cl_rows`) and upserts a `shops` row for the retail side alongside each
+`dispatches` row — the shop dimension isn't seeded separately for this
+source, it's built from the same report. `indent_number` is the natural key
+for `dispatches`; the IESCMS report already guarantees it's unique, so a
+re-run of the same file changes no counts. Both tables set `published_at`
+at import time — an IESCMS export is the department's own live system
+record, not a draft submission that needs a separate review step before an
+analyst can query it. Registered as two `etl.source_registry` rows (source
+`iescms_dispatch`, one per report layout), same as any other source;
+`OPERATOR_SETUP.md` §Data bank has the exact commands.
+
+### SRO shop revenue snapshot
+
+A third, independent shop-level source: `up-excise-spatial-revenue-optimizer`
+(sro.exciseup.in, its own short name "SRO" — Spatial Revenue Optimizer), a
+separate departmental app whose own DEOs enter a per-shop revenue figure
+directly, statewide, every year. Found useful here while tracing why
+`revenues`'s district attribution goes wrong after 2018 (below): SRO's
+current-year table gave a real, correctly-attributed cross-check —
+`phase1_raw_collection`, 28,405 shops across all 75 districts for FY2025-26,
+each with a `total_revenue` figure, lat/long, and thana-level location
+(`district_name` > `circle_sector_name` > `thana_name`, one sector holding
+several thanas) — a level of location detail neither `shops` nor
+`dispatches` carries. Kept as its own table rather than merged into `shops`:
+SRO's `shop_type` (`COMPOSITE_SHOP`, `BHANG_SHOP`, ...) and `has_cl5cc` flag
+are that app's own vocabulary, not this schema's `license_categories` codes,
+and the two aren't a reliable one-to-one match to force through that FK.
+
+```sql
+CREATE TABLE sro_shops (
+    id                     BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    district_id            BIGINT NOT NULL REFERENCES districts(id),
+    financial_year_id      BIGINT NOT NULL REFERENCES financial_years(id),
+    source_shop_id         TEXT NOT NULL,       -- SRO's own shop_id, unique within a district only
+    shop_name              TEXT NOT NULL,
+    shop_type              TEXT NOT NULL,       -- SRO's own vocabulary, see note above
+    has_cl5cc              BOOLEAN NOT NULL DEFAULT false,
+    circle_sector_name     TEXT NOT NULL,
+    thana_name             TEXT NOT NULL,
+    latitude               NUMERIC(9,6),
+    longitude              NUMERIC(9,6),
+    license_fee_lf         NUMERIC(18,2) NOT NULL DEFAULT 0,
+    basic_license_fee_blf  NUMERIC(18,2) NOT NULL DEFAULT 0,
+    mgr_amount             NUMERIC(18,2) NOT NULL DEFAULT 0,
+    composite_lf_fl        NUMERIC(18,2) NOT NULL DEFAULT 0,
+    composite_lf_beer      NUMERIC(18,2) NOT NULL DEFAULT 0,
+    composite_mgr_fl       NUMERIC(18,2) NOT NULL DEFAULT 0,
+    composite_mgr_beer     NUMERIC(18,2) NOT NULL DEFAULT 0,
+    mgq_quantity           NUMERIC(18,3) NOT NULL DEFAULT 0,
+    consideration_fee      NUMERIC(18,2) NOT NULL DEFAULT 0,
+    special_beer_lf        NUMERIC(18,2) NOT NULL DEFAULT 0,
+    special_beer_mgr       NUMERIC(18,2) NOT NULL DEFAULT 0,
+    total_revenue          NUMERIC(18,2) NOT NULL DEFAULT 0,
+    uploaded_by_deo        TEXT,
+    published_at           TIMESTAMPTZ NULL,
+    source_ref             TEXT,
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
+    deleted_at             TIMESTAMPTZ NULL,
+    UNIQUE (district_id, source_shop_id, financial_year_id)
+);
+```
+
+SRO ships its own data as a periodic Cloudflare D1 backup — a plain SQL text
+dump against a SQLite schema
+(`~/Projects/up-excise-spatial-revenue-optimizer/backups/d1-prod-backup-
+YYYY-MM-DD.sql`), not a live connection this app can query. `etl/sources/
+sro_shops.py`'s `read_rows()` loads that dump into a throwaway in-memory
+SQLite database (stdlib `sqlite3`, no new dependency) and reads
+`phase1_raw_collection` back out with a normal `SELECT` — the same shape
+every other row source here is read in, just from a one-off text file
+instead of a live MariaDB/Postgres connection or an Excel workbook. The
+natural key is `(district_id, source_shop_id, financial_year_id)`, not just
+`(district_id, source_shop_id)` — SRO overwrites its own current-year table
+each year (`phase1_prior_year_snapshot` is where it archives the year
+before), but a re-sync here should add a new year's rows as history, not
+erase last year's, since the analyst asking "what did this shop earn last
+year" needs both years still queryable. `source_ref` in `etl.source_registry`
+carries `"<dump path>#FYyyyy-yy"`, the same `<path>#kind` shape
+`niti_facts`/`niti_brands`/`niti_policy` already use for a file-based source
+needing one more piece of context beyond its path. Registered as
+one `etl.source_registry` row per snapshot year, same as any other source;
+`OPERATOR_SETUP.md` §Data bank has the exact commands. Not yet imported —
+schema created, source written and tested, `etl sync --source sro_shops`
+not yet run against the real backup.
 
 ### Reference tables
 
@@ -249,6 +389,7 @@ CREATE TABLE etl.ingestion_runs (
     id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     source        TEXT NOT NULL,           -- 'google_sheet' | 'google_drive' | 'excel' | 'csv'
     source_ref    TEXT NOT NULL,           -- sheet id / drive file id / path
+    report_period DATE,                    -- first-of-month; see §Periodic sources below
     started_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     finished_at   TIMESTAMPTZ,
     status        TEXT NOT NULL DEFAULT 'running',  -- running | ok | failed | partial
@@ -267,16 +408,45 @@ CREATE TABLE etl.quarantine (
 );
 
 CREATE TABLE etl.source_registry (        -- what to sync and how often
-    id            BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    name          TEXT NOT NULL UNIQUE,
-    source        TEXT NOT NULL,
-    source_ref    TEXT NOT NULL,
-    target_table  TEXT NOT NULL,
-    schedule      TEXT NOT NULL,           -- cron expression
-    enabled       BOOLEAN NOT NULL DEFAULT true,
-    last_run_id   BIGINT REFERENCES etl.ingestion_runs(id)
+    id               BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    name             TEXT NOT NULL UNIQUE,
+    source           TEXT NOT NULL,
+    source_ref       TEXT NOT NULL,
+    target_table     TEXT NOT NULL,
+    schedule         TEXT NOT NULL,           -- cron expression
+    enabled          BOOLEAN NOT NULL DEFAULT true,
+    requires_period  BOOLEAN NOT NULL DEFAULT false,  -- see §Periodic sources below
+    last_run_id      BIGINT REFERENCES etl.ingestion_runs(id)
 );
 ```
+
+### Periodic sources without a per-row date
+
+A source like `iescms_dispatch` stamps a real business date on every row it
+produces (`transport_pass_issued_at` and the rest), so `dispatches` never
+needs to be told what period it belongs to — each row already says. Some
+future sources won't: a monthly shops roster, or a monthly revenue / quota /
+enforcement figure, arrives as one file that represents a whole reporting
+month with no such column on any individual row. Nothing marks that period
+once the file has been read, other than `created_at`, which is when the ETL
+happened to run — already documented as unusable for a business-date
+question (`guard_sql`, `MCP_ENGINES.md` §Pipeline stages).
+
+A source registered with `etl.source_registry.requires_period = true` makes
+the operator state that period explicitly, as `etl sync --source NAME
+--period 2026-08`. `etl/etl/run.py` records the parsed period (first of the
+named month) on that run's `etl.ingestion_runs.report_period`, and refuses to
+run the source at all without one, recording a typed `failed` run row
+instead of guessing at "now." A source not registered this way ignores
+`--period` entirely and behaves exactly as it did before this existed.
+
+This only carries the period onto the run's own bookkeeping row. A table
+that mutates in place from such a source — the way `shops` already does from
+`iescms_dispatch` — still only reflects its latest import once one lands.
+Answering "what did this look like as of period X" once a later import has
+overwritten it needs its own period-stamped table, the way `shop_years`
+already answers the equivalent question at financial-year grain — built
+alongside whichever source turns out to need it first.
 
 ### Indexes
 
@@ -309,6 +479,200 @@ The LLM is told about `analytics.*` only. It never learns the base table names,
 the `id` columns are still present for joins but the natural-language layer
 works in district names and FY labels. `SECURITY.md` §Read-only role grants
 `SELECT` on `analytics.*` and nothing else.
+
+What the model is told about each view has two sources: `schema_card.py`'s own
+`VIEW_NOTES`, a fixed dict in the orchestrator's source, and an admin-editable
+overlay — the data dictionary (Admin -> Data dictionary, privilege
+`schema.manage`), one note per table and, unlike `VIEW_NOTES`, one per column
+too. A note there is saved to web/'s own `schema_notes` table and read back by
+the orchestrator over `GET /api/schema-notes` (`MCP_ENGINES.md` §HTTP surface,
+`SECURITY.md` §3), taking effect on the orchestrator's next restart. The same
+screen lists every table's columns and a five-row sample of each, from the
+orchestrator's own `GET /schema/tables` and `GET /schema/tables/{name}/sample`
+— the same route `web/` uses everywhere else it needs something out of
+Postgres, since `web/` holds no database connection of its own.
+
+A live question asking for a specific month's sales in amount and volume by
+shop category repeatedly failed on a hallucinated `shop_id`/`dispatch_id`
+column against `analytics.sales_volumes` — that view is aggregated by
+district + financial year + license category, with no shop-level or
+monthly breakdown at all, so no column by either name has ever existed on
+it. `analytics.revenues` has the same shape. `VIEW_NOTES` now says so for
+both, and points at `analytics.dispatches` instead for a question scoped to
+a month or to individual shops — it already carries `duty_fee_inr` (amount)
+and `dispatched_bulk_litres`/`dispatched_cases`/`dispatched_bottles`
+(volume) at exactly that granularity.
+
+Tracing that same failure back to the source uncovered a second gap: the
+IESCMS dispatch report each row comes from carries two separate license-type
+columns — a wholesale one (`FL2`/`CL2`, the distributor) and a retail one
+(the actual shop, e.g. `FL5DB`/`CL5C`) — and `analytics.dispatches` already
+keeps them apart as `wholesale_license_type` and `retail_license_category`.
+What was missing was anywhere to look up what any code actually means:
+`license_categories` (code, name, kind) has held the full list since the
+dispatch-report milestone but was never exposed as its own view.
+`analytics.license_categories` now is one, `CREATE OR REPLACE VIEW` in
+`db/analytics_views.sql` like every other view here, picked up automatically
+by `excise_ro`'s `ALTER DEFAULT PRIVILEGES` grant (`db/roles.sql`) with no
+separate grant needed. `VIEW_NOTES` for `dispatches` and `shops` now name it
+directly, and say plainly that a shop's own category is never `FL2`/`CL2` —
+those two are `kind = 'wholesale'` and only ever belong to
+`dispatches.wholesale_license_type`.
+
+A live Chat answer read out shop categories by bare code only (`CL5C`,
+`FL5DB`, `FL4A`, ...) with no plain-language name alongside any of them — a
+reader who doesn't already know the code list gets nothing from it. The chat
+model only ever sees `run_sql_query`'s own row preview, never the schema
+card, so asking it to name a code from memory would just be a guessed name —
+the fix belongs in the query, not the prompt. `llm/prompts.py`'s
+`FEW_SHOT_SQL_EXAMPLES` now has a worked example joining
+`analytics.license_categories` in by code to select its `name` alongside a
+`retail_license_category` grouping, and the `dispatches` `VIEW_NOTES` entry
+says to do this whenever the answer will show shop categories to a reader.
+`CHAT_SYSTEM_PROMPT` tells the model to use the name column the result
+already carries, never to invent one for a code the result didn't name.
+
+A live Ask question ("how many country liquor and composite shops in
+Lucknow in August 2026") undercounted real shops by 417 — all of them
+`FL5DB`. `kind = 'composite'` in `analytics.license_categories` covers both
+`CL5CC` and `FL5DB`, but the worked `FEW_SHOT_SQL_EXAMPLES` entry for this
+exact question filtered `retail_license_category IN ('CL5C', 'CL5CC')`, a
+hand-picked list that only had one of the two composite codes — the model
+copies a worked example's pattern rather than deriving which codes a kind
+actually has. The example now JOINs `license_categories` and filters on
+`kind IN ('country_liquor', 'composite')` instead, and the `license_categories`
+`VIEW_NOTES` entry states the general rule: a question naming a category
+rather than a specific code (composite, country liquor, foreign liquor,
+beer, model shop) means every code of that kind, found by filtering on
+`kind`, never by a memorized code list that can silently leave one out.
+
+The data dictionary screen showed each table under its raw name
+(`analytics.dispatch_strength_lines`) with `VIEW_NOTES`' own prose as its
+only description — planning guidance written for the SQL model, full of
+column names and JOIN instructions, not a sentence an admin reads to find
+out what a table holds. `schema_card.py`'s `TABLE_DISPLAY` now carries a
+plain-language name and one-sentence summary per view — `SchemaTable` from
+`GET /schema/tables` gains `display_name` and `summary` fields alongside the
+existing `note` — and `schema-notes-index.blade.php` leads with those, the
+raw `analytics.*` name kept underneath in monospace for reference, the full
+technical note tucked behind a "Technical note (what the AI is told)"
+disclosure. A table missing from `TABLE_DISPLAY` falls back to its own name
+with underscores turned to spaces, never a blank heading. `VIEW_NOTES` itself
+gained a missing entry along the way: `analytics.sro_shops` (the SRO shop
+census, imported earlier this section) had no note at all despite being live
+data and the correct source for a district-level revenue question past
+`analytics.revenues`' own post-2018 consolidation problem — the `revenues`
+note now says so directly.
+
+That fix's own premise about `CL5CC` was wrong: checked against
+`~/Projects/up-excise-spatial-revenue-optimizer`'s roadmap, the canonical
+shop-type reference for this department, `CL5CC` is not `kind = 'composite'`
+at all — it is a Country Liquor shop with a beer endorsement, never combined
+with foreign liquor, and "composite" means only a Foreign Liquor + Beer
+license (`FL5DB` is the sole `kind = 'composite'` code).
+`public.license_categories` is corrected — `CL5CC.kind` is now
+`'country_liquor'`, `FL5DB.name` now reads "Composite (Foreign Liquor +
+Beer)" — live and in `db/seed_reference.sql`. The question above still gets
+the same right answer either way, since it asked for country liquor and
+composite *together*: `CL5C` and `CL5CC` are both `kind = 'country_liquor'`
+regardless of this fix, and `FL5DB` alone was always the missing
+`kind = 'composite'` code. A new knowledge-base document, "UP Excise shop
+types and license codes," carries the corrected classification for every
+shop type — Country Liquor, Composite, Model Shop, PRV, Bhang Shop, HBR —
+in plain language, sourced from the same roadmap (`ROADMAP.md`'s backlog
+has the `kb_uploads` ETL-sync gap this surfaced: the admin upload screen has
+no sync consumer yet, so this one document was ingested by calling
+`etl/etl/chunk.py` directly).
+
+A live question about statewide beer revenue for FY2025-26 surfaced two more
+gaps in the same area. First, `sro_shops`' own note had the same kind of
+mistake `CL5CC`'s classification did above: it listed `shop_type` as
+`COUNTRY_LIQUOR, COMPOSITE, MODEL_SHOP, PRV, BHANG, HBR`, but the real column
+values are `COMPOSITE_SHOP` and `BHANG_SHOP` — a filter written from the note
+as given would silently match nothing. Second, and the direct cause of the
+live failure: nothing anywhere said how to answer a liquor-type revenue
+question at all. The Excise Policy 2025 abolished standalone beer shops, so
+there is no `shop_type` and no populated `license_category` for beer (a
+`BEER` code exists in `analytics.license_categories`, but `analytics.revenues`
+carries zero rows against it — the NITI import was never broken out by liquor
+type). Beer revenue for FY2025-26 lives inside two other shop types' own
+totals on `sro_shops` instead: `composite_lf_beer + composite_mgr_beer` for a
+`COMPOSITE_SHOP`, and `special_beer_lf + special_beer_mgr` for a
+`COUNTRY_LIQUOR` shop with `has_cl5cc = true` — confirmed against
+`~/Projects/up-excise-spatial-revenue-optimizer`'s own roadmap and live data
+(9,362 composite shops, 2,885 `has_cl5cc` country-liquor shops, both fully
+populated). Statewide for FY2025-26: ₹7,142.87 crore (₹6,740.18 crore from
+composite shops, ₹402.69 crore from CL5CC-endorsed country liquor shops).
+`schema_card.py`'s `sro_shops` and `revenues` notes and a worked
+`FEW_SHOT_SQL_EXAMPLES` entry now carry this (`MCP_ENGINES.md` §Pipeline
+stages). The project's own name is "Spatial Revenue Optimizer" — "SRO" — not
+"Shop Revenue Optimizer"; a stray instance of the wrong expansion in
+`schema_card.py` is fixed to match every other reference to it in this repo.
+
+Tracing the live failure itself surfaced a third gap, more serious than the
+wrong revenue figure: the generated SQL (guessing at `analytics.revenues`
+filtered to a shop licence code as a stand-in for "beer") matched nothing,
+and `SUM()` with no `GROUP BY` always returns exactly one row even when
+nothing matched — `NULL`, not zero rows. `row_count == 0` was the only
+no-hallucination guard `run_query`'s summarize step had, so a `NULL` total
+reached it as one real-looking row, and it wrote a complete, confident answer
+with a fabricated urban/rural revenue split that nothing in the query or the
+data supported. The same shape reached the chat `run_sql_query` tool too,
+just less visibly: a bare `[{'total_revenue': None}]` preview handed to the
+chat model with nothing marking it as empty. Both now check whether every
+value in the result is empty, not just whether any rows came back, and treat
+that the same way as zero rows (`MCP_ENGINES.md` §Pipeline stages, §Tools).
+
+Verifying further candidate example questions against live data (not writing
+plausible ones — running each and checking the answer before showing it as
+"try an example") surfaced one more gap, structurally the same shape as the
+knowledge base's own other-state exclusion but never carried over to this
+table: `analytics.policy_entries` holds five states' own policy rules as
+comparative reference material (Uttar Pradesh, Delhi, Haryana, Rajasthan,
+Uttarakhand), the state named only inside a free-text `title` — "Policy
+rules — Rajasthan FY2025-26" — with no separate column to filter on. A
+question about this department's own policy with no explicit UP filter
+would match all five states' rows the same way an unfiltered knowledge-base
+search once could. `VIEW_NOTES` now says so directly and gives the exact
+filter — `title ILIKE '%Uttar Pradesh%'` — a UP-scoped question needs.
+Also found in the same pass: which district generated the highest revenue
+in FY2025-26 (Lucknow, ₹2,860.80 crore — confirmed live, and only after the
+crore-arithmetic fix `MCP_ENGINES.md` §Tools has in full; the same question
+first came back reporting ₹28,608 crore, tenfold too large). Both `Ask::
+EXAMPLE_QUESTIONS` and `Chat::EXAMPLE_QUESTIONS` gained it alongside the
+beer-revenue question.
+
+That same example question later failed outright in Chat with a Postgres
+error, `column t1.shop_id does not exist`: the model joined
+`analytics.sro_shops` to something on a hallucinated `shop_id` column —
+this view has no such column at all, its own row identifier is
+`source_shop_id` (unique only within a district, never state-wide), and the
+question needs no join in the first place, since `district` and
+`total_revenue` both already live on the view directly. `VIEW_NOTES` now
+says so, and `FEW_SHOT_SQL_EXAMPLES` has this exact question worked
+correctly — confirmed live, the same Lucknow figure as above with no join.
+
+#### CL5CC shops: category, revenue split, and what the data does not measure
+
+A shop's licence code is `analytics.shops.license_category` (`CL5C`, `CL5CC`,
+`FL5DB`, ...). `has_cl5cc` exists only on `analytics.sro_shops`, a separate
+survey snapshot with no shared key to `analytics.shops`; a query against
+`analytics.shops` that filters on it fails with `column "has_cl5cc" does not
+exist`.
+
+For a revenue question about CL5CC shops, `analytics.sro_shops` carries the
+split. Beer revenue is `special_beer_lf + special_beer_mgr` and country-liquor
+revenue is the rest of `total_revenue`, for rows with `shop_type =
+'COUNTRY_LIQUOR' AND has_cl5cc`. Lucknow FY2025-26, 29 shops: ₹21.74 crore
+country liquor, ₹4.13 crore beer, ₹25.87 crore total.
+
+The data does not measure consumption. The revenue split shows the revenue
+shops generated by selling, by licence type. An answer names how many shops
+sell that kind and the revenue they generated; it does not describe shops as
+paying revenue. Dispatch strength lines hold country-liquor strengths only,
+and `analytics.sales_volumes` holds beer volume at district level, not per shop.
+An answer about what people drink needs a volume source this schema does not
+have.
 
 ### BI access (future — Power BI and similar, not built)
 
@@ -535,7 +899,16 @@ policies — not only the numbers. The corpus is verified Markdown, stored in a
 1. **pdf-markdown-pipeline** — the department's verified document repository
    (`~/Sites/pdf-markdown-pipeline`, live at `docsrepo.exciseup.in`). Only
    `visibility = 'public'` **and** `status = 'verified'` **and**
-   `deleted_at IS NULL` documents are ingested.
+   `deleted_at IS NULL` documents are ingested, from any state — that
+   repository also holds ten other states' excise policies as comparative
+   reference material, and every one now syncs in, carrying its own
+   `rule_sets.state` onto `kb.documents.state`. Retrieval, not ingestion, is
+   what keeps an ordinary question UP-only: `kb/retrieve.py` defaults to
+   `state IS NULL OR state = 'Uttar Pradesh'` and only widens to other states
+   when a chat question names them (`MCP_ENGINES.md` §Tools). Scoping at
+   retrieval time rather than at sync time keeps a comparative question
+   answerable ("how does UP's policy compare to Delhi's") without an
+   ordinary UP-only question losing its own default scope.
 2. **Admin `.md` uploads** — the "Knowledge base" screen in `web/`. An
    uploaded file lands on a dedicated disk with a `kb_uploads` row; the ETL
    picks it up on the next run.
@@ -547,7 +920,7 @@ flowchart TD
     classDef edge fill:#d97706,stroke:#b45309,stroke-width:2px,color:#fff
     classDef ai fill:#7c3aed,stroke:#6d28d9,stroke-width:2px,color:#fff
 
-    PDFP[("pdf-markdown-pipeline<br/>MariaDB documents + public .md files<br/>visibility=public AND status=verified AND not deleted")]:::db
+    PDFP[("pdf-markdown-pipeline<br/>MariaDB documents + public .md files<br/>public + verified + not deleted, every state, labeled by rule_sets.state")]:::db
     Upload["web/ Knowledge base screen<br/>admin .md upload — extension, size, UTF-8, no path separators"]:::app
     KBU[("kb_uploads<br/>MariaDB in web/ — pending row + file on the kb-uploads disk")]:::db
     GAPI[["Google Docs / Drive API"]]:::edge
@@ -561,7 +934,7 @@ flowchart TD
     Chunk["chunk.py<br/>heading-aware, ~1,200-token cap, ~100-token overlap,<br/>tables kept whole, heading_path recorded"]:::app
 
     subgraph Bank["PostgreSQL — kb schema"]
-        Docs[("kb.documents<br/>origin, rule_set, source_url, content_sha256, withdrawn_at")]:::db
+        Docs[("kb.documents<br/>origin, rule_set, state, effective_from, source_url, content_sha256, withdrawn_at")]:::db
         Chunks[("kb.chunks<br/>content + tsvector fts (+ embedding when enabled)")]:::db
     end
 
@@ -591,6 +964,7 @@ CREATE TABLE kb.documents (
     language       TEXT,                    -- 'english' | 'hindi' | 'both'
     department     TEXT,                    -- 'excise' | 'sugarcane' | ...
     rule_set       TEXT,                    -- named Act / Rules / policy series, when known
+    state          TEXT,                    -- NULL for a state-agnostic Act/GO, else which state's own policy this is (mirrors pdf-markdown-pipeline's rule_sets.state)
     effective_from DATE,
     effective_to   DATE,                    -- set when a later doc supersedes this one
     source_url     TEXT,                    -- deep link on docsrepo.exciseup.in, or the Drive/Docs URL
@@ -641,19 +1015,31 @@ Reads from two places on the same box, both read-only:
   table, filtered `visibility = 'public' AND status = 'verified' AND
   deleted_at IS NULL`, joined to `sections` / `rule_sets` / `departments` for
   `rule_set`, `doc_type` (`documents.document_type`), `language`, and the slug
-  segments that build the `docsrepo.exciseup.in` URL. A dedicated read-only
-  MariaDB user (`excise_mcp_kb_ro`, `SELECT` on that DB only) — the operator
-  creates it, `OPERATOR_SETUP.md` §KB.
+  segments that build the `docsrepo.exciseup.in` URL. `rule_sets.state` rides
+  straight onto `kb.documents.state` — `NULL` for a generic Act or government
+  order with no state-specific rule set, otherwise the name of whichever of
+  the repository's eleven states (UP plus ten others kept as comparative
+  reference material) that document's own rule set belongs to. A dedicated
+  read-only MariaDB user (`excise_mcp_kb_ro`, `SELECT` on that DB only) — the
+  operator creates it, `OPERATOR_SETUP.md` §KB.
 - **Filesystem**: the Markdown for each row is at
   `~/Sites/pdf-markdown-pipeline/storage/app/public/<markdown_path>`
   (`markdown_path` is relative to the `public` disk). Read-only file access;
   the ETL user needs group read on that tree.
 
 Per document: hash the Markdown, compare to `kb.documents.content_sha256`;
-if new or changed, re-chunk and replace the document's `kb.chunks`. A
-`documents` row that no longer matches the filter (unpublished, un-verified,
-deleted) sets `withdrawn_at` — the content stays for audit but retrieval
-skips it. Idempotent: an unchanged corpus changes no rows.
+if new or changed, re-chunk and replace the document's `kb.chunks`.
+`documents.metadata` (JSON) carries `effective_year` for a rule amendment —
+when present, it becomes `kb.documents.effective_from` as `<year>-01-01`, so
+retrieval can cite a real date rather than whatever a title happens to spell
+out; a document with no `effective_year` of its own stays undated, since the
+source repository has none to give it either. A `documents` row that no
+longer matches the filter (unpublished, un-verified, or deleted) sets
+`withdrawn_at` — the content stays for audit but retrieval skips it.
+Idempotent on an unchanged corpus; a document whose `effective_from` or
+`state` changes without its Markdown changing (backfilling a column added
+after the document first synced, most recently `state` itself) is not
+treated as unchanged, so it still gets re-applied.
 
 ### Admin upload flow
 
@@ -725,15 +1111,23 @@ write.
 
 ### What a run produces
 
-One `/query` or chat `make_chart` call yields:
+One `/query` call, or a chat turn's own deterministic chart step, yields:
 
 | Piece | Stored as |
 |---|---|
 | the question + generated SQL + engine + model + timings + status | a `queries` row (chat: the `message` + `message_tool_calls` rows) in MariaDB |
 | interactive chart spec | `chart_artifacts.spec` — a `JSON` / `LONGTEXT` column in MariaDB (the Plotly figure, needed on every render, small because charts plot aggregates) |
-| rendered chart files | `chart.{png,svg,pdf}` on the `local` disk, path on the `chart_artifacts` row |
+| rendered chart files | not persisted — `chart_artifacts` carries `png_path`/`svg_path`/`pdf_path` columns for a future cached export, but a PNG/SVG/PDF download today calls the orchestrator's `POST /chart/render` on the stored spec and streams the bytes back without writing them to disk (`ROADMAP.md` Milestone 5) |
 | table | `rows_preview` (first N rows) inline as JSON on the row; full rows re-run from the stored SQL on export, not persisted |
 | written summary | text column on the `queries` / `messages` row |
+
+The Ask result table formats a money column in rupees with Indian digit grouping
+(`₹67,40,17,71,554`). `<x-money>` renders each such cell with the rupees /
+thousands / lakh / crore switcher. A column is a money column when its name
+contains one of the hints in `App\Support\Money::isMoneyColumn()`, which
+mirrors `_MONEY_COLUMN_HINTS` in `orchestrator/app/llm/prompts.py`; the two lists
+change together by hand. Cleave.js is the input formatter (`<x-currency-input>`)
+and does not format display values. CSV and XLSX exports keep the raw numbers.
 
 **Small and structured -> MariaDB; large blobs -> the disk.** The chart spec,
 `rows_preview`, the SQL, the summary, and every `saved_analyses` / `reports`
@@ -789,7 +1183,7 @@ latest`) or is frozen to a point in time.
 
 | Scope | Formats | Built from |
 |---|---|---|
-| one chart | PNG / SVG / PDF (disk files), `plotly.json` (re-embeddable) | the disk files + the `spec` column |
+| one chart | PNG / SVG / PDF, `plotly.json` (re-embeddable) | rendered on request from the `spec` column via `POST /chart/render`, not a pre-rendered disk file |
 | one result | CSV / XLSX of the full rows | re-run the stored SQL, stream through the sibling `ExportService` (`openspout`) |
 | saved analysis | the chart + a `recipe.json` (reproducible) | the row + files |
 | report | one **PDF** (a print-view Blade → `barryvdh/laravel-dompdf`, DejaVu Sans for `₹` + Devanagari, the sibling `AnnualReport` shape); **XLSX** workbook, one sheet of rows per analysis block; **ZIP** bundle of the PDF + per-block CSVs + `plotly.json` + recipes | the blocks, resolved at export time; `etl_epoch` stamped on the output so the data vintage is on the page |
@@ -801,3 +1195,164 @@ PPTX is deferred — it needs a new library; the PDF and the print view cover
 `file_path` under `web/storage/app/report-exports/<report-ulid>/`,
 `generated_at`, `etl_epoch`. Regenerated on demand or when a block's
 underlying run changes.
+
+## NITI workbook import (2026-09-24)
+
+The eight NITI workbooks under `~/mentor_portal_db/UP Excise Data
+Collection/Final Data for Submission/` are loaded into `excise_bank` through
+four new adapter modules, registered as eight `etl.source_registry` rows
+(`niti_revenue`, `niti_sales_volume`, `niti_operations`, `niti_shops`,
+`niti_brands`, `niti_brand_prices`, `niti_policy_rules`, `niti_duty_rates`;
+`schedule = 'manual'`, matching this doc's own Schedules table). Districts
+(sheet 1) is cross-check only, per the task that drove this work — no
+`districts` row is inserted or altered from it.
+
+- **`etl/etl/sources/niti_facts.py`** — Revenue, Sales Volume, and Operations
+  share one district × financial-year grain with no license-category
+  breakdown, so `revenues.license_category_id` and
+  `sales_volumes.license_category_id` are NULL on every row here (the
+  schema's own "all-category total" case). One sheet row fans out into
+  several metric rows, one per non-blank column; a blank cell is skipped,
+  never inserted as zero. `revenues.metric` / `sales_volumes.metric` /
+  `operations.metric` hold the source columns' own names (e.g.
+  `license_fee_auction_lottery`, `imfl_premium`, `illicit_liquor_seized_litres`)
+  rather than the shorter illustrative list in the schema comment, which
+  doesn't cover most of the real columns.
+- **`etl/etl/sources/niti_shops.py`** — sources from
+  `Stats Dashboard Shop Types (2026-09-16)/5_Shops_All_Districts.xlsx`
+  (CLAUDE.md's real-category reclassification), not the `Final Data for
+  Submission` copy of the same sheet: that copy carries only NITI's five
+  generic dropdown buckets, 78% of it "Other", none of which resolve onto a
+  seeded `license_categories` code. Seven of the real workbook's nine
+  categories map onto a seeded code (Country Liquor → CL, Foreign Liquor →
+  FL, Beer → BEER, Composite → FL5DB, Model Shop → MODEL, Country Liquor
+  with Beer → CL5CC, Premium Retail Vend → FL4C); "Bar" and "Wholesale Beer &
+  Wine" have no seeded code (FL6 / FL2B were never added to
+  `license_categories`) and load with `license_category_id = NULL`, same as
+  "Other" and "Retail" — the shop itself is still real data, just
+  uncategorized. `shop_years.mgq_bl` only fills when exactly one of the
+  source's three minimum-quantity columns is present and already in bulk
+  litres; the source's "lifted" quantities, penalty charged/recovered, and
+  the gave-up/continued pair beyond `is_operational` have no column in this
+  schema and are not loaded.
+- **`etl/etl/sources/niti_brands.py`** — Brands, then Brand Prices (the
+  second depends on the first's rows already being in `brands`). "Type of
+  drink" resolves IMFL → FL, Beer → BEER, Country liquor → CL; Wine and
+  Imported liquor have no matching `kind` in `license_categories` at all and
+  load with `license_category_id = NULL`. `brands` has no pack-size column,
+  so the source's 10,995 (brand, pack) rows collapse onto 2,541 distinct
+  (name, category) brand entities — pack-specific figures live in
+  `brand_prices` instead. `brand_prices.ex_distillery_inr` is filled from
+  "Price approved by the department," the figure actually in force;
+  "Price declared by the manufacturer" and "Excise duty charged" have no
+  column here and are not loaded.
+- **`etl/etl/sources/niti_policy.py`** — Policy Rules synthesizes one
+  `policy_entries` row per (state, financial year) with a `summary` listing
+  every non-blank attribute as "label: value," since `policy_entries` has no
+  column for "who does the wholesale" or "date CCTV became compulsory"
+  individually; `category` stays NULL because one row spans pricing,
+  licensing, and enforcement attributes at once. Every Duty Rates row is
+  quarantined outright: its Rate column holds a formula string referencing
+  EDP (ex-distillery price) — `7.2*EDP`, `200+0.425*EDP` — not the plain
+  number `duty_rates.rate` requires, and no destination for that formula
+  exists in this schema.
+- **`etl/etl/normalize.py`** — `_FY_PATTERNS` now also accepts a
+  4-digit-4-digit year (`2014-2015`, the Shops and Brand Prices sheets'
+  form) and a doubled or dotted separator (`2024.25`, `2017--18`, both real
+  values found in the Shops workbook). `NITI_DISTRICT_ALIASES` and
+  `seed_district_aliases()` hold the spelling/format variants the NITI
+  workbooks use that don't match `districts.name` (a parenthetical old name
+  like `Allahabad (Prayagraj)`, a missing space, a missing letter) — checked
+  against every one of the 75 district keys `~/mentor_portal_db/scripts/
+  run_all_shops_districts.py` already uses, not derived in isolation.
+
+### Row counts
+
+| Source | Rows seen | Upserted | Quarantined |
+|---|---|---|---|
+| niti_revenue | 3,455 | 3,455 | 0 |
+| niti_sales_volume | 3,812 | 3,812 | 0 |
+| niti_operations | 11,124 | 11,124 | 0 |
+| niti_shops | 242,766 | 242,574 | 192 |
+| niti_brands | 10,995 | 2,541 distinct brands | 0 |
+| niti_brand_prices | 8,693 | 5,008 | 3,684 |
+| niti_policy_rules | 61 | 60 | 1 |
+| niti_duty_rates | 73 | 0 | 73 |
+
+`shops` holds 80,676 rows (1,093 pre-existing from the Lucknow IESCMS
+dispatch import, the rest from this source) and `shop_years` holds 241,762.
+
+### Quarantined rows and why
+
+- **niti_shops (192)**: 187 are Bahraich's FY2018-19 sheet, where every row's
+  financial-year cell reads `20215-16` instead of `2015-16` — a known,
+  already-flagged district-side typo (`~/mentor_portal_db/FLAGGED.md`
+  "Bahraich"), not corrected here either, since correcting a 5-digit year to
+  a specific 4-digit one is a guess this project has already declined to
+  make. 5 rows have a blank "Type of shop" cell (`shop_type` is `NOT NULL`).
+  Separately, one informational (non-counted) quarantine row records that
+  53,316 "Other" / 38,694 "Retail" / 783 "Wholesale Beer & Wine" shop_years
+  rows loaded with `license_category_id = NULL` — see the module note above.
+- **niti_brand_prices (3,684)**: 3,361 rows are a `brand_name` this
+  workbook's own Brands sheet doesn't carry — CLAUDE.md's own
+  `7_Brand_Prices.xlsx` build notes already document keeping these rows "as
+  is where the brand isn't in the current Brands registry" (an older or
+  discontinued brand whose price history was kept without a matching Brands
+  entry), so this is the same known gap, not a matching bug. 193 rows are a
+  brand name with more than one `(name, license_category_id)` variant in
+  `brands` — which one a bare price row belongs to isn't stated in the
+  source, so neither is guessed at. 130 rows are the already-known unresolved
+  price conflicts (CLAUDE.md "the 55 conflicting-price-value rows," which
+  turn out to be 130 rows across 64 conflicting groups once counted by exact
+  natural key) — both sides of each conflicting group are quarantined, not
+  one picked over the other.
+- **niti_policy_rules (1)**: the sheet's own instructions/note row in column
+  A, which has no financial year to resolve — correctly recognized as not a
+  data row.
+- **niti_duty_rates (73, all of them)**: every row's Rate column is a
+  formula referencing EDP, not a plain number — this project decided to
+  quarantine all 73 rather than store a truncated coefficient that isn't the
+  real duty rate.
+
+### Shop-identity collision check (Lucknow)
+
+Zero collisions. `shops` already held 1,093 Lucknow rows from the live
+IESCMS dispatch import before this run (`shop_number` a 9-10 digit IESCMS
+reference, e.g. `252642565`); the Shops workbook's own Lucknow sheet uses
+shop/licence names and IDs in a different, non-overlapping form. The check
+itself excludes any
+Lucknow shop that already has a `shop_years` row from a prior `niti_shops`
+run (iescms_dispatch never writes `shop_years`, so any shop with one is this
+source's own, not a foreign collision) — without that exclusion, a second
+run of this same source would flag its own previous rows as colliding with
+themselves, which is what an early version of this check actually did
+before the exclusion was added.
+
+### The 14 flagged Shops districts
+
+Amroha, Auraiya, Azamgarh, Bhadohi, Bijnor, Chandauli, Farrukhabad, Jaunpur,
+Kasganj, Kaushambi, Mau, Prayagraj, Siddharthnagar, and Unnao's shop and
+shop_year rows are loaded like every other district's, with
+`shops.published_at` left NULL rather than set to the import time — 15,564
+shop rows across the 14 districts, reconciling exactly against
+`~/mentor_portal_db/FLAGGED.md`'s own per-district conflict-row counts.
+They stay unpublished until a district confirms which side of its
+per-district merge conflict is correct.
+
+### A test-isolation bug this import surfaced
+
+`tests/test_niti_facts.py`'s fixture rows originally defaulted to a real
+district (`Agra`), a real-looking financial year (`2014-15`), and a real
+metric name (`excise_duty`, and two tests overrode it to `imfl` /
+`retail_shops`). `revenues`, `sales_volumes`, and `operations` upsert on
+`(district_id, financial_year_id, metric[, license_category_id])`, which
+does not include `source_ref` — so a test row with this exact combination
+silently updated the genuine Agra FY2014-15 `excise_duty` and `imfl` rows in
+place, and the fixture's teardown (`DELETE ... WHERE source_ref LIKE
+'TEST-NITI-FACTS-%'`) then deleted them, since the update had overwritten
+their `source_ref` too. Fixed by giving every test row a `metric` no real
+source column will ever produce (`__test_metric_<suffix>__`), which the
+natural key can never collide on regardless of which district or financial
+year the test also uses. The two affected production values were restored
+by re-running `niti_revenue` and `niti_sales_volume` (idempotent; verified
+against the source workbook's own cells for Agra FY2014-15 afterward).
