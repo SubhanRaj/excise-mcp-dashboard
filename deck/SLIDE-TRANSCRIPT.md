@@ -41,7 +41,7 @@ some will read it as a second language.
 
 - Every number, name, date and licence code in the 'Locked facts' lines stays as written.
 - Do not add a statistic, a benefit, or a capability that is not in this file.
-- Keep the department's own terms: IESCMS, NITI workbooks, CL5C, CL5CC, FL5DB, MGQ.
+- Keep the department's own terms: Integrated Excise Supply Chain Management System (IESCMS), Rajkosh and Koshwani portals, CL5C, CL5CC, FL5DB, MGQ.
 - Slide 15's decision request is deliberately empty. Do not invent one.
 
 ## Length limits
@@ -51,9 +51,10 @@ A bullet: at most 25 words. Speaker notes: at most 90 words per slide.
 
 ## Terms used in this deck
 
-- IESCMS: the department's live system for excise licences and transport passes.
-- NITI workbooks: eight district-level Excel workbooks from the NITI Aayog data exercise
-  (revenue, sales volume, enforcement, shops, brands, prices, policy).
+- IESCMS: the Integrated Excise Supply Chain Management System, the department's live system
+  for excise licences and transport passes.
+- Rajkosh and Koshwani portal data: the department's district-level records of revenue, sales
+  volume, enforcement, shops, brands, prices and policy.
 - Country liquor (CL5C), country liquor with beer (CL5CC): retail shop types.
 - Composite shop (FL5DB): a foreign liquor and beer retail licence.
 - MGQ: minimum guaranteed quantity.
@@ -84,7 +85,7 @@ one-line reason. Do not return design or layout suggestions.
 
 1. Are the shop-type definitions (country liquor, CL5CC, composite) worded the way the
    department would say them?
-2. Is 'IESCMS' the right way to describe the source of the dispatch report?
+2. Is the Integrated Excise Supply Chain Management System named correctly as the source of the dispatch report?
 3. Are the safety statements on slide 10 acceptable as written for a cabinet audience?
 4. Is slide 13 frank enough, or too frank?
 5. What should slide 15 ask for?
@@ -102,7 +103,7 @@ one-line reason. Do not return design or layout suggestions.
 - उत्तर प्रदेश आबकारी विभाग
 - Ask the Data
 - Questions in plain language, answered from the department's own figures and rules, on the department's own server
-- Proof of concept  |  Presentation to the Cabinet and the Chief Secretary
+- Proof of concept
 
 **Speaker notes.** Welcome. This is a working proof of concept, not a mock-up. Everything shown in the demo slides came from the live system running in the department's office, answering real questions against real department data.
 
@@ -151,7 +152,7 @@ one-line reason. Do not return design or layout suggestions.
 - A conversation that can look up figures and rules as it goes, and take follow-up questions.
 - Knowledge library
 - Excise acts, rules and policy orders, searchable in the same chat.
-- It runs on a server in the department's own office. No question and no figure is sent to an outside AI service.
+- It runs on the departmental server, completely local. No external AI service provider and no closed-source or proprietary tool is used; all models run locally.
 
 **Speaker notes.** Three entry points, one engine. Ask is for a single well-formed question. Chat is for exploring. The knowledge library lets the same chat quote the department's published rules.
 
@@ -159,7 +160,7 @@ one-line reason. Do not return design or layout suggestions.
 
 **Screenshot alt text.** None.
 
-**Locked facts.** The system runs on a server in the department's own office. No question or figure is sent to an outside AI service.
+**Locked facts.** The system runs on the departmental server and is completely local. No external AI service provider and no closed-source or proprietary tool is used; all models run locally.
 
 ---
 
@@ -196,7 +197,7 @@ one-line reason. Do not return design or layout suggestions.
 **On-slide text** (in reading order):
 
 - "How many country liquor and composite shops are in Lucknow in August 2026?"
-- Total: 1,006 shops. / Split: 589 country liquor and 417 composite. / The total is counted by the database itself, not added up by the AI. / Source: the monthly dispatch report from the department's IESCMS system.
+- Total: 1,006 shops. / Split: 589 country liquor and 417 composite. / The total is counted by the database itself, not added up by the AI. / Source: the monthly dispatch report from the Integrated Excise Supply Chain Management System (IESCMS).
 
 **Speaker notes.** Click the screenshot to open it full size. Read the question aloud, then point to the total and the two parts. This question was chosen because it has a split and a total. Earlier versions gave only one combined number; we fixed that so each part is shown.
 
@@ -204,7 +205,7 @@ one-line reason. Do not return design or layout suggestions.
 
 **Screenshot alt text.** Screenshot of the Ask page for the question 'How many country liquor and composite shops are in Lucknow in August 2026?'. A bar chart titled 'Number of Country Liquor and Composite Shops in Lucknow in August 2026' (y-axis 'Number of Shops') shows three bars: Composite 417, Country Liquor 589, Total 1,006. Below the chart is a two-sentence summary reading 'There are 589 country liquor shops and 417 composite shops in Lucknow in August 2026. The total number of such shops is 1006, with a combined shop count of 1006 across these categories.' (the second sentence repeats the total; a known wording slip), then a three-row table (Composite 417, Country Liquor 589, Total 1006), a collapsed 'Generated SQL' panel, and a thumbs up / thumbs down feedback row.
 
-**Locked facts.** Lucknow, August 2026: 1,006 shops in total, 589 country liquor and 417 composite. Source: the IESCMS monthly dispatch report, one row per transport pass, loaded for Lucknow for August 2026 only. 'Composite' means a Foreign Liquor and Beer licence (code FL5DB). Country liquor includes CL5C and CL5CC.
+**Locked facts.** Lucknow, August 2026: 1,006 shops in total, 589 country liquor and 417 composite. Source: the monthly dispatch report from the Integrated Excise Supply Chain Management System (IESCMS), one row per transport pass, loaded for Lucknow for August 2026 only. 'Composite' means a Foreign Liquor and Beer licence (code FL5DB). Country liquor includes CL5C and CL5CC.
 
 ---
 
@@ -255,11 +256,11 @@ one-line reason. Do not return design or layout suggestions.
 **On-slide text** (in reading order):
 
 - 9,322
-- dispatch records, Lucknow, August 2026, from IESCMS
+- dispatch records for Lucknow, August 2026, from the Integrated Excise Supply Chain Management System
 - 28,405
 - shops with FY2025-26 revenue, across all 75 districts
 - 3,455
-- district revenue records from the NITI workbooks
+- district revenue records from the Rajkosh and Koshwani portal data
 - 3,812
 - sales-volume records by liquor type and year
 - 11,124
@@ -274,7 +275,7 @@ one-line reason. Do not return design or layout suggestions.
 
 **Screenshot alt text.** None.
 
-**Locked facts.** 9,322 dispatch records (Lucknow, August 2026, from IESCMS). 28,405 shops with FY2025-26 revenue across all 75 districts. 3,455 district revenue records, 3,812 sales-volume records by liquor type and year, and 11,124 enforcement records (raids, seizures, convictions), all from the eight NITI workbooks. More than 330 acts, rules and policy documents in the knowledge library. The data bank is a copy; the source systems are untouched.
+**Locked facts.** 9,322 dispatch records (Lucknow, August 2026, from the Integrated Excise Supply Chain Management System). 28,405 shops with FY2025-26 revenue across all 75 districts. 3,455 district revenue records, 3,812 sales-volume records by liquor type and year, and 11,124 enforcement records (raids, seizures, convictions), all from the Rajkosh and Koshwani portal data. More than 330 acts, rules and policy documents in the knowledge library. The data bank is a copy; the source systems are untouched.
 
 ---
 
@@ -385,7 +386,7 @@ one-line reason. Do not return design or layout suggestions.
 **On-slide text** (in reading order):
 
 - What we learned
-- A language model can give a confident wrong answer. We added checks so an empty result is reported as empty. / District revenue after 2018 in the NITI workbooks is booked at the central treasury in Lucknow. We cross-checked against shop-level revenue and now point the system to the correct source. / Money conversions are done in code. A model got one crore figure wrong by ten times.
+- A language model can give a confident wrong answer. We added checks so an empty result is reported as empty. / District revenue after 2018 in the Rajkosh and Koshwani portal data is booked at the central treasury in Lucknow. We cross-checked against shop-level revenue and now point the system to the correct source. / Money conversions are done in code. A model got one crore figure wrong by ten times.
 - Limits today
 - The server has no graphics card, so an answer takes one to three minutes. / Shop-level monthly detail is loaded for Lucknow only (August 2026). / Shop-level Bhang data has no source yet. / Answers should be treated as a fast first reading, to be checked against the source for formal use.
 
@@ -395,7 +396,7 @@ one-line reason. Do not return design or layout suggestions.
 
 **Screenshot alt text.** None.
 
-**Locked facts.** A model once gave a confident wrong answer; an empty result is now reported as empty. District revenue after 2018 in the NITI workbooks is booked at the central treasury in Lucknow, so it overstates Lucknow; it was cross-checked against shop-level revenue and the system now uses that source. A money conversion done by the model was once wrong by ten times; conversions are now done in code. Limits: no graphics card so answers take one to three minutes; shop-level monthly detail is loaded for Lucknow for August 2026 only; no source yet for shop-level Bhang data; answers are a fast first reading to be checked against the source for formal use.
+**Locked facts.** A model once gave a confident wrong answer; an empty result is now reported as empty. District revenue after 2018 in the Rajkosh and Koshwani portal data is booked at the central treasury in Lucknow, so it overstates Lucknow; it was cross-checked against shop-level revenue and the system now uses that source. A money conversion done by the model was once wrong by ten times; conversions are now done in code. Limits: no graphics card so answers take one to three minutes; shop-level monthly detail is loaded for Lucknow for August 2026 only; no source yet for shop-level Bhang data; answers are a fast first reading to be checked against the source for formal use.
 
 ---
 
@@ -405,8 +406,8 @@ one-line reason. Do not return design or layout suggestions.
 
 **On-slide text** (in reading order):
 
-- Faster hardware
-- A dedicated server with a graphics card brings answers down to seconds.
+- High-performance compute
+- A high-performance computing (HPC) node with high-end GPU servers runs larger, more capable models and shortens response times.
 - More data
 - Monthly feeds for every district, and the missing sources such as Bhang shops.
 - Saved analyses and reports
@@ -416,11 +417,11 @@ one-line reason. Do not return design or layout suggestions.
 
 **Speaker notes.** Roadmap items come from the project plan. Saved analyses and offline reading are planned, not built.
 
-**Visual.** Four cards in a two-by-two grid with icons: Faster hardware, More data, Saved analyses and reports, Wider access.
+**Visual.** Four cards in a two-by-two grid with icons: High-performance compute, More data, Saved analyses and reports, Wider access.
 
 **Screenshot alt text.** None.
 
-**Locked facts.** Faster hardware means a dedicated server with a graphics card. Saved analyses, reports and wider access by district and division officers are planned, not built.
+**Locked facts.** High-performance compute means a high-performance computing (HPC) node with high-end GPU servers, which can run larger, more capable models and shorten response times. Saved analyses, reports and wider access by district and division officers are planned, not built.
 
 ---
 
@@ -432,7 +433,7 @@ one-line reason. Do not return design or layout suggestions.
 
 - This proof of concept shows that officers can get sourced answers from the department's own data in minutes, on the department's own server. / We ask the Cabinet and the Chief Secretary for a decision on the next step.
 - Proposed next steps
-- 1.  A pilot with a small group of district and division officers. / 2.  A dedicated server with a graphics card. / 3.  Monthly data feeds from the source systems.
+- 1.  A pilot with a small group of district and division officers. / 2.  A high-performance GPU compute node. / 3.  Monthly data feeds from the source systems.
 
 **Speaker notes.** DECISION REQUEST: to be written after the review with the project lead. Replace the next steps above with the specific approval being sought.
 

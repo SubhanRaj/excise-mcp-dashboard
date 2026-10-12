@@ -180,7 +180,7 @@ text(s, 2.8, 1.95, 9.5, 0.5, 'उत्तर प्रदेश आबकार
 text(s, 0.8, 3.0, 11.5, 1.2, 'Ask the Data', 60, True, BLUE)
 text(s, 0.8, 4.15, 8.2, 1.4, 'Questions in plain language, answered from the department\'s own figures '
      'and rules, on the department\'s own server', 24, False, INK)
-text(s, 0.8, 6.55, 11.5, 0.5, 'Proof of concept  |  Presentation to the Cabinet and the Chief Secretary', 18, False, BLUE)
+text(s, 0.8, 6.55, 11.5, 0.5, 'Proof of concept', 18, False, BLUE)
 notes(s, 'Welcome. This is a working proof of concept, not a mock-up. Everything shown in the demo '
          'slides came from the live system running in the department\'s office, answering real questions '
          'against real department data.')
@@ -221,8 +221,8 @@ for i, (ic, h, b) in enumerate(three):
     badge(s, ic, x + 0.3, 2.85)
     text(s, x + 1.25, 2.95, 2.5, 0.6, h, 24, True, VIOLET, anchor=MSO_ANCHOR.MIDDLE)
     text(s, x + 0.3, 3.9, 3.35, 1.7, b, 17, False, INK)
-text(s, 0.6, 5.95, 12.1, 0.8, 'It runs on a server in the department\'s own office. No question and no figure is sent '
-     'to an outside AI service.', 20, True, GREEN)
+text(s, 0.6, 5.85, 12.1, 1.0, 'It runs on the departmental server, completely local. No external AI service provider and no '
+     'closed-source or proprietary tool is used; all models run locally.', 19, True, GREEN)
 notes(s, 'Three entry points, one engine. Ask is for a single well-formed question. Chat is for exploring. '
          'The knowledge library lets the same chat quote the department\'s published rules.')
 
@@ -256,7 +256,7 @@ bullets(s, 0.6, 2.35, 4.3, [
     'Total: 1,006 shops.',
     'Split: 589 country liquor and 417 composite.',
     'The total is counted by the database itself, not added up by the AI.',
-    'Source: the monthly dispatch report from the department\'s IESCMS system.',
+    'Source: the monthly dispatch report from the Integrated Excise Supply Chain Management System (IESCMS).',
 ], 16, 12)
 shot(s, 'ask-1-view.png', 5.15, 1.3, 7.6, 5.55, left_px=1360, top_px=145, link='slide-05-shop-count.png')
 notes(s, 'Click the screenshot to open it full size. Read the question aloud, then point to the total and the two parts. This question was chosen because '
@@ -291,9 +291,9 @@ notes(s, 'Click the screenshot to open it full size. Point at the chart, then th
 # 9 ---------------------------------------------------------------- data
 s = new_slide('The data behind the answers')
 tiles = [
-    ('truck' if False else 'receipt', '9,322', 'dispatch records, Lucknow, August 2026, from IESCMS'),
+    ('truck' if False else 'receipt', '9,322', 'dispatch records for Lucknow, August 2026, from the Integrated Excise Supply Chain Management System'),
     ('pin', '28,405', 'shops with FY2025-26 revenue, across all 75 districts'),
-    ('rupee', '3,455', 'district revenue records from the NITI workbooks'),
+    ('rupee', '3,455', 'district revenue records from the Rajkosh and Koshwani portal data'),
     ('chart', '3,812', 'sales-volume records by liquor type and year'),
     ('shield', '11,124', 'enforcement records: raids, seizures, convictions'),
     ('books', '330+', 'acts, rules and policy documents in the knowledge library'),
@@ -304,7 +304,7 @@ for i, (ic, n, label) in enumerate(tiles):
     box(s, x, y, 3.85, 2.2)
     badge(s, ic, x + 0.25, y + 0.25, 0.7)
     text(s, x + 1.1, y + 0.2, 2.6, 0.8, n, 34, True, VIOLET, anchor=MSO_ANCHOR.MIDDLE)
-    text(s, x + 0.25, y + 1.1, 3.4, 1.0, label, 16, False, INK)
+    text(s, x + 0.25, y + 1.1, 3.4, 1.0, label, 14, False, INK)
 text(s, 0.6, 6.45, 12.1, 0.5, 'All of it is held on the department\'s own server, in a database the AI can read but never change.',
      16, True, GREEN)
 notes(s, 'These are the row counts loaded so far. The data bank is a copy; the source systems are untouched. '
@@ -389,7 +389,7 @@ box(s, 0.6, 1.4, 5.95, 5.4)
 text(s, 0.85, 1.5, 5.5, 0.5, 'What we learned', 22, True, VIOLET)
 bullets(s, 0.85, 2.15, 5.5, [
     'A language model can give a confident wrong answer. We added checks so an empty result is reported as empty.',
-    'District revenue after 2018 in the NITI workbooks is booked at the central treasury in Lucknow. '
+    'District revenue after 2018 in the Rajkosh and Koshwani portal data is booked at the central treasury in Lucknow. '
     'We cross-checked against shop-level revenue and now point the system to the correct source.',
     'Money conversions are done in code. A model got one crore figure wrong by ten times.',
 ], 15, 10)
@@ -406,7 +406,7 @@ notes(s, 'Being open about limits is deliberate. The cabinet will ask what can g
 # 14 --------------------------------------------------------------- roadmap
 s = new_slide('What comes next')
 road = [
-    ('server', 'Faster hardware', 'A dedicated server with a graphics card brings answers down to seconds.'),
+    ('server', 'High-performance compute', 'A high-performance computing (HPC) node with high-end GPU servers runs larger, more capable models and shortens response times.'),
     ('database', 'More data', 'Monthly feeds for every district, and the missing sources such as Bhang shops.'),
     ('doc', 'Saved analyses and reports', 'Re-run a favourite question each month and export a report with the data date on it.'),
     ('users', 'Wider access', 'Roles for district and division officers, with their own question history.'),
@@ -430,7 +430,7 @@ text(s, 2.1, 1.7, 10.4, 1.9, ['This proof of concept shows that officers can get
 text(s, 0.6, 4.1, 12.1, 0.5, 'Proposed next steps', 22, True, VIOLET)
 bullets(s, 0.6, 4.7, 12.1, [
     '1.  A pilot with a small group of district and division officers.',
-    '2.  A dedicated server with a graphics card.',
+    '2.  A high-performance GPU compute node.',
     '3.  Monthly data feeds from the source systems.',
 ], 18, 8)
 notes(s, 'DECISION REQUEST: to be written after the review with the project lead. Replace the next steps '
