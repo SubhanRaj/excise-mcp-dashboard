@@ -57,7 +57,7 @@ CONTEXT = {
     "Five narrow cards with icons: Data bank, Question engine, Knowledge library, Chat and Ask screens, Real-question testing.",
     "None.",
     "Automated tests cover the safety checks, the data loaders and the chat flow. Live testing on real questions found problems the tests could not; each was fixed and recorded in the project log."),
-13: ("Be open about what went wrong and what is not yet possible. This slide answers the cabinet's hardest question first.",
+13: ("Be open about what went wrong and what is not yet possible. This slide answers the audience's hardest question first.",
     "Two pale blue cards: 'What we learned' (blue heading) and 'Limits today' (gold heading).",
     "None.",
     "A model once gave a confident wrong answer; an empty result is now reported as empty. District revenue after 2018 in the Rajkosh and Koshwani portal data is booked at the central treasury in Lucknow, so it overstates Lucknow; it was cross-checked against shop-level revenue and the system now uses that source. A money conversion done by the model was once wrong by ten times; conversions are now done in code. Limits: no graphics card so answers take one to three minutes; shop-level monthly detail is loaded for Lucknow for August 2026 only; no source yet for shop-level Bhang data; answers are a fast first reading to be checked against the source for formal use."),
@@ -65,7 +65,7 @@ CONTEXT = {
     "Four cards in a two-by-two grid with icons: High-performance compute, More data, Saved analyses and reports, Wider access.",
     "None.",
     "High-performance compute means a high-performance computing (HPC) node with high-end GPU servers, which can run larger, more capable models and shorten response times. Saved analyses, reports and wider access by district and division officers are planned, not built."),
-15: ("State the decision the cabinet is being asked to make.",
+15: ("State the decision the respected authorities are being asked to make.",
     "A tinted box with a lightbulb icon holds the main sentence; a short numbered list sits below.",
     "None.",
     "The decision request itself is not yet written. It will be added after the project lead's review. The three next steps on the slide are proposals."),
@@ -77,8 +77,8 @@ For reviewers (a language model or a person in the department). Read this sectio
 
 ## What this is
 
-A 15-slide presentation by the Department of Excise, Uttar Pradesh, to the Cabinet and the
-Chief Secretary. It demonstrates a working proof of concept: officers ask questions about
+A 15-slide presentation by the Department of Excise, Uttar Pradesh, to the state's senior
+leadership. It demonstrates a working proof of concept: officers ask questions about
 excise figures and rules in plain English and get an answer, a chart, and the exact query
 behind it, from the department's own data, on the department's own server.
 
@@ -159,7 +159,7 @@ one-line reason. Do not return design or layout suggestions.
 1. Are the shop-type definitions (country liquor, CL5CC, composite) worded the way the
    department would say them?
 2. Is the Integrated Excise Supply Chain Management System named correctly as the source of the dispatch report?
-3. Are the safety statements on slide 10 acceptable as written for a cabinet audience?
+3. Are the safety statements on slide 10 acceptable as written for a senior-leadership audience?
 4. Is slide 13 frank enough, or too frank?
 5. What should slide 15 ask for?
 
