@@ -65,7 +65,6 @@ A bullet: at most 25 words. Speaker notes: at most 90 words per slide.
 ## Known weak spots in the current wording
 
 - Slides 2 and 3 lean on lists of three. Vary where a different number is true.
-- Slide 9's 'Why two models' bar reads like a slogan; make it a plain statement.
 - Slide 13 is the most important slide for trust. Keep it frank, without apology or spin.
 
 ## What to send back
@@ -103,10 +102,10 @@ one-line reason. Do not return design or layout suggestions.
 - Department of Excise
 - उत्तर प्रदेश आबकारी विभाग
 - Ask the Data
-- Questions in plain language, answered from the department's own figures and rules, on the department's own server
+- Ask a question in plain language. / The answer comes from the department's own figures and rules, on the department's own server.
 - Proof of concept
 
-**Speaker notes.** Welcome. This is a working proof of concept, not a mock-up. Everything shown in the demo slides came from the live system running in the department's office, answering real questions against real department data.
+**Speaker notes.** Welcome. This is a working proof of concept, not a mock-up. Everything in the demo slides came from the live system running in the department's office. It answered real questions against real department data.
 
 **Visual.** Title slide split diagonally into pastel yellow (top left) and pastel blue (bottom right), after the department flag. The State Emblem of Uttar Pradesh at top left, with 'Government of Uttar Pradesh', 'Department of Excise' and the Hindi name 'उत्तर प्रदेश आबकारी विभाग' (Unicode text, Nirmala UI font) beside it.
 
@@ -125,12 +124,12 @@ one-line reason. Do not return design or layout suggestions.
 - Figures sit in many files
 - Revenue, dispatch, shop and enforcement figures are held in separate workbooks, reports and portals.
 - Each question needs an analyst
-- An officer asks, an analyst finds the files, builds the table and sends it back. A new angle on the same question starts the cycle again.
+- An officer asks, an analyst finds the files, builds the table and sends it back. A new angle starts the cycle again.
 - Rules live in another place
 - Acts, rules and policy orders are published as documents. Linking a rule to a figure is done by hand.
-- An officer who needs a number for a meeting today should be able to get it today, with the source shown, without waiting for a report to be prepared.
+- An officer who needs a number for a meeting today should get it today, with its source, without waiting for a report.
 
-**Speaker notes.** Set the scene in the department's own terms. Examples to mention: a district total needed before a review meeting; a rule position needed alongside a figure.
+**Speaker notes.** Set the scene in the department's own terms. Two examples to mention: a district total needed before a review meeting, and a rule position needed alongside a figure.
 
 **Visual.** Three pale blue cards, each with a round blue icon: a spreadsheet, a clock, a shelf of books.
 
@@ -153,9 +152,9 @@ one-line reason. Do not return design or layout suggestions.
 - A conversation that can look up figures and rules as it goes, and take follow-up questions.
 - Knowledge library
 - Excise acts, rules and policy orders, searchable in the same chat.
-- It runs on the departmental server, completely local. No external AI service provider and no closed-source or proprietary tool is used; all models run locally.
+- It runs on the departmental server, completely local. / No external AI service provider and no closed-source or proprietary tool is used. All models run locally.
 
-**Speaker notes.** Three entry points, one engine. Ask is for a single well-formed question. Chat is for exploring. The knowledge library lets the same chat quote the department's published rules.
+**Speaker notes.** We built three entry points on one engine. Ask takes a single well-formed question. Chat is for exploring. The knowledge library lets the same chat quote the department's published rules.
 
 **Visual.** Three cards with icons: a speech bubble with a question mark (Ask), a chat bubble (Chat), a bookshelf (Knowledge library).
 
@@ -198,9 +197,9 @@ one-line reason. Do not return design or layout suggestions.
 **On-slide text** (in reading order):
 
 - "How many country liquor and composite shops are in Lucknow in August 2026?"
-- Total: 1,006 shops. / Split: 589 country liquor and 417 composite. / The total is counted by the database itself, not added up by the AI. / Source: the monthly dispatch report from the Integrated Excise Supply Chain Management System (IESCMS).
+- Total: 1,006 shops. / Split: 589 country liquor and 417 composite. / The database counts the total; the AI does not add it up. / Source: the monthly dispatch report from the Integrated Excise Supply Chain Management System (IESCMS).
 
-**Speaker notes.** Click the screenshot to open it full size. Read the question aloud, then point to the total and the two parts. This question was chosen because it has a split and a total. Earlier versions gave only one combined number; we fixed that so each part is shown.
+**Speaker notes.** Click the screenshot to open it full size. Read the question aloud, then point to the total and the two parts. This question was chosen because it has a split and a total. Earlier versions gave one combined number; we fixed that so each part is shown.
 
 **Visual.** Left: the question and four short points. Right: a screenshot of the Ask page.
 
@@ -270,7 +269,7 @@ one-line reason. Do not return design or layout suggestions.
 - acts, rules and policy documents in the knowledge library
 - All of it is held on the department's own server, in a database the AI can read but never change.
 
-**Speaker notes.** These are the row counts loaded so far. The data bank is a copy; the source systems are untouched. More sources can be added without changing how officers ask questions.
+**Speaker notes.** These are the row counts loaded so far. The data bank is a copy; the source systems are untouched. We can add more sources without changing how officers ask questions.
 
 **Visual.** Six tiles, each with an icon and a large number, in two rows of three.
 
@@ -293,9 +292,9 @@ one-line reason. Do not return design or layout suggestions.
 - Qwen 2.5 Coder  (7 billion)
 - The specialist
 - Writes the database search and the chart code. It sees the data layout, not the officer's chat.
-- Why two models: a conversational model and a code-writing model are each better at their own task. / Why local: the department's questions and figures never leave the building.
+- A conversational model and a code-writing model each do their own job better, so we use two. / Both run locally: the department's questions and figures never leave the building.
 
-**Speaker notes.** Both models are open weights, run through Ollama on the office server. Neither is a DeepSeek model. The server has no GPU today, which is why answers take one to three minutes.
+**Speaker notes.** Both models are open weights, run through Ollama on the office server. Neither is a DeepSeek model. The server has no graphics card today, so answers take one to three minutes.
 
 **Visual.** Two large pale blue cards: Llama 3.1 (8 billion) and Qwen 2.5 Coder (7 billion), each with an icon. A pale yellow bar underneath gives the two reasons: two models, and local.
 
@@ -321,7 +320,6 @@ one-line reason. Do not return design or layout suggestions.
 - Chart code runs in an isolated space: no network, limited time and memory.
 - Full record
 - Every question, query and action is logged for audit.
-- The only outside connection is the secure tunnel that lets officers reach the site.
 
 **Speaker notes.** Each layer works on its own: if one failed, the next would still stop a harmful action. Be ready for the question "can it change our data?" The answer is no: the database itself refuses any write from this account.
 
@@ -329,7 +327,7 @@ one-line reason. Do not return design or layout suggestions.
 
 **Screenshot alt text.** None.
 
-**Locked facts.** Sign-in is an emailed one-time code; roles are Admin and Analyst. The AI uses a database account that can read but not change anything; the database itself refuses a write. Every query is inspected and only a single read request passes. Chart code runs in an isolated space with no network and limits on time and memory. Every question, query and action is logged. The only outside connection is the secure tunnel through which officers reach the site.
+**Locked facts.** Sign-in is an emailed one-time code; roles are Admin and Analyst. The AI uses a database account that can read but not change anything; the database itself refuses a write. Every query is inspected and only a single read request passes. Chart code runs in an isolated space with no network and limits on time and memory. Every question, query and action is logged.
 
 ---
 
@@ -368,9 +366,9 @@ one-line reason. Do not return design or layout suggestions.
 - Web screens for officers and for administrators.
 - Real-question testing
 - Each demo question was run live and the answer checked against the source.
-- The automated tests cover the safety checks, the data loaders and the chat flow. Live testing against real questions found problems the tests could not, and each one was fixed and recorded.
+- The automated tests cover the safety checks, the data loaders and the chat flow. / Live testing on real questions found problems the tests could not. Each one was fixed and recorded.
 
-**Speaker notes.** Mention that the build followed a written plan with milestones, and that every live failure found in testing is documented. Honest testing is part of the case for trusting the results.
+**Speaker notes.** We followed a written plan with milestones, and every live failure found in testing is documented. Honest testing is part of the case for trusting the results.
 
 **Visual.** Five narrow cards with icons: Data bank, Question engine, Knowledge library, Chat and Ask screens, Real-question testing.
 
@@ -387,11 +385,11 @@ one-line reason. Do not return design or layout suggestions.
 **On-slide text** (in reading order):
 
 - What we learned
-- A language model can give a confident wrong answer. We added checks so an empty result is reported as empty. / District revenue after 2018 in the Rajkosh and Koshwani portal data is booked at the central treasury in Lucknow. We cross-checked against shop-level revenue and now point the system to the correct source. / Money conversions are done in code. A model got one crore figure wrong by ten times.
+- A language model can give a confident wrong answer. We added checks so an empty result is reported as empty. / District revenue after 2018 in the Rajkosh and Koshwani portal data is booked at the central treasury in Lucknow. / We cross-checked against shop-level revenue and now point the system to the correct source. / Money conversions are done in code. A model got one crore figure wrong by ten times.
 - Limits today
 - The server has no graphics card, so an answer takes one to three minutes. / Shop-level monthly detail is loaded for Lucknow only (August 2026). / Shop-level Bhang data has no source yet. / Answers should be treated as a fast first reading, to be checked against the source for formal use.
 
-**Speaker notes.** Being open about limits is deliberate. The audience will ask what can go wrong; this slide answers before they do.
+**Speaker notes.** We are open about limits deliberately. The audience will ask what can go wrong; this slide answers first.
 
 **Visual.** Two pale blue cards: 'What we learned' (blue heading) and 'Limits today' (gold heading).
 
