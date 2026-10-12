@@ -4,8 +4,8 @@ For reviewers (a language model or a person in the department). Read this sectio
 
 ## What this is
 
-A 15-slide presentation by the Department of Excise, Uttar Pradesh, to the Cabinet and the
-Chief Secretary. It demonstrates a working proof of concept: officers ask questions about
+A 15-slide presentation by the Department of Excise, Uttar Pradesh, to the state's senior
+leadership. It demonstrates a working proof of concept: officers ask questions about
 excise figures and rules in plain English and get an answer, a chart, and the exact query
 behind it, from the department's own data, on the department's own server.
 
@@ -86,7 +86,7 @@ one-line reason. Do not return design or layout suggestions.
 1. Are the shop-type definitions (country liquor, CL5CC, composite) worded the way the
    department would say them?
 2. Is the Integrated Excise Supply Chain Management System named correctly as the source of the dispatch report?
-3. Are the safety statements on slide 10 acceptable as written for a cabinet audience?
+3. Are the safety statements on slide 10 acceptable as written for a senior-leadership audience?
 4. Is slide 13 frank enough, or too frank?
 5. What should slide 15 ask for?
 
@@ -382,7 +382,7 @@ one-line reason. Do not return design or layout suggestions.
 
 ## Slide 13: What we learned, and the limits today
 
-**Purpose.** Be open about what went wrong and what is not yet possible. This slide answers the cabinet's hardest question first.
+**Purpose.** Be open about what went wrong and what is not yet possible. This slide answers the audience's hardest question first.
 
 **On-slide text** (in reading order):
 
@@ -391,7 +391,7 @@ one-line reason. Do not return design or layout suggestions.
 - Limits today
 - The server has no graphics card, so an answer takes one to three minutes. / Shop-level monthly detail is loaded for Lucknow only (August 2026). / Shop-level Bhang data has no source yet. / Answers should be treated as a fast first reading, to be checked against the source for formal use.
 
-**Speaker notes.** Being open about limits is deliberate. The cabinet will ask what can go wrong; this slide answers before they do.
+**Speaker notes.** Being open about limits is deliberate. The audience will ask what can go wrong; this slide answers before they do.
 
 **Visual.** Two pale blue cards: 'What we learned' (blue heading) and 'Limits today' (gold heading).
 
@@ -428,13 +428,13 @@ one-line reason. Do not return design or layout suggestions.
 
 ## Slide 15: The decision we are asking for
 
-**Purpose.** State the decision the cabinet is being asked to make.
+**Purpose.** State the decision the respected authorities are being asked to make.
 
 **On-slide text** (in reading order):
 
-- This proof of concept shows that officers can get sourced answers from the department's own data in minutes, on the department's own server. / We ask the Cabinet and the Chief Secretary for a decision on the next step.
+- This proof of concept shows that officers can get sourced answers from the department's own data in minutes, on the department's own server. / We ask the respected authorities for a decision on the next step.
 - Proposed next steps
-- 1.  A pilot with a small group of district and division officers. / 2.  A high-performance GPU compute node. / 3.  Monthly data feeds from the source systems.
+- 1.  A pilot with a small group of district and division officers. / 2.  A high-performance GPU compute node. / 3.  Monthly data feeds from the source systems and involved stakeholders.
 
 **Speaker notes.** DECISION REQUEST: to be written after the review with the project lead. Replace the next steps above with the specific approval being sought.
 
