@@ -98,13 +98,17 @@ FEW_SHOT_SQL_EXAMPLES: list[dict[str, str]] = [
         "WHERE district = 'Lucknow' AND license_category = 'CL5C' LIMIT 100;",
     },
     {
-        # Confirmed live: CL5CC is Country Liquor with Beer — a country liquor shop
-        # that also sells beer, filtered on license_category like CL5C above, never on
-        # has_cl5cc. 29 shops in Lucknow.
+        # CL5CC is Country Liquor with Beer: a country liquor shop that also sells beer,
+        # so its count and its revenue both come from sro_shops (has_cl5cc rows), one
+        # row, one source. Confirmed live: 29 shops, ₹25.87 crore total for Lucknow
+        # FY2025-26. The row carries the revenue too, so the answer can state what the
+        # shops generated, not only how many there are.
         "question": "How many CL5CC shops, country liquor shops that also sell beer, "
         "are there in Lucknow?",
-        "sql": "SELECT COUNT(*) AS shop_count FROM analytics.shops "
-        "WHERE district = 'Lucknow' AND license_category = 'CL5CC' LIMIT 100;",
+        "sql": "SELECT COUNT(*) AS shop_count, SUM(total_revenue) AS total_revenue_inr "
+        "FROM analytics.sro_shops WHERE district = 'Lucknow' "
+        "AND financial_year = 'FY2025-26' AND shop_type = 'COUNTRY_LIQUOR' AND has_cl5cc "
+        "LIMIT 100;",
     },
     {
         # Confirmed live, Lucknow FY2025-26, 29 CL5CC shops: ₹21.74 crore country liquor,
@@ -416,7 +420,9 @@ rows that together answer one combined question — state the total and each
 part, not the total alone or the parts alone. A row is the total only when its
 label is "Total"; if no row is labelled Total, do not call any row the total.
 The row count is how many rows came back, never a shop count, a revenue, or any
-other figure in the data; report a figure from the rows themselves.
+other figure in the data; report a figure from the rows themselves. Use only the
+figures in the rows and the pre-converted lines. If the result has no revenue
+column, state no revenue at all; never estimate or infer one.
 
 Every money figure in this data is Indian Rupees, never dollars — write ₹,
 never $. State a large amount in lakh or crore rather than a long digit
